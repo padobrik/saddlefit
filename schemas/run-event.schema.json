@@ -1,0 +1,451 @@
+{
+  "$defs": {
+    "CompactionData": {
+      "additionalProperties": false,
+      "properties": {
+        "dropped_outputs": {
+          "minimum": 0,
+          "title": "Dropped Outputs",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "dropped_outputs"
+      ],
+      "title": "CompactionData",
+      "type": "object"
+    },
+    "ErrorData": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "title": "Kind",
+          "type": "string"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "message"
+      ],
+      "title": "ErrorData",
+      "type": "object"
+    },
+    "FinishGateData": {
+      "additionalProperties": false,
+      "description": "The finish gate runs the task's VISIBLE check; its output is what the student saw.",
+      "properties": {
+        "output": {
+          "title": "Output",
+          "type": "string"
+        },
+        "passed": {
+          "title": "Passed",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "passed",
+        "output"
+      ],
+      "title": "FinishGateData",
+      "type": "object"
+    },
+    "LoopWarningData": {
+      "additionalProperties": false,
+      "properties": {
+        "signature": {
+          "title": "Signature",
+          "type": "string"
+        },
+        "stop": {
+          "title": "Stop",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "signature",
+        "stop"
+      ],
+      "title": "LoopWarningData",
+      "type": "object"
+    },
+    "ModelCallData": {
+      "additionalProperties": false,
+      "description": "One model call: token usage and what came back.",
+      "properties": {
+        "completion_tokens": {
+          "minimum": 0,
+          "title": "Completion Tokens",
+          "type": "integer"
+        },
+        "malformed": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Malformed",
+          "type": "integer"
+        },
+        "prompt_tokens": {
+          "minimum": 0,
+          "title": "Prompt Tokens",
+          "type": "integer"
+        },
+        "repaired": {
+          "default": false,
+          "title": "Repaired",
+          "type": "boolean"
+        },
+        "step": {
+          "minimum": 1,
+          "title": "Step",
+          "type": "integer"
+        },
+        "tool_calls": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Tool Calls",
+          "type": "array"
+        }
+      },
+      "required": [
+        "step",
+        "prompt_tokens",
+        "completion_tokens"
+      ],
+      "title": "ModelCallData",
+      "type": "object"
+    },
+    "ToolCallData": {
+      "additionalProperties": false,
+      "description": "One tool execution; its output is not stored, only its size.",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "ok": {
+          "title": "Ok",
+          "type": "boolean"
+        },
+        "output_chars": {
+          "minimum": 0,
+          "title": "Output Chars",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "name",
+        "ok",
+        "output_chars"
+      ],
+      "title": "ToolCallData",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "model_call"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "additionalProperties": false,
+            "description": "One model call: token usage and what came back.",
+            "properties": {
+              "completion_tokens": {
+                "minimum": 0,
+                "title": "Completion Tokens",
+                "type": "integer"
+              },
+              "malformed": {
+                "default": 0,
+                "minimum": 0,
+                "title": "Malformed",
+                "type": "integer"
+              },
+              "prompt_tokens": {
+                "minimum": 0,
+                "title": "Prompt Tokens",
+                "type": "integer"
+              },
+              "repaired": {
+                "default": false,
+                "title": "Repaired",
+                "type": "boolean"
+              },
+              "step": {
+                "minimum": 1,
+                "title": "Step",
+                "type": "integer"
+              },
+              "tool_calls": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Tool Calls",
+                "type": "array"
+              }
+            },
+            "required": [
+              "step",
+              "prompt_tokens",
+              "completion_tokens"
+            ],
+            "title": "ModelCallData",
+            "type": "object"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "tool_call"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "additionalProperties": false,
+            "description": "One tool execution; its output is not stored, only its size.",
+            "properties": {
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "ok": {
+                "title": "Ok",
+                "type": "boolean"
+              },
+              "output_chars": {
+                "minimum": 0,
+                "title": "Output Chars",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "name",
+              "ok",
+              "output_chars"
+            ],
+            "title": "ToolCallData",
+            "type": "object"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "compaction"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "additionalProperties": false,
+            "properties": {
+              "dropped_outputs": {
+                "minimum": 0,
+                "title": "Dropped Outputs",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "dropped_outputs"
+            ],
+            "title": "CompactionData",
+            "type": "object"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "loop_warning"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "additionalProperties": false,
+            "properties": {
+              "signature": {
+                "title": "Signature",
+                "type": "string"
+              },
+              "stop": {
+                "title": "Stop",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "signature",
+              "stop"
+            ],
+            "title": "LoopWarningData",
+            "type": "object"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "finish_gate"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "additionalProperties": false,
+            "description": "The finish gate runs the task's VISIBLE check; its output is what the student saw.",
+            "properties": {
+              "output": {
+                "title": "Output",
+                "type": "string"
+              },
+              "passed": {
+                "title": "Passed",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "passed",
+              "output"
+            ],
+            "title": "FinishGateData",
+            "type": "object"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "error"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "title": "Kind",
+                "type": "string"
+              },
+              "message": {
+                "title": "Message",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "message"
+            ],
+            "title": "ErrorData",
+            "type": "object"
+          }
+        }
+      }
+    }
+  ],
+  "description": "One step of a run, with a payload typed by its event type.",
+  "properties": {
+    "data": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ModelCallData"
+        },
+        {
+          "$ref": "#/$defs/ToolCallData"
+        },
+        {
+          "$ref": "#/$defs/CompactionData"
+        },
+        {
+          "$ref": "#/$defs/LoopWarningData"
+        },
+        {
+          "$ref": "#/$defs/FinishGateData"
+        },
+        {
+          "$ref": "#/$defs/ErrorData"
+        }
+      ],
+      "title": "Data"
+    },
+    "schema_version": {
+      "const": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "time": {
+      "format": "date-time",
+      "title": "Time",
+      "type": "string"
+    },
+    "type": {
+      "enum": [
+        "model_call",
+        "tool_call",
+        "compaction",
+        "loop_warning",
+        "finish_gate",
+        "error"
+      ],
+      "title": "Type",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "type",
+    "time",
+    "data"
+  ],
+  "title": "RunEvent",
+  "type": "object"
+}

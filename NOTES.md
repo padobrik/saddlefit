@@ -20,3 +20,8 @@ Assumptions taken where the spec leaves a detail open. Deviations from the spec 
   personal access token.
 - **Live smoke model.** Nightly live tests use `qwen3:0.6b` through the `ollama/ollama` service
   container.
+- **max_steps vs. timeout.** "max_steps can never stretch a run past evaluation.timeout_seconds"
+  is enforced by clamping `max_steps` to `timeout_seconds` (at least one second per step); the
+  run's wall clock is also bounded by the sandbox's per-run deadline.
+- **Allowlist paths.** Harness paths are judged on their raw segments: empty, `.` and `..`
+  segments are refused rather than normalized.
