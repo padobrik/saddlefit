@@ -63,8 +63,12 @@ reviews:
       - name: "Schema versioning"
         mode: error
         instructions: |
-          Fail if a persisted data model changes without a schema_version bump, a migration
-          and a test. Pass if no persisted model changed.
+          Every persisted format must carry an integer schema_version; fail if a new one
+          does not. Fail if a released persisted data model changes without a
+          schema_version bump, a migration and a test. A model is released once a vX.Y.Z
+          tag contains it. A new format introduced at schema_version 1, or a change to a
+          format no release has shipped yet, needs no bump or migration, because no reader
+          of an earlier version can exist. Pass otherwise.
   tools:
     ruff:
       enabled: true

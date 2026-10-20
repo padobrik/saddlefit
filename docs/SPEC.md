@@ -47,7 +47,7 @@ Create a public GitHub repository named `saddlefit` and build the tool described
 4. After the bootstrap commit (C1), never push to `main`. Every change goes through a pull request.
 5. Never merge with failing required checks, unresolved review threads or without CodeRabbit's approval (C8). Never use `--admin`, a ruleset bypass, or any setting change that weakens protection, CI or tests.
 6. Never commit secrets. Keys come only from environment variables or repository secrets, and never reach logs, prompts or the sandbox.
-7. Every change to a persisted format bumps its `schema_version` and ships a migration and tests (C7).
+7. Every change to a released persisted format bumps its `schema_version` and ships a migration and tests (C7). A format is released once a `vX.Y.Z` tag contains it; new and not-yet-released formats stay at their version (ADR 0002).
 8. If the implementation must deviate from this spec, write an ADR in `docs/adr/` and update `docs/SPEC.md` in the same pull request.
 9. When blocked by an owner-only step or by an ambiguity that affects evaluation integrity, stop, open an issue that explains the blocker, and wait.
 
@@ -1094,8 +1094,12 @@ reviews:
       - name: "Schema versioning"
         mode: error
         instructions: |
-          Fail if a persisted data model changes without a schema_version bump, a migration
-          and a test. Pass if no persisted model changed.
+          Every persisted format must carry an integer schema_version; fail if a new one
+          does not. Fail if a released persisted data model changes without a
+          schema_version bump, a migration and a test. A model is released once a vX.Y.Z
+          tag contains it. A new format introduced at schema_version 1, or a change to a
+          format no release has shipped yet, needs no bump or migration, because no reader
+          of an earlier version can exist. Pass otherwise.
   tools:
     ruff:
       enabled: true
