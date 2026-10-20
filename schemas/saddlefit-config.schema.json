@@ -2,6 +2,7 @@
   "$defs": {
     "EvaluationConfig": {
       "additionalProperties": false,
+      "description": "Repeated-run evaluation settings and paths the student must not touch.",
       "properties": {
         "protected_paths": {
           "default": [
@@ -39,6 +40,7 @@
     },
     "FastLoopConfig": {
       "additionalProperties": false,
+      "description": "Budget for the fast loop during a task.",
       "properties": {
         "max_variants": {
           "default": 3,
@@ -64,6 +66,7 @@
     },
     "GeneratorConfig": {
       "additionalProperties": false,
+      "description": "The strong model that writes new tasks; a separate role from the tutor.",
       "properties": {
         "model": {
           "default": "claude-fable-5-1",
@@ -85,6 +88,7 @@
     },
     "SandboxConfig": {
       "additionalProperties": false,
+      "description": "Image and resource limits for the student and evaluation containers.",
       "properties": {
         "cpus": {
           "default": 2,
@@ -115,6 +119,7 @@
     },
     "SplitsConfig": {
       "additionalProperties": false,
+      "description": "Fractions of the task suite assigned to each split.",
       "properties": {
         "control": {
           "default": 0.25,
@@ -143,6 +148,7 @@
     },
     "StudentConfig": {
       "additionalProperties": false,
+      "description": "The compact local model that does the tasks.",
       "properties": {
         "base_url": {
           "default": "http://localhost:11434/v1",
@@ -173,6 +179,7 @@
         "release_date": {
           "anyOf": [
             {
+              "format": "date",
               "type": "string"
             },
             {
@@ -210,6 +217,7 @@
     },
     "TokenPrices": {
       "additionalProperties": false,
+      "description": "Tutor prices in USD per million tokens; filled in by the user, never hardcoded.",
       "properties": {
         "input": {
           "default": 0.0,
@@ -229,6 +237,7 @@
     },
     "TutorConfig": {
       "additionalProperties": false,
+      "description": "The strong model that diagnoses failures, and its per-round budget.",
       "properties": {
         "max_calls_per_round": {
           "default": 20,
@@ -269,6 +278,7 @@
     }
   },
   "additionalProperties": false,
+  "description": "The whole ``saddlefit.yaml`` file.",
   "properties": {
     "evaluation": {
       "$ref": "#/$defs/EvaluationConfig",
