@@ -119,9 +119,9 @@ def test_test_path_detection(path: str, is_test: bool) -> None:
     assert is_test_path(path) is is_test
 
 
-def candidate(subject: str) -> Candidate:
+def candidate(subject: str, sha: str = "abcdef1234567") -> Candidate:
     return Candidate(
-        sha="abcdef1234567",
+        sha=sha,
         parent="p",
         committed=datetime.now(UTC),
         subject=subject,
@@ -136,20 +136,26 @@ def candidate(subject: str) -> Candidate:
     [
         (
             "fix: parse_iso reads month before day",
-            "parse-iso-reads-month-before-day-abcdef1",
+            "parse-iso-reads-month-before-day-abcdef1234567",
             "bugfix",
         ),
-        ("feat(cli)!: Add JSON output", "add-json-output-abcdef1", "feature"),
-        ("Refactor everything!!!", "refactor-everything-abcdef1", "change"),
-        ("!!!", "change-abcdef1", "change"),
-        ("feat(eval): add leak guard (#65)", "add-leak-guard-abcdef1", "feature"),
-        ("fix!: drop py3.8", "drop-py3-8-abcdef1", "bugfix"),
-        ("feat!: new api", "new-api-abcdef1", "feature"),
+        ("feat(cli)!: Add JSON output", "add-json-output-abcdef1234567", "feature"),
+        ("Refactor everything!!!", "refactor-everything-abcdef1234567", "change"),
+        ("!!!", "change-abcdef1234567", "change"),
+        ("feat(eval): add leak guard (#65)", "add-leak-guard-abcdef1234567", "feature"),
+        ("fix!: drop py3.8", "drop-py3-8-abcdef1234567", "bugfix"),
+        ("feat!: new api", "new-api-abcdef1234567", "feature"),
     ],
 )
 def test_ids_and_types(subject: str, task_id: str, task_type: str) -> None:
     assert task_id_for(candidate(subject)) == task_id
     assert task_type_for(candidate(subject)) == task_type
+
+
+def test_commits_sharing_a_subject_and_short_sha_get_distinct_ids() -> None:
+    first = candidate("fix: same subject", sha="abcdef1" + "0" * 33)
+    second = candidate("fix: same subject", sha="abcdef1" + "f" * 33)
+    assert task_id_for(first) != task_id_for(second)
 
 
 def commit_all(repo: Path, message: str) -> None:

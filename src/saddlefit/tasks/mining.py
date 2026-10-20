@@ -251,11 +251,12 @@ _SLUG = re.compile(r"[^a-z0-9]+")
 
 
 def task_id_for(candidate: Candidate) -> str:
-    """A readable, unique ID: the subject as a slug plus the short SHA."""
+    """A readable, unique ID: the subject as a slug plus the full SHA."""
     subject = re.sub(r"^\w+(\([^)]*\))?!?:\s*", "", candidate.subject.lower())
     subject = re.sub(r"\s*\(#\d+\)$", "", subject)  # squash-merge PR reference
     slug = _SLUG.sub("-", subject).strip("-")[:48].strip("-") or "change"
-    return f"{slug}-{candidate.sha[:7]}"
+    # a short SHA can repeat across commits that also share a subject
+    return f"{slug}-{candidate.sha}"
 
 
 def task_type_for(candidate: Candidate) -> str:
