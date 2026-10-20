@@ -11,16 +11,25 @@ import os
 import re
 import secrets
 import shutil
+import sys
 import tempfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
 
 from saddlefit.tasks.models import TASK_ID_PATTERN
+
+if sys.platform == "win32":
+    import msvcrt
+else:
+    import fcntl
 
 CANARY_PREFIX = "SADDLEFIT-CANARY-"
 _TASK_ID = re.compile(TASK_ID_PATTERN)
 # a replaced task waits under ".<id>~old" until the new one is in place; "~" never
 # appears in a task id or a staging name, so the name cannot collide with either
 RETIRED_SUFFIX = "~old"
+CHECK_OUTPUT_DIR = "check_output"
 _COMMENT_PREFIX = {".py": "# ", ".sh": "# ", ".cfg": "# ", ".toml": "# ", ".ini": "# "}
 
 
@@ -45,6 +54,36 @@ def _embed(content: str, suffix: str, canary: str) -> str:
         first, _, rest = content.partition("\n")
         return f"{first}\n{line}{rest}"
     return line + content
+
+
+@contextmanager
+def task_lock(sealed_root: Path, task_id: str) -> Iterator[None]:
+    """Hold the task's exclusive lock; replacing a task and recording its output both take it.
+
+    The operating system drops the lock when the process ends, so a crash leaves none behind.
+    """
+    fd = os.open(sealed_root / f".{task_id}~lock", os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        if sys.platform == "win32":
+            while True:
+                try:
+                    msvcrt.locking(fd, msvcrt.LK_LOCK, 1)
+                    break
+                except OSError:  # LK_LOCK gives up after about ten seconds
+                    continue
+            try:
+                yield
+            finally:
+                os.lseek(fd, 0, os.SEEK_SET)
+                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+        else:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
 
 
 def retired_name(task_id: str) -> str:
@@ -78,17 +117,39 @@ class SealedWriter:
         reference_patch: str | None = None,
         replace: bool = False,
     ) -> None:
-        if not _TASK_ID.match(task_id):
+        if not _TASK_ID.fullmatch(task_id):
             raise SealingError(f"invalid task id: {task_id!r}")
         if (target_commit is None) == (reference_patch is None):
             raise SealingError("give exactly one of target_commit (history) or reference_patch")
         rels = _checked_paths(hidden_tests)
+        self._root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        with task_lock(self._root, task_id):
+            self._write_locked(
+                task_id=task_id,
+                check_sh=check_sh,
+                hidden_tests=hidden_tests,
+                rels=rels,
+                target_commit=target_commit,
+                reference_patch=reference_patch,
+                replace=replace,
+            )
+
+    def _write_locked(
+        self,
+        *,
+        task_id: str,
+        check_sh: str,
+        hidden_tests: dict[str, str],
+        rels: dict[str, PurePosixPath],
+        target_commit: str | None,
+        reference_patch: str | None,
+        replace: bool,
+    ) -> None:
         task_dir = self._root / task_id
         retired = self._root / retired_name(task_id)
         _recover(task_dir, retired)
         if task_dir.exists() and not replace:
             raise SealingError(f"sealed task already exists: {task_id}")
-        self._root.mkdir(parents=True, exist_ok=True, mode=0o700)
 
         # Build the task beside its final place, then swap it in, so a failed write never
         # leaves a partial task or destroys the one being replaced.
@@ -105,6 +166,7 @@ class SealedWriter:
                 _write(staging / "target_commit", target_commit.strip() + "\n")
             if reference_patch is not None:
                 _write(staging / "reference.patch", reference_patch)
+            _carry_check_output(task_dir, staging)
             _swap_into_place(staging, task_dir, retired)
         finally:
             if staging.exists():
@@ -124,6 +186,18 @@ def _checked_paths(hidden_tests: dict[str, str]) -> dict[str, PurePosixPath]:
             if parent in seen:
                 raise SealingError(f"hidden test paths collide: {seen[parent]!r} and {path!r}")
     return rels
+
+
+def _carry_check_output(task_dir: Path, staging: Path) -> None:
+    """Copy the output of earlier hidden-check runs into the replacement task."""
+    source = task_dir / CHECK_OUTPUT_DIR
+    if source.is_symlink() or not source.is_dir():
+        return
+    target = staging / CHECK_OUTPUT_DIR
+    target.mkdir(mode=0o700)
+    for path in sorted(source.iterdir()):
+        if path.is_file() and not path.is_symlink():
+            shutil.copy2(path, target / path.name)
 
 
 def _recover(task_dir: Path, retired: Path) -> None:

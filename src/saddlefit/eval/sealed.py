@@ -12,7 +12,13 @@ import re
 from pathlib import Path
 
 from saddlefit.tasks.models import TASK_ID_PATTERN
-from saddlefit.tasks.sealing import CANARY_PREFIX, RETIRED_SUFFIX, retired_name
+from saddlefit.tasks.sealing import (
+    CANARY_PREFIX,
+    CHECK_OUTPUT_DIR,
+    RETIRED_SUFFIX,
+    retired_name,
+    task_lock,
+)
 
 _TASK_ID = re.compile(TASK_ID_PATTERN)
 _RUN_ID = re.compile(r"^[0-9A-HJKMNP-TV-Z]{26}$")  # a ULID
@@ -29,7 +35,7 @@ class SealedStore:
         self._root = sealed_root
 
     def _task_dir(self, task_id: str) -> Path:
-        if not _TASK_ID.match(task_id):
+        if not _TASK_ID.fullmatch(task_id):
             raise SealedStoreError(f"invalid task id: {task_id!r}")
         path = self._root / task_id
         if path.parent != self._root:
@@ -79,7 +85,7 @@ class SealedStore:
             if name.startswith(".") and name.endswith(RETIRED_SUFFIX):
                 name = name[1 : -len(RETIRED_SUFFIX)]
             # skips staging directories (".<id>.*") left by an interrupted write
-            if _TASK_ID.match(name) and p.is_dir():
+            if _TASK_ID.fullmatch(name) and p.is_dir():
                 ids.add(name)
         return frozenset(
             self.canary(task_id)
@@ -89,9 +95,16 @@ class SealedStore:
 
     def record_check_output(self, task_id: str, run_id: str, output: str) -> Path:
         """Store hidden-check output in the sealed store; it never enters a run record."""
-        if not _RUN_ID.match(run_id):
+        if not _RUN_ID.fullmatch(run_id):
             raise SealedStoreError(f"invalid run id: {run_id!r}")
-        out_dir = self._task_dir(task_id) / "check_output"
+        self._task_dir(task_id)  # validates the id before the lock file is named after it
+        # a replace copies this directory into the new task; the lock keeps a run from
+        # landing in the old copy after that
+        with task_lock(self._root, task_id):
+            return self._record_locked(task_id, run_id, output)
+
+    def _record_locked(self, task_id: str, run_id: str, output: str) -> Path:
+        out_dir = self._task_dir(task_id) / CHECK_OUTPUT_DIR
         if out_dir.is_symlink():
             raise SealedStoreError(f"check_output of task {task_id!r} must not be a symlink")
         out_dir.mkdir(exist_ok=True, mode=0o700)

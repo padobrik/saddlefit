@@ -1,5 +1,6 @@
 import os
 import stat
+import threading
 from pathlib import Path
 
 import pytest
@@ -138,7 +139,7 @@ def test_failed_replace_keeps_the_old_task(tmp_path: Path, monkeypatch: pytest.M
         seal(tmp_path, replace=True)
     assert store.canary("fix-0001") == old_canary
     assert store.hidden_test_paths("fix-0001") == ["tests/data.json", "tests/test_dates.py"]
-    assert sorted(p.name for p in tmp_path.iterdir()) == ["fix-0001"]
+    assert sorted(p.name for p in tmp_path.iterdir()) == [".fix-0001~lock", "fix-0001"]
 
 
 def test_leftover_staging_directories_are_ignored(tmp_path: Path) -> None:
@@ -175,7 +176,7 @@ def test_interrupted_replace_keeps_the_old_task_available(
     assert store.all_canaries() == {old_canary}
     seal(tmp_path, replace=True)
     assert store.canary("fix-0001") != old_canary
-    assert sorted(p.name for p in tmp_path.iterdir()) == ["fix-0001"]
+    assert sorted(p.name for p in tmp_path.iterdir()) == [".fix-0001~lock", "fix-0001"]
 
 
 @pytest.mark.skipif(os.name == "nt", reason="creating symlinks needs privileges on Windows")
@@ -197,3 +198,58 @@ def test_reader_refuses_symlinks(tmp_path: Path) -> None:
     with pytest.raises(SealedStoreError, match="symlink"):
         store.record_check_output("fix-0001", RUN_ID, "secret")
     assert list(outside.iterdir()) == []
+
+
+def test_ids_with_a_trailing_newline_are_rejected(tmp_path: Path) -> None:
+    store = seal(tmp_path)
+    with pytest.raises(SealingError, match="invalid task id"):
+        seal(tmp_path, "fix-0002\n")
+    with pytest.raises(SealedStoreError, match="invalid task id"):
+        store.check_script("fix-0001\n")
+    with pytest.raises(SealedStoreError, match="invalid run id"):
+        store.record_check_output("fix-0001", RUN_ID + "\n", "x")
+
+
+def test_replace_keeps_recorded_check_output(tmp_path: Path) -> None:
+    store = seal(tmp_path)
+    store.record_check_output("fix-0001", RUN_ID, "first run")
+    seal(tmp_path, replace=True)
+    path = tmp_path / "fix-0001" / "check_output" / f"{RUN_ID}.txt"
+    assert path.read_text(encoding="utf-8") == "first run"
+
+
+def test_interrupted_replace_keeps_recorded_check_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = seal(tmp_path)
+    store.record_check_output("fix-0001", RUN_ID, "first run")
+    real_rename = Path.rename
+
+    def dies_while_installing(self: Path, target: str | os.PathLike[str]) -> Path:
+        if Path(target).name == "fix-0001" and self.name.startswith(".fix-0001."):
+            raise KeyboardInterrupt
+        return real_rename(self, target)
+
+    monkeypatch.setattr(Path, "rename", dies_while_installing)
+    with pytest.raises(KeyboardInterrupt):
+        seal(tmp_path, replace=True)
+    monkeypatch.undo()
+    seal(tmp_path, replace=True)
+    path = tmp_path / "fix-0001" / "check_output" / f"{RUN_ID}.txt"
+    assert path.read_text(encoding="utf-8") == "first run"
+
+
+def test_recording_output_waits_for_a_replace_in_progress(tmp_path: Path) -> None:
+    store = seal(tmp_path)
+    done = threading.Event()
+
+    def record() -> None:
+        store.record_check_output("fix-0001", RUN_ID, "late run")
+        done.set()
+
+    with sealing.task_lock(tmp_path, "fix-0001"):
+        worker = threading.Thread(target=record)
+        worker.start()
+        assert not done.wait(0.3)
+    worker.join(5)
+    assert done.is_set()
