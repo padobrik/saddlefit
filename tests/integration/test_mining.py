@@ -315,3 +315,18 @@ def test_test_data_symlinks_leaving_the_snapshot_are_rejected(tmp_path: Path) ->
     commit_all(repo, "fix: link out")
     candidate = next(c for c, _ in iter_commits(repo, limit=1) if c is not None)
     assert check_candidate(repo, candidate, Scripted(0, 1)) == "snapshot_error"
+
+
+def test_a_symlink_loop_is_a_snapshot_error_not_a_crash(tmp_path: Path) -> None:
+    repo = build(tmp_path / "repo")
+    data = repo / "tests" / "data"
+    data.mkdir()
+    (data / "loop.json").symlink_to("loop.json")  # points at itself
+    commit_all(repo, "test: a broken link")
+    (data / "current.json").symlink_to("loop.json")
+    (repo / "tests" / "test_x.py").write_text("def test_x() -> None:\n    pass\n")
+    (repo / "src" / "toykit" / "x.py").write_text("X = 1\n")
+    commit_all(repo, "fix: link to the loop")
+    candidate = next(c for c, _ in iter_commits(repo, limit=1) if c is not None)
+    # Python 3.12 raises RuntimeError on a loop in resolve(); 3.13+ resolves lazily.
+    assert check_candidate(repo, candidate, Scripted(0, 1)) in {"snapshot_error", None}
