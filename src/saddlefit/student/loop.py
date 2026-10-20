@@ -86,6 +86,8 @@ class _RunState:
 
 @dataclass
 class StudentLoop:
+    """Runs one task: the model works through tools until it finishes or a limit stops it."""
+
     client: ModelClient
     tools: Tools
     loop: LoopConfig

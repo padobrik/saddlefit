@@ -20,6 +20,7 @@ from saddlefit.providers.base import (
     Usage,
 )
 from saddlefit.providers.fake import FakeClient
+from saddlefit.storage.runs import EVENT_DATA
 from saddlefit.student.loop import NUDGE, StudentLoop, call_signature
 from saddlefit.tools.builtin import ToolResult
 
@@ -49,6 +50,8 @@ class Recorder:
     events: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
 
     def event(self, type: str, data: dict[str, Any] | None = None) -> None:
+        # every payload must fit the typed run-record schema, as the real RunWriter demands
+        EVENT_DATA[type].model_validate(data or {})
         self.events.append((type, data or {}))
 
     def types(self) -> list[str]:
