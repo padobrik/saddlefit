@@ -25,6 +25,9 @@ from saddlefit.sandbox.container import Sandbox, SandboxError
 DIFF_FILE = ".saddlefit-student.diff"
 CHECK_FILE = ".saddlefit-check.sh"
 APPLY_TIMEOUT_S = 60
+# a student's diff is untrusted input to a host-side git process: bound its size and time
+MAX_DIFF_BYTES = 1_000_000
+PARSE_TIMEOUT_S = 30
 # room for container start-up and the diff on top of the check's own timeout
 RUN_MARGIN_S = 120
 
@@ -65,6 +68,8 @@ class Evaluator:
     def evaluate(self, task_id: str, base_snapshot: Path, diff: str, run_id: str) -> Verdict:
         """Judge ``diff`` against task ``task_id`` starting from ``base_snapshot``."""
         touched = diff_paths(diff)
+        if len(diff.encode("utf-8", errors="surrogateescape")) > MAX_DIFF_BYTES:
+            return Verdict(passed=False, exit_code=None, duration_s=0.0, diff_applied=False)
         if diff.strip():
             applied = _applied_paths(diff)
             if applied is None:
@@ -134,14 +139,18 @@ def _applied_paths(diff: str) -> set[str] | None:
         "GIT_CONFIG_GLOBAL": os.devnull,
     }
     with tempfile.TemporaryDirectory(prefix="saddlefit-numstat-") as tmp:
-        result = subprocess.run(
-            ["git", "apply", "--numstat", "-z", "-"],  # noqa: S607
-            cwd=tmp,  # outside any repository, so nothing is resolved against one
-            env=env,
-            input=diff.encode("utf-8", errors="surrogateescape"),
-            capture_output=True,
-            check=False,
-        )
+        try:
+            result = subprocess.run(
+                ["git", "apply", "--numstat", "-z", "-"],  # noqa: S607
+                cwd=tmp,  # outside any repository, so nothing is resolved against one
+                env=env,
+                input=diff.encode("utf-8", errors="surrogateescape"),
+                capture_output=True,
+                timeout=PARSE_TIMEOUT_S,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            return None
     if result.returncode != 0:
         return None
     paths: set[str] = set()

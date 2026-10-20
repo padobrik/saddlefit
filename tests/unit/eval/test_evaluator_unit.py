@@ -1,9 +1,11 @@
+import subprocess
 from pathlib import Path
 
 import pytest
 
 from saddlefit.config import EvaluationConfig, SandboxConfig
-from saddlefit.eval.evaluator import Evaluator, PlantedSymlinkError, _inside
+from saddlefit.eval import evaluator as evaluator_module
+from saddlefit.eval.evaluator import MAX_DIFF_BYTES, Evaluator, PlantedSymlinkError, _inside
 from saddlefit.eval.sealed import SealedStore
 from saddlefit.tasks.sealing import SealedWriter
 
@@ -99,3 +101,30 @@ def test_environment_errors_are_reported(tmp_path: Path) -> None:
     assert not verdict.passed
     assert verdict.env_error is not None
     assert "daemon unavailable" in verdict.env_error
+
+
+def test_an_oversized_diff_fails_before_any_parsing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def no_git(*args: object, **kwargs: object) -> object:
+        raise AssertionError("git must not run on an oversized diff")
+
+    monkeypatch.setattr(evaluator_module.subprocess, "run", no_git)
+    diff = "--- a/src/a.py\n+++ b/src/a.py\n@@ -1 +1 @@\n-x\n+" + "y" * MAX_DIFF_BYTES + "\n"
+    evaluator = Evaluator(_store(tmp_path), None, "img", SandboxConfig(), EvaluationConfig())
+    verdict = evaluator.evaluate("t-0001", tmp_path, diff, "01JB2Y8Q4V9N1K3D7M5R6T0W2X")
+    assert (verdict.passed, verdict.diff_applied) == (False, False)
+
+
+def test_a_slow_diff_parse_counts_as_a_diff_that_does_not_apply(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def too_slow(*args: object, **kwargs: object) -> object:
+        assert kwargs.get("timeout"), "the host-side parse needs a timeout"
+        raise subprocess.TimeoutExpired(cmd="git", timeout=float(kwargs["timeout"]))  # type: ignore[arg-type]
+
+    monkeypatch.setattr(evaluator_module.subprocess, "run", too_slow)
+    diff = "--- a/src/a.py\n+++ b/src/a.py\n@@ -1 +1 @@\n-x\n+y\n"
+    evaluator = Evaluator(_store(tmp_path), None, "img", SandboxConfig(), EvaluationConfig())
+    verdict = evaluator.evaluate("t-0001", tmp_path, diff, "01JB2Y8Q4V9N1K3D7M5R6T0W2X")
+    assert (verdict.passed, verdict.diff_applied) == (False, False)
