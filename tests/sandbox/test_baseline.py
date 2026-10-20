@@ -6,13 +6,13 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from saddlefit.harness.store import HarnessStore
 from tests.fixtures.toyrepo.build import build
 
 from saddlefit.config import Config, EvaluationConfig, SandboxConfig
 from saddlefit.eval.evaluator import Evaluator
 from saddlefit.eval.leak_guard import GuardedClient, guard_for_suite
 from saddlefit.harness.loop_config import default_loop_config
+from saddlefit.harness.store import HarnessStore
 from saddlefit.loops.baseline import BASELINE_SPLITS, BaselineRunner
 from saddlefit.providers.base import ModelReply, ToolCall
 from saddlefit.providers.fake import FakeClient
