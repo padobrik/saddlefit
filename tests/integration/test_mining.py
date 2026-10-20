@@ -328,5 +328,10 @@ def test_a_symlink_loop_is_a_snapshot_error_not_a_crash(tmp_path: Path) -> None:
     (repo / "src" / "toykit" / "x.py").write_text("X = 1\n")
     commit_all(repo, "fix: link to the loop")
     candidate = next(c for c, _ in iter_commits(repo, limit=1) if c is not None)
-    # Python 3.12 raises RuntimeError on a loop in resolve(); 3.13+ resolves lazily.
-    assert check_candidate(repo, candidate, Scripted(0, 1)) in {"snapshot_error", None}
+    verdict = check_candidate(repo, candidate, Scripted(0, 1))
+    if sys.version_info < (3, 13):
+        # 3.12 raises RuntimeError for a loop in resolve(); it must become snapshot_error
+        assert verdict == "snapshot_error"
+    else:
+        # 3.13+ resolves a loop without raising; the link stays inside the snapshot
+        assert verdict is None
