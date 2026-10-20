@@ -45,3 +45,17 @@ def docker_client() -> Iterator["docker.DockerClient"]:
     client = docker.from_env()
     yield client
     client.close()
+
+
+@pytest.fixture(scope="session")
+def sandbox_image(docker_client: "docker.DockerClient") -> str:
+    """The sandbox image under test. Building it needs the network, so tests never do."""
+    image = os.environ.get("SADDLEFIT_SANDBOX_IMAGE", "saddlefit-sandbox:test")
+    try:
+        docker_client.images.get(image)
+    except docker.errors.ImageNotFound:
+        hint = f"sandbox image {image!r} not found; build it with: docker build -t {image} sandbox/"
+        if os.environ.get("SADDLEFIT_REQUIRE_DOCKER") == "1":
+            pytest.fail(hint)
+        pytest.skip(hint)
+    return image
