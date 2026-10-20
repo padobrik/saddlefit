@@ -91,8 +91,11 @@ class RunWriter:
         self.run_id = run_id
         self.path = runs_root / when.strftime("%Y-%m-%d") / f"{run_id}.jsonl"
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        if self.path.exists():
-            raise FileExistsError(f"run record already exists: {self.path}")
+        try:
+            # "x" checks and creates in one step, so two writers can never share a file.
+            self.path.open("x", encoding="utf-8").close()
+        except FileExistsError:
+            raise FileExistsError(f"run record already exists: {self.path}") from None
         self._closed = False
 
     def _append(self, model: BaseModel) -> None:

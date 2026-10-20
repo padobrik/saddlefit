@@ -147,3 +147,11 @@ def test_registry_guards() -> None:
     register("bad", 0)(lambda r: r)
     with pytest.raises(MigrationError, match="did not produce"):
         upgrade("bad", {"schema_version": 0}, 1)
+
+
+def test_second_writer_for_the_same_run_is_refused_before_any_event(tmp_path: Path) -> None:
+    run_id = new_run_id()
+    first = RunWriter(tmp_path, run_id, now=NOW)
+    assert first.path.exists()
+    with pytest.raises(FileExistsError, match="already exists"):
+        RunWriter(tmp_path, run_id, now=NOW)
