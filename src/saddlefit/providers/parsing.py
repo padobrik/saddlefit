@@ -7,14 +7,17 @@ pass rewrites Python-style literals (single quotes, ``True``/``False``/``None``)
 
 from __future__ import annotations
 
+import ast
 import json
 import re
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Any
 
 from saddlefit.providers.base import ToolSpec
 
-_FENCE = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL)
+# A fence opens and closes at line starts; the closer may be longer than the opener.
+_FENCE = re.compile(r"^(`{3,})[^\n]*\n(.*?)^\1`*[ \t]*$", re.DOTALL | re.MULTILINE)
+_STRING_TOKEN = re.compile(r"(\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*')")
 _TRAILING_COMMA = re.compile(r",\s*([}\]])")
 _PY_LITERALS = {"True": "true", "False": "false", "None": "null"}
 
@@ -49,39 +52,81 @@ def _first_object(text: str) -> str | None:
     return None
 
 
+def _outside_strings(candidate: str, fix: Callable[[str], str]) -> str:
+    """Apply ``fix`` only to the parts of ``candidate`` that are not string literals."""
+    return "".join(
+        token if _STRING_TOKEN.fullmatch(token) else fix(token)
+        for token in _STRING_TOKEN.split(candidate)
+    )
+
+
+def _strip_trailing_commas(candidate: str) -> str:
+    return _outside_strings(candidate, lambda part: _TRAILING_COMMA.sub(r"\1", part))
+
+
+def _single_quoted_to_json(token: str) -> str:
+    try:
+        value = ast.literal_eval(token)
+    except (SyntaxError, ValueError):
+        value = token[1:-1].replace('\\"', '"').replace("\\'", "'")
+    return json.dumps(value if isinstance(value, str) else str(value))
+
+
 def _repair(candidate: str) -> str:
+    """Rewrite Python-style literals: single-quoted strings and True/False/None."""
     out: list[str] = []
-    for token in re.split(r"(\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*')", candidate):
-        if token.startswith("'") and token.endswith("'") and len(token) >= 2:
-            inner = token[1:-1].replace('\\"', '"').replace("\\'", "'")
-            out.append(json.dumps(inner))
-        elif token.startswith('"'):
+    for token in _STRING_TOKEN.split(candidate):
+        if token.startswith("'") and _STRING_TOKEN.fullmatch(token):
+            out.append(_single_quoted_to_json(token))
+        elif token.startswith('"') and _STRING_TOKEN.fullmatch(token):
             out.append(token)
         else:
             out.append(re.sub(r"\b(True|False|None)\b", lambda m: _PY_LITERALS[m[1]], token))
     return "".join(out)
 
 
+def _loads(candidate: str) -> Any:
+    try:
+        return json.loads(candidate)
+    except json.JSONDecodeError as exc:
+        raise MalformedToolCall(f"invalid JSON: {exc.msg}") from exc
+    except (ValueError, RecursionError) as exc:
+        raise MalformedToolCall(f"invalid JSON: {type(exc).__name__}") from exc
+
+
+def _find_candidate(text: str) -> str | None:
+    for fenced in _FENCE.finditer(text):
+        candidate = _first_object(fenced.group(2))
+        if candidate is not None:
+            return candidate
+    return _first_object(text)
+
+
 def extract_json_object(text: str) -> tuple[dict[str, Any], bool]:
-    """Extract one JSON object from model text; return it and whether repair was needed."""
-    fenced = _FENCE.search(text)
-    body = fenced.group(1) if fenced else text
-    candidate = _first_object(body)
+    """Extract one JSON object from model text; return it and whether repair was needed.
+
+    Valid JSON is parsed unchanged. Otherwise trailing commas outside strings are dropped,
+    and then Python-style literals are rewritten; either step counts as a repair.
+    """
+    candidate = _find_candidate(text)
     if candidate is None:
         raise MalformedToolCall("no JSON object found")
-    candidate = _TRAILING_COMMA.sub(r"\1", candidate)
-    try:
-        value = json.loads(candidate)
-        repaired = False
-    except json.JSONDecodeError:
+    attempts = (
+        (candidate, False),
+        (_strip_trailing_commas(candidate), True),
+        (_strip_trailing_commas(_repair(candidate)), True),
+    )
+    errors: list[MalformedToolCall] = []
+    for attempt, repaired in attempts:
         try:
-            value = json.loads(_TRAILING_COMMA.sub(r"\1", _repair(candidate)))
-        except json.JSONDecodeError as exc:
-            raise MalformedToolCall(f"invalid JSON: {exc.msg}") from exc
-        repaired = True
-    if not isinstance(value, dict):
-        raise MalformedToolCall("top-level JSON value is not an object")
-    return value, repaired
+            value = _loads(attempt)
+        except MalformedToolCall as exc:
+            errors.append(exc)
+            continue
+        if not isinstance(value, dict):
+            raise MalformedToolCall("top-level JSON value is not an object")
+        return value, repaired
+    raise errors[0]
 
 
 _JSON_TYPES: dict[str, tuple[type, ...]] = {
