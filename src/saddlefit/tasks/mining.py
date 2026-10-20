@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 import subprocess
 import tempfile
 from collections import Counter
@@ -17,9 +18,11 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from pathlib import Path, PurePosixPath
-from typing import Final, Literal, Protocol
+from typing import Any, Final, Literal, Protocol
 
+from saddlefit.config import SandboxConfig
 from saddlefit.eval.tamper import matches_any
+from saddlefit.sandbox.container import Sandbox, SandboxError
 
 DEFAULT_TEST_PATTERNS: tuple[str, ...] = ("tests/**", "**/test_*.py", "**/*_test.py")
 # pytest: 0 all passed, 1 tests failed, 2 interrupted (e.g. an import error in a new test)
@@ -259,7 +262,7 @@ def check_candidate(repo: Path, candidate: Candidate, runner: Runner) -> Rejecti
             if on_commit != 0:
                 return "fails_on_commit"
             on_parent = runner.run_tests(before, candidate.test_files)
-        except (OSError, subprocess.SubprocessError):
+        except (OSError, subprocess.SubprocessError, SandboxError):
             return "runner_error"
         return None if on_parent in _FAILED_ON_PARENT else "passes_on_parent"
 
@@ -304,41 +307,45 @@ def task_type_for(candidate: Candidate) -> str:
     return {"fix": "bugfix", "feat": "feature"}.get(prefix, "change")
 
 
-# What a test process needs to start on Linux, macOS and Windows; nothing that names the
-# original repository, the user's projects or credentials.
-_RUNNER_ENV_KEYS: Final = ("PATH", "SYSTEMROOT", "PATHEXT", "COMSPEC", "TEMP", "TMP", "TMPDIR")
-
-
-def _runner_env(snapshot: Path) -> dict[str, str]:
-    """A minimal environment for a test run: no inherited PYTHONPATH, PWD or secrets."""
-    env = {key: os.environ[key] for key in _RUNNER_ENV_KEYS if key in os.environ}
-    env.update(
-        HOME=str(snapshot),
-        LANG="C.UTF-8",
-        PYTHONDONTWRITEBYTECODE="1",
-        PYTHONNOUSERSITE="1",
-    )
-    # src-layout projects: import the snapshot's package, not an installed copy
-    if (snapshot / "src").is_dir():
-        env["PYTHONPATH"] = str(snapshot / "src")
-    return env
-
-
 @dataclass(frozen=True)
-class LocalRunner:
-    """Runs pytest on the host. Only for repositories you trust: their code executes here."""
+class SandboxRunner:
+    """Runs a candidate's tests in the sandbox: no network, B11 limits, only the snapshot.
 
-    python: str = "python"
+    Mining executes the repository's own tests, and a cloned repository is not necessarily
+    trusted, so they never run on the host. The container sees the snapshot at ``/work``
+    and the sandbox's fixed environment, nothing of the original repository or the host.
+    """
+
+    docker_client: Any
+    image: str
+    limits: SandboxConfig
     timeout_s: float = 300
 
     def run_tests(self, snapshot: Path, test_files: Sequence[str]) -> int:
-        """Run ``test_files`` in ``snapshot``; return pytest's exit code."""
-        result = subprocess.run(  # noqa: S603 - argv built from a fixed command and file names
-            [self.python, "-B", "-m", "pytest", "-q", "-p", "no:cacheprovider", *test_files],
-            cwd=snapshot,
-            env=_runner_env(snapshot),
-            capture_output=True,
-            timeout=self.timeout_s,
-            check=False,
+        """Run ``test_files`` in a fresh container over ``snapshot``; return pytest's exit code."""
+        command = " ".join(
+            [
+                "PYTHONPATH=src:.",
+                "python",
+                "-B",
+                "-m",
+                "pytest",
+                "-q",
+                "-p",
+                "no:cacheprovider",
+                *(shlex.quote(f) for f in test_files),
+            ]
         )
-        return result.returncode
+        with Sandbox(
+            self.docker_client,
+            self.image,
+            snapshot,
+            self.limits,
+            run_timeout_s=self.timeout_s + 60,
+            labels={"saddlefit.role": "mining"},
+        ) as box:
+            result = box.exec(command, self.timeout_s)
+        if result.timed_out:
+            # 124 is not a verdict on the tests; count it as a runner error, not a result
+            raise SandboxError("candidate tests timed out in the sandbox")
+        return result.exit_code

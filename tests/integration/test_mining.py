@@ -7,11 +7,11 @@ from pathlib import Path
 
 import pytest
 from tests.fixtures.toyrepo.build import FIXES, build
+from tests.integration.host_runner import HostRunner
 
 from saddlefit.tasks import mining
 from saddlefit.tasks.mining import (
     Candidate,
-    LocalRunner,
     check_candidate,
     is_test_path,
     iter_commits,
@@ -23,7 +23,7 @@ from saddlefit.tasks.mining import (
 pytestmark = pytest.mark.integration
 # Windows needs special rights to create symlinks, and git checks them out as plain files.
 POSIX_ONLY = pytest.mark.skipif(os.name == "nt", reason="symlinks need POSIX semantics")
-RUNNER = LocalRunner(python=sys.executable)
+RUNNER = HostRunner(python=sys.executable)
 
 
 @pytest.fixture(scope="module")
@@ -395,21 +395,3 @@ def test_export_drops_state_even_when_the_checkout_differs(tmp_path: Path) -> No
     mining._export(repo, "HEAD~1", dest)
     assert (dest / "src" / "toykit").is_dir()
     assert not (dest / ".saddlefit").exists()
-
-
-def test_local_runner_does_not_inherit_the_host_environment(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    snapshot = tmp_path / "snapshot"
-    (snapshot / "tests").mkdir(parents=True)
-    (snapshot / "tests" / "test_env.py").write_text(
-        "import os, sys\n\n\ndef test_env():\n"
-        "    assert 'SADDLEFIT_TEST_SECRET' not in os.environ\n"
-        "    assert os.environ.get('PWD') is None\n"
-        "    assert not any('evil-path' in p for p in sys.path)\n",
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("SADDLEFIT_TEST_SECRET", "x")
-    monkeypatch.setenv("PWD", str(tmp_path))
-    monkeypatch.setenv("PYTHONPATH", str(tmp_path / "evil-path"))
-    assert RUNNER.run_tests(snapshot, ["tests/test_env.py"]) == 0
