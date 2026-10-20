@@ -25,18 +25,29 @@ SECRET_ENV_VARS = (
     "GH_TOKEN",
 )
 
-_KEY_PATTERNS = [
+_KEY_SHAPES = [
     re.compile(r"sk-ant-[A-Za-z0-9_\-]{8,}"),
     re.compile(r"sk-(?:proj-)?[A-Za-z0-9_\-]{20,}"),
     re.compile(r"gh[pousr]_[A-Za-z0-9]{20,}"),
     re.compile(r"github_pat_[A-Za-z0-9_]{20,}"),
     re.compile(r"hf_[A-Za-z0-9]{20,}"),
     re.compile(r"AKIA[0-9A-Z]{16}"),
-    re.compile(r"(?i)(bearer\s+)[A-Za-z0-9._\-]{16,}"),
-    re.compile(
-        r"(?i)((?:api[_-]?key|x-api-key|authorization)[\"']?\s*[:=]\s*[\"']?)[^\s\"',;]{8,}"
-    ),
 ]
+
+_KEY_NAME = r"(?:api[_-]?key|x-api-key|authorization)[\"']?\s*[:=]\s*"
+_SCHEME = r"(?:bearer|basic|token|digest)\s+"
+# api_key="a b c": the whole quoted value, keeping an auth scheme word if present
+_QUOTED_ASSIGNMENT = re.compile(rf"(?i)({_KEY_NAME})([\"'])({_SCHEME})?(?:(?!\2).)+\2")
+# Authorization: Basic xxx, or a bare "Bearer xxx" anywhere
+_SCHEME_VALUE = re.compile(rf"(?i)\b({_SCHEME})[A-Za-z0-9._~+/=\-]{{8,}}")
+# api_key=xxx without quotes and without a scheme
+_BARE_ASSIGNMENT = re.compile(rf"(?i)({_KEY_NAME})(?![\"'])(?!{_SCHEME})[^\s\"',;]{{8,}}")
+
+
+def _redact_quoted(match: re.Match[str]) -> str:
+    prefix, quote, scheme = match.group(1), match.group(2), match.group(3) or ""
+    return f"{prefix}{quote}{scheme}{REDACTED}{quote}"
+
 
 _MIN_SECRET_LEN = 8
 
@@ -50,22 +61,25 @@ def redact(text: str, env: Mapping[str, str] | None = None) -> str:
     """Replace key-shaped substrings and known secret values with ``[REDACTED]``."""
     for value in _secret_values(os.environ if env is None else env):
         text = text.replace(value, REDACTED)
-    for pattern in _KEY_PATTERNS:
-        if pattern.groups:
-            text = pattern.sub(lambda m: m.group(1) + REDACTED, text)
-        else:
-            text = pattern.sub(REDACTED, text)
-    return text
+    for pattern in _KEY_SHAPES:
+        text = pattern.sub(REDACTED, text)
+    text = _QUOTED_ASSIGNMENT.sub(_redact_quoted, text)
+    text = _SCHEME_VALUE.sub(lambda m: m.group(1) + REDACTED, text)
+    return _BARE_ASSIGNMENT.sub(lambda m: m.group(1) + REDACTED, text)
 
 
 def _redact_value(value: Any) -> Any:
+    """Redact strings, mapping keys and values, and the text of any other object."""
+    if value is None or isinstance(value, bool | int | float):
+        return value
     if isinstance(value, str):
         return redact(value)
     if isinstance(value, Mapping):
-        return {k: _redact_value(v) for k, v in value.items()}
+        return {_redact_value(k): _redact_value(v) for k, v in value.items()}
     if isinstance(value, list | tuple):
-        return type(value)(_redact_value(v) for v in value)
-    return value
+        return [_redact_value(v) for v in value]
+    # Anything else would reach json.dumps(default=str) unredacted.
+    return redact(str(value))
 
 
 class RedactingFilter(logging.Filter):
