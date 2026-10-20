@@ -1,0 +1,144 @@
+"""Required test 2: a canary in any prompt aborts the run with exit code 2."""
+
+import json
+import sys
+from collections.abc import Iterator
+from pathlib import Path
+
+import pytest
+import typer
+
+from saddlefit import cli
+from saddlefit.cli import ExitCode
+from saddlefit.errors import IntegrityViolation
+from saddlefit.eval.leak_guard import GuardedClient, LeakDetected, LeakGuard
+from saddlefit.providers.base import GenParams, Message, ModelInfo, ModelReply, ToolCall, ToolSpec
+
+CANARY = "SADDLEFIT-CANARY-" + "ab" * 16
+OTHER = "SADDLEFIT-CANARY-" + "cd" * 16
+CANARIES = {CANARY: "fix-0001", OTHER: "fix-0002"}
+CLEAN = [
+    Message(role="system", content="You are a coding agent."),
+    Message(role="user", content="Fix it."),
+]
+
+
+class RecordingClient:
+    def __init__(self) -> None:
+        self.calls: list[list[Message]] = []
+
+    def info(self) -> ModelInfo:
+        return ModelInfo(provider="recording", model="m")
+
+    def chat(
+        self, messages: list[Message], tools: list[ToolSpec] | None, params: GenParams
+    ) -> ModelReply:
+        self.calls.append(list(messages))
+        return ModelReply(text="ok")
+
+
+def guarded(tmp_path: Path) -> tuple[GuardedClient, RecordingClient, Path]:
+    inner = RecordingClient()
+    log = tmp_path / "incidents.jsonl"
+    return GuardedClient(inner, LeakGuard(CANARIES, incident_log=log)), inner, log
+
+
+@pytest.mark.parametrize(
+    ("messages", "tools", "where"),
+    [
+        (
+            [Message(role="user", content=f"see # saddlefit canary {CANARY}")],
+            None,
+            "messages[0].content",
+        ),
+        (
+            [*CLEAN, Message(role="tool", content=f"cat check.sh\n{CANARY}", tool_call_id="c1")],
+            None,
+            "messages[2].content",
+        ),
+        (
+            [
+                Message(
+                    role="assistant",
+                    tool_calls=(
+                        ToolCall(id="c", name="write_file", arguments={"content": CANARY}),
+                    ),
+                )
+            ],
+            None,
+            "messages[0].tool_calls[0]",
+        ),
+        (CLEAN, [ToolSpec(name="t", description=f"leaky {CANARY}")], "tools[0]"),
+    ],
+    ids=["user", "tool-output", "tool-call-args", "tool-description"],
+)
+def test_canary_anywhere_in_a_prompt_aborts(
+    tmp_path: Path, messages: list[Message], tools: list[ToolSpec] | None, where: str
+) -> None:
+    client, inner, log = guarded(tmp_path)
+    with pytest.raises(LeakDetected) as exc:
+        client.chat(messages, tools, GenParams())
+    assert exc.value.exit_code == ExitCode.INTEGRITY_VIOLATION == 2
+    assert isinstance(exc.value, IntegrityViolation)
+    assert exc.value.task_ids == ("fix-0001",)
+    assert where in exc.value.locations
+    assert inner.calls == []  # the prompt never reached the model
+    incident = json.loads(log.read_text(encoding="utf-8"))
+    assert incident["type"] == "canary_leak"
+    assert incident["tasks"] == ["fix-0001"]
+    assert CANARY not in log.read_text(encoding="utf-8")
+
+
+def test_clean_prompts_pass_through(tmp_path: Path) -> None:
+    client, inner, log = guarded(tmp_path)
+    assert client.chat(CLEAN, None, GenParams()).text == "ok"
+    assert len(inner.calls) == 1
+    assert client.info().provider == "recording"
+    assert not log.exists()
+
+
+def test_several_canaries_are_all_reported(tmp_path: Path) -> None:
+    client, _, _ = guarded(tmp_path)
+    with pytest.raises(LeakDetected) as exc:
+        client.chat([Message(role="user", content=f"{OTHER} {CANARY}")], None, GenParams())
+    assert exc.value.task_ids == ("fix-0001", "fix-0002")
+
+
+def test_guard_without_incident_log_still_aborts() -> None:
+    with pytest.raises(LeakDetected):
+        LeakGuard(CANARIES).check([Message(role="user", content=CANARY)])
+
+
+@pytest.fixture
+def leaking_command() -> Iterator[None]:
+    app = cli.app
+
+    @app.command("leak-test")
+    def leak_test() -> None:
+        guard = LeakGuard(CANARIES)
+        GuardedClient(RecordingClient(), guard).chat(
+            [Message(role="user", content=CANARY)], None, GenParams()
+        )
+
+    yield
+    app.registered_commands = [c for c in app.registered_commands if c.name != "leak-test"]
+
+
+@pytest.mark.usefixtures("leaking_command")
+def test_cli_exits_with_code_2_on_a_leak(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(sys, "argv", ["saddlefit", "leak-test"])
+    with pytest.raises(SystemExit) as exc:
+        cli.main()
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "sealed data leaked" in err
+    assert CANARY not in err
+
+
+def test_cli_passes_other_exits_through(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sys, "argv", ["saddlefit", "--version"])
+    with pytest.raises((SystemExit, typer.Exit)) as exc:
+        cli.main()
+    assert getattr(exc.value, "code", getattr(exc.value, "exit_code", None)) == 0
