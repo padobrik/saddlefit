@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import json
 from enum import IntEnum
+from pathlib import Path
 from typing import Annotated
 
 import typer
 
 from saddlefit import __version__
-from saddlefit.errors import SaddlefitError
+from saddlefit.config import ConfigError, SandboxConfig, StudentConfig, load_config
+from saddlefit.doctor import doctor_for, render
+from saddlefit.errors import EnvironmentFailure, SaddlefitError, UserError
 
 
 class ExitCode(IntEnum):
@@ -47,6 +50,39 @@ def root(
         raise typer.Exit(ExitCode.OK)
     if ctx.invoked_subcommand is None:
         typer.echo(ctx.get_help())
+
+
+DEFAULT_CONFIG = Path(".saddlefit") / "saddlefit.yaml"
+
+
+@app.command()
+def doctor(
+    ctx: typer.Context,
+    config: Annotated[
+        Path, typer.Option(help="Project config; without one, the defaults are checked.")
+    ] = DEFAULT_CONFIG,
+) -> None:
+    """Check Docker, the runner, speed, tool calling and the compact-model tier (A3)."""
+    try:
+        loaded = load_config(config) if config.exists() else None
+    except ConfigError as exc:
+        raise UserError(str(exc)) from exc
+    student = loaded.student if loaded else StudentConfig()
+    sandbox = loaded.sandbox if loaded else SandboxConfig()
+    report = doctor_for(student, sandbox)
+    if loaded is not None and report.record is not None:
+        # B5: the probe result is stored with the model digest, for tool_mode "auto"
+        (config.parent / "doctor.json").write_text(
+            report.record.model_dump_json(indent=2) + "\n", encoding="utf-8"
+        )
+    if ctx.obj["json"]:
+        typer.echo(json.dumps(report.as_json(), indent=2))
+    else:
+        typer.echo(render(report))
+    if not report.environment_ok:
+        raise EnvironmentFailure("Docker or the model runner is not usable; see the checks above")
+    if not report.compact:
+        raise typer.Exit(ExitCode.USER_ERROR)
 
 
 def main() -> None:
