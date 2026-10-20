@@ -6,6 +6,7 @@ Budgets, limits and evaluation settings live only here; no model can edit this f
 from __future__ import annotations
 
 import math
+from datetime import date
 from pathlib import Path
 from typing import Final, Literal, Self
 
@@ -17,10 +18,14 @@ CONFIG_FILENAME = "saddlefit.yaml"
 
 
 class _Strict(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    """Base for config sections: unknown keys, mutation and non-finite numbers are errors."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
 
 
 class StudentConfig(_Strict):
+    """The compact local model that does the tasks."""
+
     provider: Literal["openai-compatible", "fake", "looped"] = "openai-compatible"
     base_url: str = "http://localhost:11434/v1"
     model: str = "qwen3:8b"
@@ -28,15 +33,19 @@ class StudentConfig(_Strict):
     temperature: float = Field(default=0.2, ge=0.0, le=2.0)
     seed: int = 7
     context_length: int = Field(default=32768, gt=0)
-    release_date: str | None = None
+    release_date: date | None = None
 
 
 class TokenPrices(_Strict):
+    """Tutor prices in USD per million tokens; filled in by the user, never hardcoded."""
+
     input: float = Field(default=0.0, ge=0.0)
     output: float = Field(default=0.0, ge=0.0)
 
 
 class TutorConfig(_Strict):
+    """The strong model that diagnoses failures, and its per-round budget."""
+
     provider: Literal["anthropic", "fake"] = "anthropic"
     model: str = "claude-opus-5-5"
     max_calls_per_round: int = Field(default=20, gt=0)
@@ -45,11 +54,15 @@ class TutorConfig(_Strict):
 
 
 class GeneratorConfig(_Strict):
+    """The strong model that writes new tasks; a separate role from the tutor."""
+
     provider: Literal["anthropic", "fake"] = "anthropic"
     model: str = "claude-fable-5-1"
 
 
 class EvaluationConfig(_Strict):
+    """Repeated-run evaluation settings and paths the student must not touch."""
+
     runs_per_task: int = Field(default=3, gt=0)
     solved_threshold: int = Field(default=2, gt=0)
     timeout_seconds: int = Field(default=900, gt=0)
@@ -57,6 +70,7 @@ class EvaluationConfig(_Strict):
 
     @model_validator(mode="after")
     def _threshold_fits(self) -> Self:
+        """Reject a threshold that no number of passing runs can reach."""
         if self.solved_threshold > self.runs_per_task:
             raise ValueError(
                 f"solved_threshold ({self.solved_threshold}) cannot exceed "
@@ -66,12 +80,15 @@ class EvaluationConfig(_Strict):
 
 
 class SplitsConfig(_Strict):
+    """Fractions of the task suite assigned to each split."""
+
     train: float = Field(default=0.5, ge=0.0, le=1.0)
     held_out: float = Field(default=0.25, ge=0.0, le=1.0)
     control: float = Field(default=0.25, ge=0.0, le=1.0)
 
     @model_validator(mode="after")
     def _fractions_sum_to_one(self) -> Self:
+        """Reject fractions that do not cover the suite exactly once."""
         total = self.train + self.held_out + self.control
         if not math.isclose(total, 1.0, abs_tol=1e-9):
             raise ValueError(f"split fractions must sum to 1.0, got {total}")
@@ -79,6 +96,8 @@ class SplitsConfig(_Strict):
 
 
 class SandboxConfig(_Strict):
+    """Image and resource limits for the student and evaluation containers."""
+
     image: str = "ghcr.io/padobrik/saddlefit-sandbox:0.1.0"
     cpus: float = Field(default=2, gt=0)
     memory: str = Field(default="4g", pattern=r"^[0-9]+[bkmg]?$")
@@ -86,12 +105,16 @@ class SandboxConfig(_Strict):
 
 
 class FastLoopConfig(_Strict):
+    """Budget for the fast loop during a task."""
+
     max_variants: int = Field(default=3, gt=0)
     runs_per_variant: int = Field(default=2, gt=0)
     time_budget_minutes: float = Field(default=10, gt=0)
 
 
 class Config(_Strict):
+    """The whole ``saddlefit.yaml`` file."""
+
     schema_version: Literal[1] = CONFIG_SCHEMA_VERSION
     project: str = Field(min_length=1)
     student: StudentConfig = StudentConfig()
@@ -108,6 +131,7 @@ class ConfigError(Exception):
 
 
 def _format_errors(path: Path, exc: ValidationError) -> str:
+    """Render validation errors with dotted paths, naming unknown keys explicitly."""
     lines = [f"invalid configuration in {path}:"]
     for err in exc.errors():
         where = ".".join(str(p) for p in err["loc"]) or "<root>"
@@ -124,6 +148,10 @@ def load_config(path: Path) -> Config:
         raw = yaml.safe_load(path.read_text(encoding="utf-8"))
     except FileNotFoundError as exc:
         raise ConfigError(f"configuration not found: {path} (run `saddlefit init`)") from exc
+    except UnicodeDecodeError as exc:
+        raise ConfigError(f"configuration is not valid UTF-8: {path}") from exc
+    except OSError as exc:
+        raise ConfigError(f"cannot read configuration {path}: {exc.strerror or exc}") from exc
     except yaml.YAMLError as exc:
         raise ConfigError(f"configuration is not valid YAML: {path}: {exc}") from exc
     if not isinstance(raw, dict):

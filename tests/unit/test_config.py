@@ -96,3 +96,35 @@ def test_missing_file_points_to_init(tmp_path: Path) -> None:
 
 def test_dump_is_safe_yaml() -> None:
     assert yaml.safe_load(dump_config(Config(project="p")))["project"] == "p"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "project: p\ntutor: {max_usd_per_round: .inf}\n",
+        "project: p\nstudent: {temperature: .nan}\n",
+        "project: p\nfast_loop: {time_budget_minutes: .inf}\n",
+    ],
+)
+def test_non_finite_limits_are_rejected(tmp_path: Path, text: str) -> None:
+    with pytest.raises(ConfigError, match="finite"):
+        load_config(write(tmp_path, text))
+
+
+def test_unquoted_release_date(tmp_path: Path) -> None:
+    config = load_config(write(tmp_path, "project: p\nstudent: {release_date: 2026-10-20}\n"))
+    assert str(config.student.release_date) == "2026-10-20"
+    assert "release_date: '2026-10-20'" in dump_config(config)
+    assert load_config(write(tmp_path, dump_config(config))) == config
+
+
+def test_non_utf8_file_is_a_config_error(tmp_path: Path) -> None:
+    path = tmp_path / "saddlefit.yaml"
+    path.write_bytes(b"project: \xff\xfe\n")
+    with pytest.raises(ConfigError, match="UTF-8"):
+        load_config(path)
+
+
+def test_unreadable_path_is_a_config_error(tmp_path: Path) -> None:
+    with pytest.raises(ConfigError, match="cannot read"):
+        load_config(tmp_path)
