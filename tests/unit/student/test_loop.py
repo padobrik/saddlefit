@@ -16,6 +16,7 @@ from saddlefit.providers.base import (
     GenParams,
     ModelReply,
     ToolCall,
+    TransientProviderError,
     Usage,
 )
 from saddlefit.providers.fake import FakeClient
@@ -259,3 +260,16 @@ def test_identical_call_threshold_comes_from_loop_yaml(identical: int) -> None:
     student, tools, _ = make([call("list_dir", i) for i in range(10)], loop=loop)
     student.run(CONTEXT)
     assert len(tools.calls) == identical - 1
+
+
+def test_provider_failures_end_the_run_without_raising() -> None:
+    def script(messages: Any, tools: Any, params: Any) -> ModelReply:
+        raise TransientProviderError("APITimeoutError: Request timed out.")
+
+    student, _, recorder = make([])
+    student.client = FakeClient(script)
+    result = student.run(CONTEXT)
+    assert result.stop_reason == "provider_error"
+    assert recorder.events == [
+        ("error", {"kind": "provider", "message": "APITimeoutError: Request timed out."})
+    ]

@@ -21,6 +21,7 @@ from saddlefit.providers.base import (
     GenParams,
     Message,
     ModelClient,
+    ProviderError,
     ToolCall,
     ToolSpec,
 )
@@ -29,7 +30,9 @@ from saddlefit.tools.builtin import TOOL_SPECS, ToolResult
 COMPACTION_RATIO = 0.8
 NUDGE = "Use a tool to make progress, or call finish when the task is done."
 
-StopReason = Literal["finished", "step_limit", "time_limit", "loop", "context_overflow"]
+StopReason = Literal[
+    "finished", "step_limit", "time_limit", "loop", "context_overflow", "provider_error"
+]
 
 
 class Tools(Protocol):
@@ -129,6 +132,10 @@ class StudentLoop:
             result.context_length_error = True
             self.recorder.event("error", {"kind": "context_length", "message": str(exc)})
             return "context_overflow"
+        except ProviderError as exc:
+            # the runner failed (timeouts after retries, a dead endpoint): an env_error run
+            self.recorder.event("error", {"kind": "provider", "message": str(exc)[:2000]})
+            return "provider_error"
         result.prompt_tokens += reply.usage.prompt_tokens
         result.completion_tokens += reply.usage.completion_tokens
         result.max_prompt_tokens = max(result.max_prompt_tokens, reply.usage.prompt_tokens)
