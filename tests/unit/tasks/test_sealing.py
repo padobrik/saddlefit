@@ -1,9 +1,14 @@
+import contextlib
+import json
 import os
 import stat
+import threading
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 
+from saddlefit.eval import sealed as sealed_module
 from saddlefit.eval.sealed import SealedStore, SealedStoreError
 from saddlefit.tasks import sealing
 from saddlefit.tasks.sealing import CANARY_PREFIX, SealedWriter, SealingError
@@ -138,7 +143,7 @@ def test_failed_replace_keeps_the_old_task(tmp_path: Path, monkeypatch: pytest.M
         seal(tmp_path, replace=True)
     assert store.canary("fix-0001") == old_canary
     assert store.hidden_test_paths("fix-0001") == ["tests/data.json", "tests/test_dates.py"]
-    assert sorted(p.name for p in tmp_path.iterdir()) == ["fix-0001"]
+    assert sorted(p.name for p in tmp_path.iterdir()) == [".fix-0001~lock", "fix-0001"]
 
 
 def test_leftover_staging_directories_are_ignored(tmp_path: Path) -> None:
@@ -147,3 +152,243 @@ def test_leftover_staging_directories_are_ignored(tmp_path: Path) -> None:
     leftover.mkdir()
     (leftover / "canary.txt").write_text(CANARY_PREFIX + "0" * 32 + "\n", encoding="utf-8")
     assert store.all_canaries() == {store.canary("fix-0001")}
+
+
+def test_backslash_hidden_paths_are_rejected(tmp_path: Path) -> None:
+    with pytest.raises(SealingError, match="POSIX separators"):
+        seal(tmp_path, hidden_tests={"..\\..\\escape.py": "x"})
+    assert not (tmp_path / "fix-0001").exists()
+
+
+def test_interrupted_replace_keeps_the_old_task_available(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = seal(tmp_path)
+    old_canary = store.canary("fix-0001")
+    real_rename = Path.rename
+
+    def dies_while_installing(self: Path, target: str | os.PathLike[str]) -> Path:
+        if Path(target).name == "fix-0001" and self.name.startswith(".fix-0001."):
+            raise KeyboardInterrupt  # the process stops between retiring and installing
+        return real_rename(self, target)
+
+    monkeypatch.setattr(Path, "rename", dies_while_installing)
+    with pytest.raises(KeyboardInterrupt):
+        seal(tmp_path, replace=True)
+    monkeypatch.undo()
+    assert store.canary("fix-0001") == old_canary
+    assert store.all_canaries() == {old_canary}
+    seal(tmp_path, replace=True)
+    assert store.canary("fix-0001") != old_canary
+    assert sorted(p.name for p in tmp_path.iterdir()) == [".fix-0001~lock", "fix-0001"]
+
+
+@pytest.mark.skipif(os.name == "nt", reason="creating symlinks needs privileges on Windows")
+def test_reader_refuses_symlinks(tmp_path: Path) -> None:
+    root = tmp_path / "sealed"
+    store = seal(root)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (root / "fix-0002").symlink_to(root / "fix-0001")
+    with pytest.raises(SealedStoreError, match="no sealed data"):
+        store.check_script("fix-0002")
+    out_dir = root / "fix-0001" / "check_output"
+    out_dir.symlink_to(outside)
+    with pytest.raises(SealedStoreError, match="symlink"):
+        store.record_check_output("fix-0001", RUN_ID, "secret")
+    out_dir.unlink()
+    out_dir.mkdir()
+    (out_dir / f"{RUN_ID}.txt").symlink_to(outside / "leak.txt")
+    with pytest.raises(SealedStoreError, match="symlink"):
+        store.record_check_output("fix-0001", RUN_ID, "secret")
+    assert list(outside.iterdir()) == []
+
+
+def test_ids_with_a_trailing_newline_are_rejected(tmp_path: Path) -> None:
+    store = seal(tmp_path)
+    with pytest.raises(SealingError, match="invalid task id"):
+        seal(tmp_path, "fix-0002\n")
+    with pytest.raises(SealedStoreError, match="invalid task id"):
+        store.check_script("fix-0001\n")
+    with pytest.raises(SealedStoreError, match="invalid run id"):
+        store.record_check_output("fix-0001", RUN_ID + "\n", "x")
+
+
+def test_replace_keeps_recorded_check_output(tmp_path: Path) -> None:
+    store = seal(tmp_path)
+    store.record_check_output("fix-0001", RUN_ID, "first run")
+    seal(tmp_path, replace=True)
+    path = tmp_path / "fix-0001" / "check_output" / f"{RUN_ID}.txt"
+    assert path.read_text(encoding="utf-8") == "first run"
+
+
+def test_interrupted_replace_keeps_recorded_check_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = seal(tmp_path)
+    store.record_check_output("fix-0001", RUN_ID, "first run")
+    real_rename = Path.rename
+
+    def dies_while_installing(self: Path, target: str | os.PathLike[str]) -> Path:
+        if Path(target).name == "fix-0001" and self.name.startswith(".fix-0001."):
+            raise KeyboardInterrupt
+        return real_rename(self, target)
+
+    monkeypatch.setattr(Path, "rename", dies_while_installing)
+    with pytest.raises(KeyboardInterrupt):
+        seal(tmp_path, replace=True)
+    monkeypatch.undo()
+    seal(tmp_path, replace=True)
+    path = tmp_path / "fix-0001" / "check_output" / f"{RUN_ID}.txt"
+    assert path.read_text(encoding="utf-8") == "first run"
+
+
+def test_recording_output_waits_for_a_replace_in_progress(tmp_path: Path) -> None:
+    store = seal(tmp_path)
+    done = threading.Event()
+
+    def record() -> None:
+        store.record_check_output("fix-0001", RUN_ID, "late run")
+        done.set()
+
+    with sealing.task_lock(tmp_path, "fix-0001"):
+        worker = threading.Thread(target=record)
+        worker.start()
+        assert not done.wait(0.3)
+    worker.join(5)
+    assert done.is_set()
+
+
+def test_recording_output_resolves_the_task_under_the_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = seal(tmp_path)
+    held: list[bool] = []
+    real_lock = sealed_module.task_lock
+    real_task_dir = SealedStore._task_dir
+
+    @contextlib.contextmanager
+    def tracking_lock(root: Path, task_id: str) -> Iterator[None]:
+        with real_lock(root, task_id):
+            held.append(True)
+            try:
+                yield
+            finally:
+                held.pop()
+
+    def checked_task_dir(self: SealedStore, task_id: str) -> Path:
+        assert held, "task directory resolved outside the task lock"
+        return real_task_dir(self, task_id)
+
+    monkeypatch.setattr(sealed_module, "task_lock", tracking_lock)
+    monkeypatch.setattr(SealedStore, "_task_dir", checked_task_dir)
+    store.record_check_output("fix-0001", RUN_ID, "ok")
+    with pytest.raises(SealedStoreError, match="invalid task id"):
+        store.record_check_output("../x", RUN_ID, "x")
+
+
+def test_replace_never_lists_or_copies_check_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = seal(tmp_path)
+    store.record_check_output("fix-0001", RUN_ID, "first run")
+    real_iterdir = Path.iterdir
+
+    def no_listing_of_output(self: Path) -> Iterator[Path]:
+        assert self.name != "check_output", "the writer listed sealed check output"
+        return real_iterdir(self)
+
+    monkeypatch.setattr(Path, "iterdir", no_listing_of_output)
+    monkeypatch.setattr(sealing.shutil, "copy2", None)
+    seal(tmp_path, replace=True)
+    monkeypatch.undo()
+    path = tmp_path / "fix-0001" / "check_output" / f"{RUN_ID}.txt"
+    assert path.read_text(encoding="utf-8") == "first run"
+
+
+def test_replace_interrupted_before_moving_output_recovers_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = seal(tmp_path)
+    store.record_check_output("fix-0001", RUN_ID, "first run")
+    real_rename = Path.rename
+
+    def dies_before_moving_output(self: Path, target: str | os.PathLike[str]) -> Path:
+        if self.name == "check_output":
+            raise KeyboardInterrupt  # the new task is installed; its output is still retired
+        return real_rename(self, target)
+
+    monkeypatch.setattr(Path, "rename", dies_before_moving_output)
+    with pytest.raises(KeyboardInterrupt):
+        seal(tmp_path, replace=True)
+    monkeypatch.undo()
+    seal(tmp_path, replace=True)
+    path = tmp_path / "fix-0001" / "check_output" / f"{RUN_ID}.txt"
+    assert path.read_text(encoding="utf-8") == "first run"
+    assert sorted(p.name for p in tmp_path.iterdir()) == [".fix-0001~lock", "fix-0001"]
+
+
+def test_sealed_task_records_its_schema_version(tmp_path: Path) -> None:
+    store = seal(tmp_path)
+    info = json.loads((tmp_path / "fix-0001" / "sealed.json").read_text(encoding="utf-8"))
+    assert info == {"schema_version": 1}
+    assert store.check_script("fix-0001").name == "check.sh"
+
+
+@pytest.mark.parametrize(
+    ("content", "message"),
+    [
+        (None, "missing or non-integer schema_version"),
+        ("{}", "missing or non-integer schema_version"),
+        ('{"schema_version": "1"}', "missing or non-integer schema_version"),
+        ('{"schema_version": true}', "missing or non-integer schema_version"),
+        ('{"schema_version": 2}', "schema_version 2 is not supported"),
+        ("not json", "unreadable sealed.json"),
+    ],
+)
+def test_reader_rejects_bad_schema_versions(
+    tmp_path: Path, content: str | None, message: str
+) -> None:
+    store = seal(tmp_path)
+    info = tmp_path / "fix-0001" / "sealed.json"
+    if content is None:
+        info.unlink()
+    else:
+        info.write_text(content, encoding="utf-8")
+    with pytest.raises(SealedStoreError, match=message):
+        store.check_script("fix-0001")
+
+
+def test_output_recorded_after_an_interrupted_move_keeps_every_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = seal(tmp_path)
+    store.record_check_output("fix-0001", RUN_ID, "first run")
+    real_rename = Path.rename
+
+    def dies_before_moving_output(self: Path, target: str | os.PathLike[str]) -> Path:
+        if self.name == "check_output":
+            raise KeyboardInterrupt
+        return real_rename(self, target)
+
+    monkeypatch.setattr(Path, "rename", dies_before_moving_output)
+    with pytest.raises(KeyboardInterrupt):
+        seal(tmp_path, replace=True)
+    monkeypatch.undo()
+    second = "01JB2Y8Q4V9N1K3D7M5R6T0W2Y"
+    store.record_check_output("fix-0001", second, "second run")
+    seal(tmp_path, replace=True)
+    out = tmp_path / "fix-0001" / "check_output"
+    assert (out / f"{RUN_ID}.txt").read_text(encoding="utf-8") == "first run"
+    assert (out / f"{second}.txt").read_text(encoding="utf-8") == "second run"
+
+
+def test_writer_keeps_a_retired_task_that_still_holds_output(tmp_path: Path) -> None:
+    store = seal(tmp_path)
+    store.record_check_output("fix-0001", RUN_ID, "new task run")
+    retired_out = tmp_path / sealing.retired_name("fix-0001") / "check_output"
+    retired_out.mkdir(parents=True)
+    (retired_out / "01JB2Y8Q4V9N1K3D7M5R6T0W2Y.txt").write_text("old run", encoding="utf-8")
+    with pytest.raises(SealingError, match="still holds check output"):
+        seal(tmp_path, replace=True)
+    assert (retired_out / "01JB2Y8Q4V9N1K3D7M5R6T0W2Y.txt").exists()
