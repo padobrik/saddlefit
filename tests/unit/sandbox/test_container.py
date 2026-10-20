@@ -295,3 +295,18 @@ def test_exec_stream_is_closed_after_reading(tmp_path: Path) -> None:
         assert sb.exec("x", timeout_s=5).output == "ok"
     assert stream.closed
     assert stream._response.closed
+
+
+def test_timeout_notice_is_seen_even_when_truncated_away() -> None:
+    buf = _CappedOutput(20)
+    buf.add(b"head" + MARKER[:10])
+    buf.add(MARKER[10:])  # split across chunks
+    buf.add(b"x" * 500)  # pushes the notice out of the kept head and tail
+    assert buf.timeout_notice_seen
+    assert "sending signal" not in buf.text()
+
+
+def test_no_notice_no_flag() -> None:
+    buf = _CappedOutput(20)
+    buf.add(b"timeout: sending nothing\n")
+    assert not buf.timeout_notice_seen

@@ -51,9 +51,16 @@ class _CappedOutput:
         self._head = bytearray()
         self._tail = bytearray()
         self._dropped = 0
+        self._carry = b""
+        self.timeout_notice_seen = False
         self.error: Exception | None = None
 
     def add(self, chunk: bytes) -> None:
+        # Look for the supervisor's notice before any truncation, across chunk boundaries.
+        window = self._carry + chunk
+        if not self.timeout_notice_seen and _TIMEOUT_NOTICE_BYTES.search(window):
+            self.timeout_notice_seen = True
+        self._carry = window[-_NOTICE_CARRY:]
         room = self._half - len(self._head)
         if room > 0:
             self._head += chunk[:room]
@@ -158,7 +165,10 @@ def container_options(
     }
 
 
-_TIMEOUT_NOTICE = re.compile(r"^timeout: sending signal \w+ to command .*(?:\n|$)", re.MULTILINE)
+# The notice may follow output that has no trailing newline, so it is not anchored.
+_TIMEOUT_NOTICE_BYTES = re.compile(rb"timeout: sending signal \w+ to command ")
+_NOTICE_CARRY = 64
+_TIMEOUT_NOTICE = re.compile(r"timeout: sending signal \w+ to command [^\n]*(?:\n|$)")
 
 
 def _strip_timeout_notice(output: str) -> tuple[str, bool]:
@@ -276,7 +286,8 @@ class Sandbox:
         except Exception as exc:
             raise SandboxError(f"exec failed: {shlex.quote(command)}: {exc}") from exc
         duration = self._clock() - started
-        output, signalled = _strip_timeout_notice(buffer.text())
+        output, _ = _strip_timeout_notice(buffer.text())
+        signalled = buffer.timeout_notice_seen
         # Only the supervisor knows a deadline fired: it announces the signal it sends. The
         # exit code is the command's own (--preserve-status), so a TERM handler exiting 0
         # still timed out and an early 124 or 137 did not; an early forged notice is ignored.
