@@ -357,3 +357,38 @@ def test_reader_rejects_bad_schema_versions(
         info.write_text(content, encoding="utf-8")
     with pytest.raises(SealedStoreError, match=message):
         store.check_script("fix-0001")
+
+
+def test_output_recorded_after_an_interrupted_move_keeps_every_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = seal(tmp_path)
+    store.record_check_output("fix-0001", RUN_ID, "first run")
+    real_rename = Path.rename
+
+    def dies_before_moving_output(self: Path, target: str | os.PathLike[str]) -> Path:
+        if self.name == "check_output":
+            raise KeyboardInterrupt
+        return real_rename(self, target)
+
+    monkeypatch.setattr(Path, "rename", dies_before_moving_output)
+    with pytest.raises(KeyboardInterrupt):
+        seal(tmp_path, replace=True)
+    monkeypatch.undo()
+    second = "01JB2Y8Q4V9N1K3D7M5R6T0W2Y"
+    store.record_check_output("fix-0001", second, "second run")
+    seal(tmp_path, replace=True)
+    out = tmp_path / "fix-0001" / "check_output"
+    assert (out / f"{RUN_ID}.txt").read_text(encoding="utf-8") == "first run"
+    assert (out / f"{second}.txt").read_text(encoding="utf-8") == "second run"
+
+
+def test_writer_keeps_a_retired_task_that_still_holds_output(tmp_path: Path) -> None:
+    store = seal(tmp_path)
+    store.record_check_output("fix-0001", RUN_ID, "new task run")
+    retired_out = tmp_path / sealing.retired_name("fix-0001") / "check_output"
+    retired_out.mkdir(parents=True)
+    (retired_out / "01JB2Y8Q4V9N1K3D7M5R6T0W2Y.txt").write_text("old run", encoding="utf-8")
+    with pytest.raises(SealingError, match="still holds check output"):
+        seal(tmp_path, replace=True)
+    assert (retired_out / "01JB2Y8Q4V9N1K3D7M5R6T0W2Y.txt").exists()

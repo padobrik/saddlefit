@@ -202,6 +202,9 @@ def _move_check_output(retired: Path, task_dir: Path) -> None:
     target = task_dir / CHECK_OUTPUT_DIR
     if source.is_dir() and not source.is_symlink() and not target.exists():
         source.rename(target)
+    if source.exists() or source.is_symlink():
+        # deleting the retired task now would lose these runs; keep it and stop
+        raise SealingError(f"retired task {retired.name} still holds check output")
 
 
 def _recover(task_dir: Path, retired: Path) -> None:

@@ -130,7 +130,19 @@ class SealedStore:
             return self._record_locked(task_id, run_id, output)
 
     def _record_locked(self, task_id: str, run_id: str, output: str) -> Path:
-        out_dir = self._task_dir(task_id) / CHECK_OUTPUT_DIR
+        task_dir = self._task_dir(task_id)
+        out_dir = task_dir / CHECK_OUTPUT_DIR
+        pending = self._root / retired_name(task_id) / CHECK_OUTPUT_DIR
+        # a replace that stopped before moving the earlier output left it retired;
+        # finish that move first so this run joins the earlier ones
+        if (
+            task_dir.name == task_id
+            and not out_dir.exists()
+            and not out_dir.is_symlink()
+            and pending.is_dir()
+            and not pending.is_symlink()
+        ):
+            pending.rename(out_dir)
         if out_dir.is_symlink():
             raise SealedStoreError(f"check_output of task {task_id!r} must not be a symlink")
         out_dir.mkdir(exist_ok=True, mode=0o700)
