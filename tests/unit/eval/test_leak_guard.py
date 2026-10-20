@@ -83,6 +83,7 @@ def test_canary_anywhere_in_a_prompt_aborts(
     assert where in exc.value.locations
     assert inner.calls == []  # the prompt never reached the model
     incident = json.loads(log.read_text(encoding="utf-8"))
+    assert incident["schema_version"] == 1
     assert incident["type"] == "canary_leak"
     assert incident["tasks"] == ["fix-0001"]
     assert CANARY not in log.read_text(encoding="utf-8")

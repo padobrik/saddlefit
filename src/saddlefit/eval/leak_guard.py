@@ -25,6 +25,8 @@ from saddlefit.providers.base import (
 
 log = logging.getLogger(__name__)
 
+INCIDENT_SCHEMA_VERSION = 1  # incidents.jsonl lines: schema_version, time, type, tasks, locations
+
 
 class LeakDetected(IntegrityViolation):
     """A sealed canary was found in an outgoing prompt."""
@@ -78,10 +80,12 @@ class LeakGuard:
     """Scans outgoing prompts for canaries; ``canaries`` maps each canary to its task ID."""
 
     def __init__(self, canaries: Mapping[str, str], incident_log: Path | None = None) -> None:
+        """``canaries`` maps every known canary to its task ID; incidents go to ``incident_log``."""
         self._canaries = dict(canaries)
         self._incident_log = incident_log
 
     def check(self, messages: Sequence[Message], tools: Sequence[ToolSpec] | None = None) -> None:
+        """Raise ``LeakDetected`` if any canary appears anywhere in the outgoing prompt."""
         tasks: list[str] = []
         locations: list[str] = []
         for parts, text in _texts(messages, tools):
@@ -107,11 +111,13 @@ class LeakGuard:
         )
 
     def _record(self, task_ids: list[str], locations: list[str]) -> None:
+        """Log the incident and append it to the incident log, without any canary."""
         log.error("leak guard: canary found in prompt", extra={"tasks": task_ids, "at": locations})
         if self._incident_log is None:
             return
         self._incident_log.parent.mkdir(parents=True, exist_ok=True)
         entry = {
+            "schema_version": INCIDENT_SCHEMA_VERSION,
             "time": datetime.now(UTC).isoformat(),
             "type": "canary_leak",
             "tasks": task_ids,
@@ -125,10 +131,12 @@ class GuardedClient:
     """A ``ModelClient`` that runs every prompt through the leak guard before sending it."""
 
     def __init__(self, inner: ModelClient, guard: LeakGuard) -> None:
+        """Wrap ``inner`` so that ``guard`` checks every prompt first."""
         self._inner = inner
         self._guard = guard
 
     def info(self) -> ModelInfo:
+        """The wrapped client's model info."""
         return self._inner.info()
 
     def chat(
@@ -137,5 +145,6 @@ class GuardedClient:
         tools: Sequence[ToolSpec] | None,
         params: GenParams,
     ) -> ModelReply:
+        """Check the prompt, then forward it; a leak raises before anything is sent."""
         self._guard.check(messages, tools)
         return self._inner.chat(messages, tools, params)
