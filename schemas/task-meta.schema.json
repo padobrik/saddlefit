@@ -1,0 +1,101 @@
+{
+  "$defs": {
+    "RepoRef": {
+      "additionalProperties": false,
+      "description": "Where the task's base snapshot comes from.",
+      "properties": {
+        "base_commit": {
+          "pattern": "^[0-9a-f]{7,64}$",
+          "title": "Base Commit",
+          "type": "string"
+        },
+        "url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Url"
+        }
+      },
+      "required": [
+        "base_commit"
+      ],
+      "title": "RepoRef",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "``tasks/public/<id>/meta.yaml``: what the student may know about a task.",
+  "properties": {
+    "created": {
+      "format": "date",
+      "title": "Created",
+      "type": "string"
+    },
+    "id": {
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$",
+      "title": "Id",
+      "type": "string"
+    },
+    "repo": {
+      "$ref": "#/$defs/RepoRef"
+    },
+    "schema_version": {
+      "const": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "source": {
+      "enum": [
+        "history",
+        "mutation",
+        "generated",
+        "user"
+      ],
+      "title": "Source",
+      "type": "string"
+    },
+    "split": {
+      "enum": [
+        "train",
+        "held_out",
+        "control"
+      ],
+      "title": "Split",
+      "type": "string"
+    },
+    "type": {
+      "minLength": 1,
+      "title": "Type",
+      "type": "string"
+    },
+    "visible_check": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Visible Check"
+    }
+  },
+  "required": [
+    "schema_version",
+    "id",
+    "source",
+    "type",
+    "split",
+    "repo",
+    "created"
+  ],
+  "title": "TaskMeta",
+  "type": "object"
+}

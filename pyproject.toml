@@ -72,7 +72,7 @@ select = ["E", "W", "F", "I", "B", "UP", "S", "SIM", "RUF", "PT", "C4", "PL"]
 ignore = ["PLR0913", "PLR2004"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S101", "S603", "S607", "PLR0915"]
+"tests/**" = ["S101", "S311", "S603", "S607", "PLR0915"]
 "scripts/**" = ["S603", "S607"]
 
 [tool.mypy]
@@ -99,7 +99,7 @@ strict = true
 minversion = "8.0"
 testpaths = ["tests"]
 pythonpath = ["."]
-norecursedirs = ["tests/fixtures"]
+norecursedirs = [".*", "*.egg", "_darcs", "build", "CVS", "dist", "node_modules", "venv", "{arch}", "tests/fixtures"]
 addopts = [
     "-ra",
     "--strict-markers",
