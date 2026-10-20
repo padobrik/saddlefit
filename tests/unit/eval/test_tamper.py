@@ -79,3 +79,20 @@ def test_tampering_makes_the_run_tampered_even_if_the_check_passes() -> None:
     tampered = bool(tampered_paths(diff_paths(EDIT_TEST), PROTECTED, ()))
     result = classify(RunSignals(check_passed=True, tampered=tampered))
     assert result.primary == "tampered"
+
+
+SQL_COMMENT_EDIT = """\
+diff --git a/src/schema.sql b/src/schema.sql
+--- a/src/schema.sql
++++ b/src/schema.sql
+@@ -1,2 +1,2 @@
+--- tests/fixtures are loaded here
++++ tests/x added as content
++-- rename from tests/y
+ select 1;
+"""
+
+
+def test_hunk_lines_that_look_like_headers_are_content() -> None:
+    assert diff_paths(SQL_COMMENT_EDIT) == {"src/schema.sql"}
+    assert tampered_paths(diff_paths(SQL_COMMENT_EDIT), PROTECTED, ()) == []

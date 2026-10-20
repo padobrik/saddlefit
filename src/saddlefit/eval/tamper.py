@@ -20,17 +20,34 @@ def _strip_prefix(path: str) -> str | None:
 
 
 def diff_paths(diff: str) -> set[str]:
-    """Every path a unified git diff reads or writes: old and new names of each file."""
+    """Every path a unified git diff reads or writes: old and new names of each file.
+
+    ``---``/``+++`` and rename/copy lines count only in a file's header, between
+    ``diff --git`` and its first ``@@``; in hunk bodies they are file content.
+    """
     paths: set[str] = set()
+    in_header = False
     for line in diff.splitlines():
-        for regex in (_DIFF_HEADER, _FILE_LINE, _RENAME):
-            match = regex.match(line)
-            if match is None:
-                continue
-            for raw in match.groupdict().values():
-                path = _strip_prefix(raw) if regex is not _RENAME else raw
+        header = _DIFF_HEADER.match(line)
+        if header is not None:
+            in_header = True
+            for raw in (header["a"], header["b"]):
+                path = _strip_prefix(raw)
                 if path:
                     paths.add(path)
+            continue
+        if line.startswith("@@"):
+            in_header = False
+        if not in_header:
+            continue
+        file_line = _FILE_LINE.match(line)
+        if file_line is not None:
+            path = _strip_prefix(file_line["path"])
+            if path:
+                paths.add(path)
+        rename = _RENAME.match(line)
+        if rename is not None:
+            paths.add(rename["path"])
     return paths
 
 
