@@ -66,7 +66,7 @@ _STOP_WORDS = frozenset(
 KNOWN_TOOLS = frozenset(
     {"read_file", "list_dir", "search", "edit_file", "write_file", "bash", "finish"}
 )
-_TOOL_SECTION = re.compile(rf"^## +({'|'.join(sorted(KNOWN_TOOLS))})\s*$", re.MULTILINE)
+_ANY_SECTION = re.compile(r"^## +(.+?)\s*$", re.MULTILINE)
 _FRONTMATTER = re.compile(r"\A---\n(.*?)\n---\n?(.*)\Z", re.DOTALL)
 _MODEL_LABEL = re.compile(r"\((?:model|for):\s*([^)]+)\)")
 
@@ -132,18 +132,24 @@ def _parse_skill(dirname: str, text: str) -> Skill:
 
 
 def guidance_for(tool_guidance: str, enabled: Iterable[str]) -> tuple[str, list[str]]:
-    """The preamble plus ``## <tool>`` sections for enabled tools, and the section details.
+    """The always-kept guidance, and one text per enabled tool section.
 
-    Returns the preamble and, separately, one text per enabled tool section, so details can
-    be dropped under budget pressure while the preamble stays.
+    Every ``## `` heading ends the section before it. Sections headed by a known tool name
+    are kept only when that tool is enabled, and are returned separately so they can be
+    dropped under budget pressure; every other section (``## Safety``, say) is kept with
+    the preamble.
     """
     enabled_set = set(enabled)
-    parts = _TOOL_SECTION.split(tool_guidance)
-    preamble, sections = parts[0], []
-    for name, body in zip(parts[1::2], parts[2::2], strict=True):
-        if name in enabled_set:
-            sections.append(f"## {name}\n{body.strip()}\n")
-    return preamble.strip(), sections
+    parts = _ANY_SECTION.split(tool_guidance)
+    general, sections = [parts[0].strip()], []
+    for heading, body in zip(parts[1::2], parts[2::2], strict=True):
+        name = heading.strip()
+        if name in KNOWN_TOOLS:
+            if name in enabled_set:
+                sections.append(f"## {name}\n{body.strip()}\n")
+        else:
+            general.append(f"## {name}\n{body.strip()}")
+    return "\n\n".join(g for g in general if g), sections
 
 
 def rank_skills(skills: Iterable[Skill], task_type: str, task_text: str) -> list[Skill]:

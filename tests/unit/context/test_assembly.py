@@ -169,3 +169,13 @@ def test_only_real_tool_names_are_tool_sections() -> None:
     assert sections == []
     _, enabled = guidance_for(guidance, ["bash"])
     assert enabled == ["## bash\nRun tests.\n"]
+
+
+def test_general_sections_after_a_tool_section_survive() -> None:
+    guidance = "Intro.\n\n## bash\nRun tests.\n\n## Safety\nNever delete user data.\n"
+    preamble, sections = guidance_for(guidance, [])
+    assert "## Safety\nNever delete user data." in preamble
+    assert "Run tests." not in preamble
+    assert sections == []
+    _, enabled = guidance_for(guidance, ["bash"])
+    assert enabled == ["## bash\nRun tests.\n"]
