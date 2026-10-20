@@ -97,9 +97,14 @@ class SealedStore:
         """Store hidden-check output in the sealed store; it never enters a run record."""
         if not _RUN_ID.fullmatch(run_id):
             raise SealedStoreError(f"invalid run id: {run_id!r}")
-        self._task_dir(task_id)  # validates the id before the lock file is named after it
-        # a replace copies this directory into the new task; the lock keeps a run from
-        # landing in the old copy after that
+        # the lock file is named after the id, so check it first; the directory itself is
+        # resolved under the lock, where a replace cannot be moving it
+        if not _TASK_ID.fullmatch(task_id):
+            raise SealedStoreError(f"invalid task id: {task_id!r}")
+        if not self._root.is_dir():
+            raise SealedStoreError(f"no sealed data for task {task_id!r}")
+        # a replace copies the output directory into the new task; the lock keeps a run
+        # from landing in the old copy after that
         with task_lock(self._root, task_id):
             return self._record_locked(task_id, run_id, output)
 

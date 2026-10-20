@@ -1,10 +1,13 @@
+import contextlib
 import os
 import stat
 import threading
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 
+from saddlefit.eval import sealed as sealed_module
 from saddlefit.eval.sealed import SealedStore, SealedStoreError
 from saddlefit.tasks import sealing
 from saddlefit.tasks.sealing import CANARY_PREFIX, SealedWriter, SealingError
@@ -253,3 +256,31 @@ def test_recording_output_waits_for_a_replace_in_progress(tmp_path: Path) -> Non
         assert not done.wait(0.3)
     worker.join(5)
     assert done.is_set()
+
+
+def test_recording_output_resolves_the_task_under_the_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = seal(tmp_path)
+    held: list[bool] = []
+    real_lock = sealed_module.task_lock
+    real_task_dir = SealedStore._task_dir
+
+    @contextlib.contextmanager
+    def tracking_lock(root: Path, task_id: str) -> Iterator[None]:
+        with real_lock(root, task_id):
+            held.append(True)
+            try:
+                yield
+            finally:
+                held.pop()
+
+    def checked_task_dir(self: SealedStore, task_id: str) -> Path:
+        assert held, "task directory resolved outside the task lock"
+        return real_task_dir(self, task_id)
+
+    monkeypatch.setattr(sealed_module, "task_lock", tracking_lock)
+    monkeypatch.setattr(SealedStore, "_task_dir", checked_task_dir)
+    store.record_check_output("fix-0001", RUN_ID, "ok")
+    with pytest.raises(SealedStoreError, match="invalid task id"):
+        store.record_check_output("../x", RUN_ID, "x")
