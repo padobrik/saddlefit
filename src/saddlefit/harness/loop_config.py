@@ -13,6 +13,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from saddlefit.config import Config
+from saddlefit.yamlio import safe_load_unique
 
 LOOP_SCHEMA_VERSION: Final = 1
 # One step takes at least this long, so max_steps cannot outlast evaluation.timeout_seconds.
@@ -20,7 +21,8 @@ MIN_SECONDS_PER_STEP: Final = 1
 
 
 class _Strict(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
+    # strict: loop.yaml must match its JSON Schema exactly; "40" is not an integer here
+    model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False, strict=True)
 
 
 class ToolOutputConfig(_Strict):
@@ -80,7 +82,7 @@ def default_loop_config() -> LoopConfig:
 
 def load_loop_config(path: Path) -> LoopConfig:
     try:
-        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+        raw = safe_load_unique(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
         raise LoopConfigError(f"cannot read {path}: {exc}") from exc
     if not isinstance(raw, dict):
