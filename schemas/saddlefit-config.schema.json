@@ -1,0 +1,361 @@
+{
+  "$defs": {
+    "EvaluationConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "protected_paths": {
+          "default": [
+            "tests/**",
+            "**/test_*.py",
+            "**/*_test.py"
+          ],
+          "items": {
+            "type": "string"
+          },
+          "title": "Protected Paths",
+          "type": "array"
+        },
+        "runs_per_task": {
+          "default": 3,
+          "exclusiveMinimum": 0,
+          "title": "Runs Per Task",
+          "type": "integer"
+        },
+        "solved_threshold": {
+          "default": 2,
+          "exclusiveMinimum": 0,
+          "title": "Solved Threshold",
+          "type": "integer"
+        },
+        "timeout_seconds": {
+          "default": 900,
+          "exclusiveMinimum": 0,
+          "title": "Timeout Seconds",
+          "type": "integer"
+        }
+      },
+      "title": "EvaluationConfig",
+      "type": "object"
+    },
+    "FastLoopConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "max_variants": {
+          "default": 3,
+          "exclusiveMinimum": 0,
+          "title": "Max Variants",
+          "type": "integer"
+        },
+        "runs_per_variant": {
+          "default": 2,
+          "exclusiveMinimum": 0,
+          "title": "Runs Per Variant",
+          "type": "integer"
+        },
+        "time_budget_minutes": {
+          "default": 10,
+          "exclusiveMinimum": 0,
+          "title": "Time Budget Minutes",
+          "type": "number"
+        }
+      },
+      "title": "FastLoopConfig",
+      "type": "object"
+    },
+    "GeneratorConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "model": {
+          "default": "claude-fable-5-1",
+          "title": "Model",
+          "type": "string"
+        },
+        "provider": {
+          "default": "anthropic",
+          "enum": [
+            "anthropic",
+            "fake"
+          ],
+          "title": "Provider",
+          "type": "string"
+        }
+      },
+      "title": "GeneratorConfig",
+      "type": "object"
+    },
+    "SandboxConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "cpus": {
+          "default": 2,
+          "exclusiveMinimum": 0,
+          "title": "Cpus",
+          "type": "number"
+        },
+        "image": {
+          "default": "ghcr.io/padobrik/saddlefit-sandbox:0.1.0",
+          "title": "Image",
+          "type": "string"
+        },
+        "memory": {
+          "default": "4g",
+          "pattern": "^[0-9]+[bkmg]?$",
+          "title": "Memory",
+          "type": "string"
+        },
+        "pids_limit": {
+          "default": 512,
+          "exclusiveMinimum": 0,
+          "title": "Pids Limit",
+          "type": "integer"
+        }
+      },
+      "title": "SandboxConfig",
+      "type": "object"
+    },
+    "SplitsConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "control": {
+          "default": 0.25,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Control",
+          "type": "number"
+        },
+        "held_out": {
+          "default": 0.25,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Held Out",
+          "type": "number"
+        },
+        "train": {
+          "default": 0.5,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Train",
+          "type": "number"
+        }
+      },
+      "title": "SplitsConfig",
+      "type": "object"
+    },
+    "StudentConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "base_url": {
+          "default": "http://localhost:11434/v1",
+          "title": "Base Url",
+          "type": "string"
+        },
+        "context_length": {
+          "default": 32768,
+          "exclusiveMinimum": 0,
+          "title": "Context Length",
+          "type": "integer"
+        },
+        "model": {
+          "default": "qwen3:8b",
+          "title": "Model",
+          "type": "string"
+        },
+        "provider": {
+          "default": "openai-compatible",
+          "enum": [
+            "openai-compatible",
+            "fake",
+            "looped"
+          ],
+          "title": "Provider",
+          "type": "string"
+        },
+        "release_date": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Release Date"
+        },
+        "seed": {
+          "default": 7,
+          "title": "Seed",
+          "type": "integer"
+        },
+        "temperature": {
+          "default": 0.2,
+          "maximum": 2.0,
+          "minimum": 0.0,
+          "title": "Temperature",
+          "type": "number"
+        },
+        "tool_mode": {
+          "default": "auto",
+          "enum": [
+            "auto",
+            "native",
+            "json"
+          ],
+          "title": "Tool Mode",
+          "type": "string"
+        }
+      },
+      "title": "StudentConfig",
+      "type": "object"
+    },
+    "TokenPrices": {
+      "additionalProperties": false,
+      "properties": {
+        "input": {
+          "default": 0.0,
+          "minimum": 0.0,
+          "title": "Input",
+          "type": "number"
+        },
+        "output": {
+          "default": 0.0,
+          "minimum": 0.0,
+          "title": "Output",
+          "type": "number"
+        }
+      },
+      "title": "TokenPrices",
+      "type": "object"
+    },
+    "TutorConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "max_calls_per_round": {
+          "default": 20,
+          "exclusiveMinimum": 0,
+          "title": "Max Calls Per Round",
+          "type": "integer"
+        },
+        "max_usd_per_round": {
+          "default": 5.0,
+          "minimum": 0.0,
+          "title": "Max Usd Per Round",
+          "type": "number"
+        },
+        "model": {
+          "default": "claude-opus-5-5",
+          "title": "Model",
+          "type": "string"
+        },
+        "prices_usd_per_mtok": {
+          "$ref": "#/$defs/TokenPrices",
+          "default": {
+            "input": 0.0,
+            "output": 0.0
+          }
+        },
+        "provider": {
+          "default": "anthropic",
+          "enum": [
+            "anthropic",
+            "fake"
+          ],
+          "title": "Provider",
+          "type": "string"
+        }
+      },
+      "title": "TutorConfig",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "evaluation": {
+      "$ref": "#/$defs/EvaluationConfig",
+      "default": {
+        "protected_paths": [
+          "tests/**",
+          "**/test_*.py",
+          "**/*_test.py"
+        ],
+        "runs_per_task": 3,
+        "solved_threshold": 2,
+        "timeout_seconds": 900
+      }
+    },
+    "fast_loop": {
+      "$ref": "#/$defs/FastLoopConfig",
+      "default": {
+        "max_variants": 3,
+        "runs_per_variant": 2,
+        "time_budget_minutes": 10.0
+      }
+    },
+    "generator": {
+      "$ref": "#/$defs/GeneratorConfig",
+      "default": {
+        "model": "claude-fable-5-1",
+        "provider": "anthropic"
+      }
+    },
+    "project": {
+      "minLength": 1,
+      "title": "Project",
+      "type": "string"
+    },
+    "sandbox": {
+      "$ref": "#/$defs/SandboxConfig",
+      "default": {
+        "cpus": 2.0,
+        "image": "ghcr.io/padobrik/saddlefit-sandbox:0.1.0",
+        "memory": "4g",
+        "pids_limit": 512
+      }
+    },
+    "schema_version": {
+      "const": 1,
+      "default": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "splits": {
+      "$ref": "#/$defs/SplitsConfig",
+      "default": {
+        "control": 0.25,
+        "held_out": 0.25,
+        "train": 0.5
+      }
+    },
+    "student": {
+      "$ref": "#/$defs/StudentConfig",
+      "default": {
+        "base_url": "http://localhost:11434/v1",
+        "context_length": 32768,
+        "model": "qwen3:8b",
+        "provider": "openai-compatible",
+        "release_date": null,
+        "seed": 7,
+        "temperature": 0.2,
+        "tool_mode": "auto"
+      }
+    },
+    "tutor": {
+      "$ref": "#/$defs/TutorConfig",
+      "default": {
+        "max_calls_per_round": 20,
+        "max_usd_per_round": 5.0,
+        "model": "claude-opus-5-5",
+        "prices_usd_per_mtok": {
+          "input": 0.0,
+          "output": 0.0
+        },
+        "provider": "anthropic"
+      }
+    }
+  },
+  "required": [
+    "project"
+  ],
+  "title": "Config",
+  "type": "object"
+}

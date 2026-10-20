@@ -4,5 +4,9 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
+from saddlefit.config import Config
+
 # name -> model; the file is written as schemas/<name>.schema.json
-SCHEMA_MODELS: dict[str, type[BaseModel]] = {}
+SCHEMA_MODELS: dict[str, type[BaseModel]] = {
+    "saddlefit-config": Config,
+}
