@@ -18,6 +18,9 @@ from saddlefit.tasks.models import TASK_ID_PATTERN
 
 CANARY_PREFIX = "SADDLEFIT-CANARY-"
 _TASK_ID = re.compile(TASK_ID_PATTERN)
+# a replaced task waits under ".<id>~old" until the new one is in place; "~" never
+# appears in a task id or a staging name, so the name cannot collide with either
+RETIRED_SUFFIX = "~old"
 _COMMENT_PREFIX = {".py": "# ", ".sh": "# ", ".cfg": "# ", ".toml": "# ", ".ini": "# "}
 
 
@@ -44,7 +47,15 @@ def _embed(content: str, suffix: str, canary: str) -> str:
     return line + content
 
 
+def retired_name(task_id: str) -> str:
+    """Name of the directory that holds a task while a replace is under way."""
+    return f".{task_id}{RETIRED_SUFFIX}"
+
+
 def _safe_relative(path: str) -> PurePosixPath:
+    # a native Windows path would read a backslash as a separator the check below misses
+    if "\\" in path:
+        raise SealingError(f"hidden test path must use POSIX separators: {path!r}")
     rel = PurePosixPath(path)
     if rel.is_absolute() or not rel.parts or ".." in rel.parts:
         raise SealingError(f"hidden test path must be relative and stay inside: {path!r}")
@@ -73,6 +84,8 @@ class SealedWriter:
             raise SealingError("give exactly one of target_commit (history) or reference_patch")
         rels = _checked_paths(hidden_tests)
         task_dir = self._root / task_id
+        retired = self._root / retired_name(task_id)
+        _recover(task_dir, retired)
         if task_dir.exists() and not replace:
             raise SealingError(f"sealed task already exists: {task_id}")
         self._root.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -92,7 +105,7 @@ class SealedWriter:
                 _write(staging / "target_commit", target_commit.strip() + "\n")
             if reference_patch is not None:
                 _write(staging / "reference.patch", reference_patch)
-            _swap_into_place(staging, task_dir)
+            _swap_into_place(staging, task_dir, retired)
         finally:
             if staging.exists():
                 shutil.rmtree(staging)
@@ -113,12 +126,23 @@ def _checked_paths(hidden_tests: dict[str, str]) -> dict[str, PurePosixPath]:
     return rels
 
 
-def _swap_into_place(staging: Path, task_dir: Path) -> None:
+def _recover(task_dir: Path, retired: Path) -> None:
+    """Finish a replace that stopped between its renames."""
+    if not retired.exists():
+        return
+    if task_dir.exists():
+        shutil.rmtree(retired)  # the new task was installed; only cleanup was missed
+    else:
+        retired.rename(task_dir)  # the old task was never replaced
+
+
+def _swap_into_place(staging: Path, task_dir: Path, retired: Path) -> None:
     if not task_dir.exists():
         staging.rename(task_dir)
         return
-    retired = staging.with_name(staging.name + ".old")
     task_dir.rename(retired)
+    # If the process stops here, readers still find the task under its retired name and
+    # the next write restores it, so the old task is never lost.
     try:
         staging.rename(task_dir)
     except OSError:

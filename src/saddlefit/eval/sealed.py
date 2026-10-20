@@ -7,11 +7,12 @@ and nowhere else.
 
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 
 from saddlefit.tasks.models import TASK_ID_PATTERN
-from saddlefit.tasks.sealing import CANARY_PREFIX
+from saddlefit.tasks.sealing import CANARY_PREFIX, RETIRED_SUFFIX, retired_name
 
 _TASK_ID = re.compile(TASK_ID_PATTERN)
 _RUN_ID = re.compile(r"^[0-9A-HJKMNP-TV-Z]{26}$")  # a ULID
@@ -31,7 +32,13 @@ class SealedStore:
         if not _TASK_ID.match(task_id):
             raise SealedStoreError(f"invalid task id: {task_id!r}")
         path = self._root / task_id
-        if path.parent != self._root or not path.is_dir():
+        if path.parent != self._root:
+            raise SealedStoreError(f"no sealed data for task {task_id!r}")
+        if not path.exists() and not path.is_symlink():
+            # a replace interrupted between its renames leaves the task retired, not gone
+            path = self._root / retired_name(task_id)
+        # is_dir() follows symlinks, and a linked task could point anywhere
+        if path.is_symlink() or not path.is_dir():
             raise SealedStoreError(f"no sealed data for task {task_id!r}")
         return path
 
@@ -66,11 +73,18 @@ class SealedStore:
         """Every known canary; the leak guard scans prompts for all of them."""
         if not self._root.is_dir():
             return frozenset()
-        return frozenset(
-            self.canary(p.name)
-            for p in sorted(self._root.iterdir())
+        ids: set[str] = set()
+        for p in self._root.iterdir():
+            name = p.name
+            if name.startswith(".") and name.endswith(RETIRED_SUFFIX):
+                name = name[1 : -len(RETIRED_SUFFIX)]
             # skips staging directories (".<id>.*") left by an interrupted write
-            if _TASK_ID.match(p.name) and (p / "canary.txt").exists()
+            if _TASK_ID.match(name) and p.is_dir():
+                ids.add(name)
+        return frozenset(
+            self.canary(task_id)
+            for task_id in sorted(ids)
+            if (self._task_dir(task_id) / "canary.txt").exists()
         )
 
     def record_check_output(self, task_id: str, run_id: str, output: str) -> Path:
@@ -78,8 +92,15 @@ class SealedStore:
         if not _RUN_ID.match(run_id):
             raise SealedStoreError(f"invalid run id: {run_id!r}")
         out_dir = self._task_dir(task_id) / "check_output"
+        if out_dir.is_symlink():
+            raise SealedStoreError(f"check_output of task {task_id!r} must not be a symlink")
         out_dir.mkdir(exist_ok=True, mode=0o700)
         path = out_dir / f"{run_id}.txt"
-        path.write_text(output, encoding="utf-8")
+        if path.is_symlink():
+            raise SealedStoreError(f"check output {path.name} must not be a symlink")
+        # O_NOFOLLOW also refuses a link created after the check above (not on Windows)
+        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
+        with os.fdopen(os.open(path, flags, 0o600), "w", encoding="utf-8") as fh:
+            fh.write(output)
         path.chmod(0o600)
         return path

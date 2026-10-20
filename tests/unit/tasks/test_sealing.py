@@ -147,3 +147,53 @@ def test_leftover_staging_directories_are_ignored(tmp_path: Path) -> None:
     leftover.mkdir()
     (leftover / "canary.txt").write_text(CANARY_PREFIX + "0" * 32 + "\n", encoding="utf-8")
     assert store.all_canaries() == {store.canary("fix-0001")}
+
+
+def test_backslash_hidden_paths_are_rejected(tmp_path: Path) -> None:
+    with pytest.raises(SealingError, match="POSIX separators"):
+        seal(tmp_path, hidden_tests={"..\\..\\escape.py": "x"})
+    assert not (tmp_path / "fix-0001").exists()
+
+
+def test_interrupted_replace_keeps_the_old_task_available(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = seal(tmp_path)
+    old_canary = store.canary("fix-0001")
+    real_rename = Path.rename
+
+    def dies_while_installing(self: Path, target: str | os.PathLike[str]) -> Path:
+        if Path(target).name == "fix-0001" and self.name.startswith(".fix-0001."):
+            raise KeyboardInterrupt  # the process stops between retiring and installing
+        return real_rename(self, target)
+
+    monkeypatch.setattr(Path, "rename", dies_while_installing)
+    with pytest.raises(KeyboardInterrupt):
+        seal(tmp_path, replace=True)
+    monkeypatch.undo()
+    assert store.canary("fix-0001") == old_canary
+    assert store.all_canaries() == {old_canary}
+    seal(tmp_path, replace=True)
+    assert store.canary("fix-0001") != old_canary
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["fix-0001"]
+
+
+@pytest.mark.skipif(os.name == "nt", reason="creating symlinks needs privileges on Windows")
+def test_reader_refuses_symlinks(tmp_path: Path) -> None:
+    root = tmp_path / "sealed"
+    store = seal(root)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (root / "fix-0002").symlink_to(root / "fix-0001")
+    with pytest.raises(SealedStoreError, match="no sealed data"):
+        store.check_script("fix-0002")
+    out_dir = root / "fix-0001" / "check_output"
+    out_dir.symlink_to(outside)
+    with pytest.raises(SealedStoreError, match="symlink"):
+        store.record_check_output("fix-0001", RUN_ID, "secret")
+    out_dir.unlink()
+    out_dir.mkdir()
+    (out_dir / f"{RUN_ID}.txt").symlink_to(outside / "leak.txt")
+    with pytest.raises(SealedStoreError, match="symlink"):
+        store.record_check_output("fix-0001", RUN_ID, "secret")
+    assert list(outside.iterdir()) == []
