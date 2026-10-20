@@ -66,6 +66,12 @@ Every persisted format carries an integer `schema_version`. A change to a persis
 bumps it and ships a migration in `src/saddlefit/storage/migrations/` with tests. Readers
 accept the current and the previous version.
 
+## Diagrams
+
+The README diagrams are generated. Edit the sources in `docs/diagrams/src/*.jsx`, then run
+`node docs/diagrams/render.mjs` (Node 18+; it fetches a pinned esbuild through `npx`) and
+commit both the source and the regenerated `*-light.svg` and `*-dark.svg` files.
+
 ## Architecture decisions
 
 Deviations from the spec and significant decisions are recorded as ADRs in `docs/adr/`
