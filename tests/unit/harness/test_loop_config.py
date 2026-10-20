@@ -150,8 +150,9 @@ def test_a_change_touching_saddlefit_yaml_is_refused() -> None:
             "schema_version: 1\nreasoning:\n  effort: low\n  effort: high\n",
             "duplicate key 'effort'",
         ),
+        ("schema_version: 1\n? [bad]\n: 1\n", "unhashable key"),
     ],
-    ids=["quoted-int", "float-for-int", "duplicate-top-level", "duplicate-nested"],
+    ids=["quoted-int", "float-for-int", "duplicate-top-level", "duplicate-nested", "list-key"],
 )
 def test_strict_types_and_no_duplicate_keys(tmp_path: Path, text: str, message: str) -> None:
     path = tmp_path / "loop.yaml"
