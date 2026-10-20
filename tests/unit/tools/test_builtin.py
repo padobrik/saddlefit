@@ -4,8 +4,9 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from saddlefit.sandbox.container import ExecResult
+from saddlefit.sandbox.container import ExecResult, SandboxError
 from saddlefit.tools.builtin import (
+    MAX_COMMAND_TIMEOUT_S,
     TOOL_NAMES,
     TOOL_SPECS,
     Toolbox,
@@ -57,7 +58,7 @@ def test_commands_quote_paths_and_patterns() -> None:
     box.search("x; rm -rf /", "src")
     commands = [c for c, _ in box.sandbox.commands]  # type: ignore[attr-defined]
     assert commands[0] == "cat -n -- '/work/my file.py'"
-    assert commands[1] == "cat -n -- /work/a.py | sed -n '3,7p'"
+    assert commands[1] == "set -o pipefail; cat -n -- /work/a.py | sed -n '3,7p'"
     assert commands[2] == "ls -1Ap -- /work"
     assert commands[3] == "rg -n --max-columns 300 -e 'x; rm -rf /' -- /work/src"
 
@@ -121,3 +122,81 @@ def test_specs_cover_every_tool() -> None:
     } == TOOL_NAMES
     for spec in TOOL_SPECS:
         assert spec.parameters["additionalProperties"] is False
+
+
+@pytest.mark.parametrize(
+    ("name", "args", "message"),
+    [
+        ("read_file", {"path": "a.py", "end": "1p;id;#"}, "args.end: expected integer"),
+        ("read_file", {"path": "a.py", "start": True}, "args.start: expected integer"),
+        ("read_file", {"path": "a.py", "start": 5, "end": 2}, "end must not be before start"),
+        ("read_file", {"path": 5}, "args.path: expected string"),
+        ("write_file", {"path": "a.py", "content": 5}, "args.content: expected string"),
+        ("bash", {"command": 5}, "args.command: expected string"),
+        ("bash", {"command": "ls", "timeout": "soon"}, "args.timeout: expected integer"),
+        ("bash", {"command": "ls", "timeout": -3}, "timeout must be positive"),
+    ],
+)
+def test_arguments_are_validated_against_the_schemas(
+    name: str, args: dict[str, object], message: str
+) -> None:
+    sandbox = FakeSandbox()
+    result = Toolbox(sandbox).call(name, args)
+    assert result.ok is False
+    assert message in result.output
+    assert sandbox.commands == []  # nothing reached the sandbox
+
+
+def test_long_timeouts_are_capped() -> None:
+    sandbox = FakeSandbox()
+    Toolbox(sandbox).call("bash", {"command": "ls", "timeout": 99_999})
+    assert sandbox.commands[0][1] == MAX_COMMAND_TIMEOUT_S
+
+
+def test_large_content_is_staged_in_bounded_chunks() -> None:
+    sandbox = FakeSandbox()
+    Toolbox(sandbox).write_file("big.txt", "x" * 200_000)
+    commands = [c for c, _ in sandbox.commands]
+    staged = [c for c in commands if c.startswith("printf %s ")]
+    assert len(staged) >= 5
+    assert all(len(c) < 70_000 for c in commands)
+    helper = next(c for c in commands if c.startswith("python3 -c"))
+    assert " write @/tmp/saddlefit-" in helper
+    assert commands[-1].startswith("rm -f /tmp/saddlefit-")
+
+
+class BrokenSandbox:
+    def __init__(self, fail_after: int = 0) -> None:
+        self.calls: list[str] = []
+        self.fail_after = fail_after
+
+    def exec(self, command: str, timeout_s: float) -> ExecResult:
+        self.calls.append(command)
+        if command.startswith("rm -f"):
+            return ExecResult(exit_code=0, output="", timed_out=False, duration_s=0.0)
+        if len(self.calls) > self.fail_after:
+            raise SandboxError("container is gone")
+        return ExecResult(exit_code=0, output="", timed_out=False, duration_s=0.0)
+
+
+def test_sandbox_failures_become_failed_results() -> None:
+    result = Toolbox(BrokenSandbox()).call("list_dir", {})
+    assert (result.ok, result.output) == (False, "sandbox error: container is gone")
+
+
+def test_staged_chunks_are_removed_when_staging_fails() -> None:
+    sandbox = BrokenSandbox(fail_after=2)
+    result = Toolbox(sandbox).write_file("big.txt", "x" * 200_000)
+    assert not result.ok
+    assert sandbox.calls[-1].startswith("rm -f /tmp/saddlefit-")
+
+
+def test_long_sandbox_errors_are_capped() -> None:
+    class Noisy:
+        def exec(self, command: str, timeout_s: float) -> ExecResult:
+            raise SandboxError("x" * 10_000)
+
+    result = Toolbox(Noisy(), max_chars=200).call("list_dir", {})
+    assert not result.ok
+    assert len(result.output) < 300
+    assert "characters cut" in result.output

@@ -9,17 +9,20 @@ content is ever interpolated into a shell command.
 from __future__ import annotations
 
 import base64
-import inspect
 import posixpath
 import shlex
+import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, Protocol
 
 from saddlefit.providers.base import ToolSpec
+from saddlefit.providers.parsing import MalformedToolCall, validate_tool_call
+from saddlefit.sandbox.container import SandboxError
 
 WORKDIR = "/work"
 DEFAULT_COMMAND_TIMEOUT_S = 120
+MAX_COMMAND_TIMEOUT_S = 1800  # the run's own deadline still applies on top
 MAX_WRITE_BYTES = 512_000
 
 
@@ -67,7 +70,17 @@ def _b64(value: str) -> str:
 _HELPER = r"""
 import base64, os, sys
 op, *args = sys.argv[1:]
-args = [base64.b64decode(a).decode("utf-8") for a in args]
+
+
+def load(arg):
+    # "@path": the base64 text was staged in a file, for content beyond argument limits
+    if arg.startswith("@"):
+        with open(arg[1:], encoding="ascii") as fh:
+            arg = fh.read()
+    return base64.b64decode(arg).decode("utf-8")
+
+
+args = [load(a) for a in args]
 if op == "edit":
     path, old, new = args
     with open(path, encoding="utf-8") as fh:
@@ -88,8 +101,13 @@ elif op == "write":
 """
 
 
+# Linux caps one argument at about 128 KB; content beyond this goes through staged files.
+INLINE_LIMIT = 100_000
+STAGE_CHUNK = 60_000
+
+
 def _python(op: str, *args: str) -> str:
-    return " ".join(["python3", "-c", shlex.quote(_HELPER), op, *(_b64(a) for a in args)])
+    return " ".join(["python3", "-c", shlex.quote(_HELPER), op, *args])
 
 
 @dataclass
@@ -99,40 +117,76 @@ class Toolbox:
     sandbox: Executor
     max_chars: int = 4000
 
-    def _run(self, command: str, timeout_s: float = 30) -> ToolResult:
-        result = self.sandbox.exec(command, timeout_s)
+    def _run(
+        self, command: str, timeout_s: float = 30, ok_codes: tuple[int, ...] = (0,)
+    ) -> ToolResult:
+        try:
+            result = self.sandbox.exec(command, timeout_s)
+        except SandboxError as exc:  # a dead container is a failed call, not a crash
+            return ToolResult(ok=False, output=truncate(f"sandbox error: {exc}", self.max_chars))
         note = "\n[timed out]" if result.timed_out else ""
         output = truncate(result.output + note, self.max_chars)
-        return ToolResult(ok=result.exit_code == 0 and not result.timed_out, output=output)
+        return ToolResult(ok=result.exit_code in ok_codes and not result.timed_out, output=output)
+
+    def _helper(self, op: str, *values: str) -> ToolResult:
+        """Run the in-sandbox helper; large values are staged in /tmp in bounded chunks."""
+        encoded = [_b64(v) for v in values]
+        if sum(len(e) for e in encoded) <= INLINE_LIMIT:
+            return self._run(_python(op, *encoded))
+        stage = f"/tmp/saddlefit-{uuid.uuid4().hex}"  # noqa: S108 - the sandbox's private tmpfs
+        try:
+            refs = []
+            for i, text in enumerate(encoded):
+                path = f"{stage}-{i}"
+                for start in range(0, len(text), STAGE_CHUNK) or [0]:
+                    chunk = text[start : start + STAGE_CHUNK]
+                    staged = self._run(f"printf %s {shlex.quote(chunk)} >> {path}")
+                    if not staged.ok:
+                        return staged
+                refs.append(f"@{path}")
+            return self._run(_python(op, *refs))
+        finally:
+            self._run(f"rm -f {stage}-*", timeout_s=10)  # also after a failed staging step
 
     def read_file(self, path: str, start: int | None = None, end: int | None = None) -> ToolResult:
         target = shlex.quote(confine(path))
         if start is None and end is None:
             return self._run(f"cat -n -- {target}")
-        first, last = max(1, start or 1), end if end is not None else "$"
-        return self._run(f"cat -n -- {target} | sed -n '{first},{last}p'")
+        first = max(1, start or 1)
+        if end is not None and end < first:
+            raise ToolError("end must not be before start")
+        last = str(end) if end is not None else "$"
+        # pipefail: a missing file must fail, not look like an empty range
+        return self._run(f"set -o pipefail; cat -n -- {target} | sed -n '{first},{last}p'")
 
     def list_dir(self, path: str = ".") -> ToolResult:
         return self._run(f"ls -1Ap -- {shlex.quote(confine(path))}")
 
     def search(self, pattern: str, path: str = ".") -> ToolResult:
         target = shlex.quote(confine(path))
-        return self._run(f"rg -n --max-columns 300 -e {shlex.quote(pattern)} -- {target}")
+        command = f"rg -n --max-columns 300 -e {shlex.quote(pattern)} -- {target}"
+        result = self._run(command, ok_codes=(0, 1))  # rg exits 1 when nothing matches
+        if result.ok and not result.output.strip():
+            return ToolResult(ok=True, output="no matches")
+        return result
 
     def edit_file(self, path: str, old: str, new: str) -> ToolResult:
         if not old:
             raise ToolError("old text must not be empty; use write_file to create a file")
-        return self._run(_python("edit", confine(path), old, new))
+        return self._helper("edit", confine(path), old, new)
 
     def write_file(self, path: str, content: str) -> ToolResult:
         if len(content.encode("utf-8")) > MAX_WRITE_BYTES:
             raise ToolError(f"content is larger than {MAX_WRITE_BYTES} bytes")
-        return self._run(_python("write", confine(path), content))
+        return self._helper("write", confine(path), content)
 
-    def bash(self, command: str, timeout: float | None = None) -> ToolResult:
+    def bash(self, command: str, timeout: int | None = None) -> ToolResult:
         if not command.strip():
             raise ToolError("command must not be empty")
-        return self._run(command, timeout_s=timeout or DEFAULT_COMMAND_TIMEOUT_S)
+        if timeout is not None and timeout <= 0:
+            raise ToolError("timeout must be positive")
+        limit = min(timeout or DEFAULT_COMMAND_TIMEOUT_S, MAX_COMMAND_TIMEOUT_S)
+        return self._run(command, timeout_s=limit)
 
     def finish(self, summary: str) -> ToolResult:
         return ToolResult(ok=True, output=summary, finished=True)
@@ -143,8 +197,9 @@ class Toolbox:
         if name not in TOOL_NAMES or handler is None:
             return ToolResult(ok=False, output=f"unknown tool: {name}")
         try:
-            inspect.signature(handler).bind(**arguments)
-        except TypeError as exc:
+            # types and required arguments from TOOL_SPECS; this also rejects bools for integers
+            validate_tool_call(name, dict(arguments), TOOL_SPECS)
+        except MalformedToolCall as exc:
             return ToolResult(ok=False, output=f"error: bad arguments for {name}: {exc}")
         try:
             return handler(**arguments)
