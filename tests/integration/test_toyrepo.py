@@ -9,14 +9,22 @@ from tests.fixtures.toyrepo.build import FIXES, build
 pytestmark = pytest.mark.integration
 
 
+# Inherited repository-location variables (set by git hooks) would override cwd.
+_GIT_LOCATION_VARS = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR")
+_GIT_ENV = {k: v for k, v in os.environ.items() if k not in _GIT_LOCATION_VARS}
+
+# pytest exit codes: 0 all passed, 1 some tests failed; anything else is a broken run.
+PASSED, TESTS_FAILED = 0, 1
+
+
 def git(repo: Path, *args: str) -> str:
     return subprocess.run(
-        ["git", *args], cwd=repo, check=True, capture_output=True, text=True
+        ["git", *args], cwd=repo, env=_GIT_ENV, check=True, capture_output=True, text=True
     ).stdout.strip()
 
 
-def pytest_passes(repo: Path, test: str) -> bool:
-    result = subprocess.run(
+def run_pytest(repo: Path, test: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
         [
             sys.executable,
             "-B",
@@ -36,7 +44,13 @@ def pytest_passes(repo: Path, test: str) -> bool:
         text=True,
         check=False,
     )
-    return result.returncode == 0
+
+
+def assert_outcome(result: subprocess.CompletedProcess[str], expected: int, what: str) -> None:
+    assert result.returncode == expected, (
+        f"{what}: pytest exited {result.returncode}, expected {expected}\n"
+        f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    )
 
 
 @pytest.fixture(scope="module")
@@ -61,9 +75,9 @@ def test_each_fix_test_fails_on_parent_and_passes_on_commit(toyrepo: Path) -> No
         for sha, fix in zip(shas[1:], FIXES, strict=True):
             test = f"tests/{fix[4]}"
             git(toyrepo, "checkout", "--quiet", sha)
-            assert pytest_passes(toyrepo, test), f"{test} should pass on {fix[0]}"
+            assert_outcome(run_pytest(toyrepo, test), PASSED, f"{test} on {fix[0]}")
             git(toyrepo, "checkout", "--quiet", f"{sha}^", "--", "src")
-            assert not pytest_passes(toyrepo, test), f"{test} should fail before {fix[0]}"
+            assert_outcome(run_pytest(toyrepo, test), TESTS_FAILED, f"{test} before {fix[0]}")
             git(toyrepo, "checkout", "--quiet", sha, "--", "src")
     finally:
         git(toyrepo, "checkout", "--quiet", "--force", "main")
