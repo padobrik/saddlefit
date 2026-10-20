@@ -156,3 +156,56 @@ def test_export_ignores_export_ignore_attributes(store: HarnessStore, tmp_path: 
     store.export("main", dest)
     assert (dest / "skills" / "pydantic" / "SKILL.md").is_file()
     assert (dest / "skills" / ".gitattributes").is_file()
+
+
+def test_patches_reach_git_as_bytes_so_windows_keeps_lf(
+    store: HarnessStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    inputs: list[object] = []
+    real_run = subprocess.run
+
+    def recording_run(*args: object, **kwargs: object) -> object:
+        if kwargs.get("input") is not None:
+            inputs.append(kwargs["input"])
+            assert not kwargs.get("text"), "text mode turns \\n into \\r\\n on Windows"
+        return real_run(*args, **kwargs)  # type: ignore[call-overload]
+
+    monkeypatch.setattr(subprocess, "run", recording_run)
+    store.propose("p-bytes", LESSON, "lesson")
+    assert inputs
+    assert all(isinstance(i, bytes) and b"\r\n" not in i for i in inputs)
+
+
+def test_a_failing_cleanup_does_not_hide_the_original_error(
+    store: HarnessStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real_git = HarnessStore._git
+
+    def flaky_git(self: HarnessStore, *args: str, **kwargs: object) -> str:
+        if args[0] in {"commit", "branch"}:
+            raise HarnessStoreError(f"git {args[0]} failed: boom")
+        return real_git(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(HarnessStore, "_git", flaky_git)
+    with pytest.raises(HarnessStoreError, match="git commit failed"):
+        store.propose("p-flaky", LESSON, "lesson")
+
+
+def test_a_conflicting_prune_is_aborted_cleanly(store: HarnessStore) -> None:
+    store.propose("p-1", LESSON, "first")
+    first = store.accept("p-1")
+    store.propose("p-2", patch_for("EXPERIENCE.md", "# Lessons (fitted)", "# Lessons (v2)"), "2")
+    store.accept("p-2")
+    with pytest.raises(HarnessStoreError, match="revert"):
+        store.prune(first, "conflicts with p-2")
+    assert not (store.path / ".git" / "REVERT_HEAD").exists()
+    store.propose("p-3", NEW_SKILL, "still usable")
+
+
+def test_export_to_a_relative_directory(
+    store: HarnessStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    store.export("main", Path("out"))
+    assert (tmp_path / "out" / "EXPERIENCE.md").is_file()
+    assert not (store.path / "out").exists()

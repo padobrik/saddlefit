@@ -7,6 +7,7 @@ Runs record the commit SHA they used.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import re
 import subprocess
@@ -67,18 +68,19 @@ class HarnessStore:
         }
         if index is not None:
             env["GIT_INDEX_FILE"] = str(index)
+        # bytes, not text mode: on Windows text mode would turn a patch's \n into \r\n
         result = subprocess.run(  # noqa: S603 - fixed git argv, no shell
             ["git", "-c", "core.hooksPath=/dev/null", *args],  # noqa: S607
             cwd=self.path,
             env=env,
-            input=stdin,
+            input=None if stdin is None else stdin.encode("utf-8"),
             capture_output=True,
-            text=True,
             check=False,
         )
         if result.returncode != 0:
-            raise HarnessStoreError(f"git {args[0]} failed: {result.stderr.strip()}")
-        return result.stdout.strip()
+            stderr = result.stderr.decode("utf-8", errors="replace").strip()
+            raise HarnessStoreError(f"git {args[0]} failed: {stderr}")
+        return result.stdout.decode("utf-8", errors="replace").strip()
 
     def init(self) -> str:
         """Create the store with default harness files; return the initial commit SHA."""
@@ -117,14 +119,16 @@ class HarnessStore:
             self._git("apply", "--check", "--whitespace=nowarn", "-", stdin=patch)
             self._git("apply", "--index", "--whitespace=nowarn", "-", stdin=patch)
             self._git("commit", "--quiet", "-m", f"{message}\n\nproposal: {proposal_id}")
-            return self.head(branch)
+            sha = self.head(branch)
         except HarnessStoreError:
-            self._git("reset", "--quiet", "--hard")
-            self._git("switch", "--quiet", MAIN)
-            self._git("branch", "-D", branch)
+            # best effort: a failing cleanup must not replace the error that matters
+            with contextlib.suppress(HarnessStoreError):
+                self._git("reset", "--quiet", "--hard")
+                self._git("switch", "--quiet", MAIN)
+                self._git("branch", "-D", branch)
             raise
-        finally:
-            self._git("switch", "--quiet", MAIN)
+        self._git("switch", "--quiet", MAIN)
+        return sha
 
     def accept(self, proposal_id: str) -> str:
         """Merge the candidate into ``main``; return the new ``main`` SHA."""
@@ -140,8 +144,14 @@ class HarnessStore:
     def prune(self, commit: str, reason: str) -> str:
         """Revert an accepted change on ``main``, recording why; return the new SHA."""
         _checked(_COMMIT, commit, "commit")
-        self._git("revert", "--no-edit", "-m", "1", commit)
-        self._git("commit", "--quiet", "--amend", "-m", f"prune {commit[:12]}\n\nreason: {reason}")
+        try:
+            self._git("revert", "--no-commit", "-m", "1", commit)
+        except HarnessStoreError:
+            # a conflicting revert must not leave the store mid-revert
+            with contextlib.suppress(HarnessStoreError):
+                self._git("revert", "--abort")
+            raise
+        self._git("commit", "--quiet", "-m", f"prune {commit[:12]}\n\nreason: {reason}")
         return self.head()
 
     def tag(self, name: str, ref: str = MAIN) -> None:
@@ -155,6 +165,8 @@ class HarnessStore:
         ``export-ignore`` and let a committed ``.gitattributes`` hide files.
         """
         _checked(_REF, ref, "ref")
+        # git runs in the store, so a relative prefix would land inside it
+        dest = dest.resolve()
         dest.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(prefix="saddlefit-harness-index-") as tmp:
             index = Path(tmp) / "index"
