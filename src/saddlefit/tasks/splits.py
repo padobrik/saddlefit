@@ -80,10 +80,11 @@ def add_task(lock: SuiteLock, task_id: str, source: Source, content_hash: str) -
         old = existing[task_id]
         if old.source != source:
             raise SplitError(f"task {task_id} was recorded as {old.source}, not {source}")
-        entry = old.model_copy(update={"content_hash": content_hash})
+        entry = LockedTask(id=old.id, split=old.split, source=old.source, content_hash=content_hash)
     else:
         split = assign_split(salt, task_id, lock.fractions, source)
         entry = LockedTask(id=task_id, split=split, source=source, content_hash=content_hash)
     existing[task_id] = entry
     tasks = tuple(sorted(existing.values(), key=lambda t: t.id))
-    return lock.model_copy(update={"tasks": tasks})
+    # Validate the whole lock again: model_copy(update=...) would skip validation.
+    return SuiteLock.model_validate({**lock.model_dump(), "tasks": [t.model_dump() for t in tasks]})

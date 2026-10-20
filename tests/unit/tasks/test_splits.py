@@ -5,9 +5,11 @@ from collections import Counter
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
+from pydantic import ValidationError
 
 from saddlefit.config import SplitsConfig
-from saddlefit.tasks.models import Source, SplitFractions, SuiteLock
+from saddlefit.tasks import splits as splits_module
+from saddlefit.tasks.models import LockedTask, Source, SplitFractions, SuiteLock
 from saddlefit.tasks.splits import (
     SplitError,
     add_task,
@@ -20,6 +22,14 @@ from saddlefit.tasks.splits import (
 SALT = bytes.fromhex("11" * 32)
 FRACTIONS = SplitFractions(train=0.5, held_out=0.25, control=0.25)
 HASH = "sha256:" + "0" * 64
+
+
+@pytest.fixture(autouse=True)
+def fixed_salt(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``new_lock`` draws a random salt; pin it so every assignment here is reproducible."""
+    monkeypatch.setattr(splits_module.secrets, "token_hex", lambda n: SALT.hex())
+
+
 task_ids = st.from_regex(r"\A[a-z0-9][a-z0-9._-]{0,39}\Z")
 
 
@@ -91,7 +101,7 @@ def test_existing_task_keeps_split_and_updates_hash() -> None:
 
 def test_tampered_salt_is_detected() -> None:
     lock = new_lock(SplitsConfig())
-    forged = lock.model_copy(update={"salt": "00" * 32})
+    forged = lock.model_copy(update={"salt": "22" * 32})
     with pytest.raises(SplitError, match="digest"):
         add_task(forged, "a", "history", HASH)
 
@@ -113,3 +123,29 @@ def test_lock_round_trips_and_hash_ignores_order() -> None:
     reordered = lock.model_copy(update={"tasks": tuple(reversed(lock.tasks))})
     assert reordered.suite_hash() == lock.suite_hash()
     assert len(lock.salt) == 64
+
+
+def test_lock_rejects_control_for_generated_or_mutated_tasks() -> None:
+    for source in ("generated", "mutation"):
+        with pytest.raises(ValidationError, match="never control"):
+            LockedTask(id="t", split="control", source=source, content_hash=HASH)
+    LockedTask(id="t", split="control", source="history", content_hash=HASH)
+
+
+def test_persisted_fractions_must_sum_to_one() -> None:
+    with pytest.raises(ValidationError, match=r"sum to 1\.0"):
+        SplitFractions(train=0.5, held_out=0.5, control=0.5)
+
+
+def test_lock_rejects_duplicate_task_ids() -> None:
+    lock = add_task(new_lock(SplitsConfig()), "a", "history", HASH)
+    data = lock.model_dump()
+    data["tasks"] = [data["tasks"][0], {**data["tasks"][0], "content_hash": "sha256:" + "f" * 64}]
+    with pytest.raises(ValidationError, match="duplicate task id"):
+        SuiteLock.model_validate(data)
+
+
+def test_replacement_hash_is_validated() -> None:
+    lock = add_task(new_lock(SplitsConfig()), "a", "history", HASH)
+    with pytest.raises(ValidationError):
+        add_task(lock, "a", "history", "not-a-hash")

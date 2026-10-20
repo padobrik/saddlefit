@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import hashlib
+import math
 from datetime import date
-from typing import Final, Literal
+from typing import Final, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 TASK_SCHEMA_VERSION: Final = 1
 SUITE_SCHEMA_VERSION: Final = 1
@@ -50,6 +51,12 @@ class LockedTask(_Strict):
     source: Source
     content_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
 
+    @model_validator(mode="after")
+    def _control_needs_a_trusted_source(self) -> Self:
+        if self.split == "control" and self.source not in CONTROL_SOURCES:
+            raise ValueError(f"{self.source} tasks never control: {self.id}")
+        return self
+
 
 class SplitFractions(_Strict):
     """Fractions recorded at init; later configs may not change them."""
@@ -57,6 +64,13 @@ class SplitFractions(_Strict):
     train: float = Field(ge=0.0, le=1.0)
     held_out: float = Field(ge=0.0, le=1.0)
     control: float = Field(ge=0.0, le=1.0)
+
+    @model_validator(mode="after")
+    def _fractions_sum_to_one(self) -> Self:
+        total = self.train + self.held_out + self.control
+        if not math.isclose(total, 1.0, abs_tol=1e-9):
+            raise ValueError(f"split fractions must sum to 1.0, got {total}")
+        return self
 
 
 class SuiteLock(_Strict):
@@ -67,6 +81,15 @@ class SuiteLock(_Strict):
     salt_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
     fractions: SplitFractions
     tasks: tuple[LockedTask, ...] = ()
+
+    @model_validator(mode="after")
+    def _unique_ids(self) -> Self:
+        seen: set[str] = set()
+        for task in self.tasks:
+            if task.id in seen:
+                raise ValueError(f"duplicate task id in suite lock: {task.id}")
+            seen.add(task.id)
+        return self
 
     def suite_hash(self) -> str:
         """A digest of every task's ID, split and content, independent of order."""
