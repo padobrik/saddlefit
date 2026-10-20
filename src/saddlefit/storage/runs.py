@@ -79,8 +79,24 @@ EVENT_DATA: dict[str, type[_Strict]] = {
 }
 
 
+def _bind_payload_to_type(schema: dict[str, Any]) -> None:
+    """In the generated JSON Schema, require each event type's own payload (if/then)."""
+    schema["allOf"] = [
+        {
+            "if": {"properties": {"type": {"const": event_type}}, "required": ["type"]},
+            # payload models are flat, so their schemas are inlined (no $ref to resolve)
+            "then": {"properties": {"data": model.model_json_schema()}},
+        }
+        for event_type, model in EVENT_DATA.items()
+    ]
+
+
 class RunEvent(_Strict):
     """One step of a run, with a payload typed by its event type."""
+
+    model_config = ConfigDict(
+        extra="forbid", frozen=True, allow_inf_nan=False, json_schema_extra=_bind_payload_to_type
+    )
 
     schema_version: Literal[1]
     type: EventType

@@ -41,6 +41,7 @@ saddlefit = "saddlefit.cli:main"
 [dependency-groups]
 dev = [
     "hypothesis>=6.130",
+    "jsonschema>=4.23",
     "mypy>=1.16",
     "pip-audit>=2.9",
     "pre-commit>=4.2",

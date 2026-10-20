@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import jsonschema
 import pytest
 from pydantic import ValidationError
 
@@ -261,3 +262,20 @@ def test_only_eval_imports_the_unrestricted_reader() -> None:
             if {"_read_run_any", "read_any_run"} & set(names):
                 offenders.append(rel)
     assert offenders == []
+
+
+def test_generated_schema_binds_each_event_type_to_its_payload() -> None:
+    schema = RunEvent.model_json_schema()
+    validator = jsonschema.Draft202012Validator(schema)
+    good = {
+        "schema_version": 1,
+        "type": "compaction",
+        "time": NOW.isoformat(),
+        "data": {"dropped_outputs": 2},
+    }
+    mismatched = {**good, "data": {"kind": "x", "message": "y"}}
+    assert validator.is_valid(good)
+    RunEvent.model_validate(good)
+    assert not validator.is_valid(mismatched)
+    with pytest.raises(ValidationError):
+        RunEvent.model_validate(mismatched)
