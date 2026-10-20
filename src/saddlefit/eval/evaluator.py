@@ -9,7 +9,9 @@ exit code and duration, never the output.
 
 from __future__ import annotations
 
+import os
 import shutil
+import subprocess
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -62,8 +64,15 @@ class Evaluator:
 
     def evaluate(self, task_id: str, base_snapshot: Path, diff: str, run_id: str) -> Verdict:
         """Judge ``diff`` against task ``task_id`` starting from ``base_snapshot``."""
+        touched = diff_paths(diff)
+        if diff.strip():
+            applied = _applied_paths(diff)
+            if applied is None:
+                return Verdict(passed=False, exit_code=None, duration_s=0.0, diff_applied=False)
+            # git apply also accepts diffs without a "diff --git" header; judge what it applies
+            touched |= applied
         hidden = self._store.hidden_test_paths(task_id)
-        tampered = _tampered(diff_paths(diff), self._evaluation.protected_paths, hidden)
+        tampered = _tampered(touched, self._evaluation.protected_paths, hidden)
         if tampered:
             return Verdict(passed=False, exit_code=None, duration_s=0.0, tampered=tuple(tampered))
         with tempfile.TemporaryDirectory(prefix="saddlefit-eval-") as tmp:
@@ -115,6 +124,41 @@ class Evaluator:
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(source / PurePosixPath(rel), target)
         shutil.copyfile(self._store.check_script(task_id), _inside(work, CHECK_FILE))
+
+
+def _applied_paths(diff: str) -> set[str] | None:
+    """Every path ``git apply`` would touch, from its own parser; ``None`` if it cannot parse."""
+    env = {
+        "PATH": os.environ.get("PATH", ""),
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_GLOBAL": os.devnull,
+    }
+    with tempfile.TemporaryDirectory(prefix="saddlefit-numstat-") as tmp:
+        result = subprocess.run(
+            ["git", "apply", "--numstat", "-z", "-"],  # noqa: S607
+            cwd=tmp,  # outside any repository, so nothing is resolved against one
+            env=env,
+            input=diff.encode("utf-8", errors="surrogateescape"),
+            capture_output=True,
+            check=False,
+        )
+    if result.returncode != 0:
+        return None
+    paths: set[str] = set()
+    fields = result.stdout.decode("utf-8", errors="surrogateescape").split("\0")
+    i = 0
+    while i < len(fields):
+        added_deleted_path = fields[i].split("\t", 2)
+        if len(added_deleted_path) == 3 and added_deleted_path[2]:
+            paths.add(added_deleted_path[2])
+            i += 1
+        elif len(added_deleted_path) == 3:
+            # a rename or copy: the old and new names follow as separate fields
+            paths.update(name for name in fields[i + 1 : i + 3] if name)
+            i += 3
+        else:
+            i += 1
+    return paths
 
 
 def _tampered(touched: set[str], protected: tuple[str, ...], hidden: list[str]) -> list[str]:

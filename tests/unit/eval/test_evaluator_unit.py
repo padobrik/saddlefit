@@ -58,3 +58,44 @@ def test_a_diff_in_the_way_of_a_hidden_test_is_tampering(tmp_path: Path, path: s
     evaluator = Evaluator(SealedStore(tmp_path), None, "img", SandboxConfig(), EvaluationConfig())
     verdict = evaluator.evaluate("t-0001", tmp_path, diff, "01JB2Y8Q4V9N1K3D7M5R6T0W2X")
     assert verdict.tampered == (path,)
+
+
+def _store(tmp_path: Path) -> SealedStore:
+    SealedWriter(tmp_path / "sealed").write_task(
+        "t-0001", check_sh="true\n", hidden_tests={"tests/test_h.py": "x"}, target_commit="abc1234"
+    )
+    return SealedStore(tmp_path / "sealed")
+
+
+def test_a_headerless_diff_cannot_slip_past_the_tamper_check(tmp_path: Path) -> None:
+    headerless = "--- a/tests/test_a.py\n+++ b/tests/test_a.py\n@@ -1 +1 @@\n-x\n+y\n"
+    evaluator = Evaluator(_store(tmp_path), None, "img", SandboxConfig(), EvaluationConfig())
+    verdict = evaluator.evaluate("t-0001", tmp_path, headerless, "01JB2Y8Q4V9N1K3D7M5R6T0W2X")
+    assert verdict.tampered == ("tests/test_a.py",)
+
+
+def test_a_diff_git_cannot_parse_fails_before_any_container(tmp_path: Path) -> None:
+    evaluator = Evaluator(_store(tmp_path), None, "img", SandboxConfig(), EvaluationConfig())
+    verdict = evaluator.evaluate("t-0001", tmp_path, "not a patch\n", "01JB2Y8Q4V9N1K3D7M5R6T0W2X")
+    assert (verdict.passed, verdict.diff_applied, verdict.exit_code) == (False, False, None)
+
+
+class _NoContainers:
+    class containers:
+        @staticmethod
+        def run(*args: object, **kwargs: object) -> object:
+            raise RuntimeError("daemon unavailable")
+
+
+def test_environment_errors_are_reported(tmp_path: Path) -> None:
+    base = tmp_path / "base"
+    (base / "src").mkdir(parents=True)
+    (base / "src" / "a.py").write_text("x\n", encoding="utf-8")
+    diff = "--- a/src/a.py\n+++ b/src/a.py\n@@ -1 +1 @@\n-x\n+y\n"
+    evaluator = Evaluator(
+        _store(tmp_path), _NoContainers(), "img", SandboxConfig(), EvaluationConfig()
+    )
+    verdict = evaluator.evaluate("t-0001", base, diff, "01JB2Y8Q4V9N1K3D7M5R6T0W2X")
+    assert not verdict.passed
+    assert verdict.env_error is not None
+    assert "daemon unavailable" in verdict.env_error

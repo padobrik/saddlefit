@@ -148,17 +148,3 @@ def test_a_symlink_planted_by_the_diff_is_refused(
     assert not verdict.passed
     assert verdict.tampered == ("checks",)
     assert list(outside.iterdir()) == []
-
-
-def test_environment_errors_are_reported(setup: tuple[Evaluator, Path, Path]) -> None:
-    _, base, sealed = setup
-    broken = Evaluator(
-        SealedStore(sealed),
-        setup[0]._client,
-        "saddlefit-no-such-image:0",
-        SandboxConfig(memory="512m"),
-        EvaluationConfig(timeout_seconds=60),
-    )
-    verdict = broken.evaluate(TASK, base, FIX_DIFF, RUN_ID)
-    assert not verdict.passed
-    assert verdict.env_error
