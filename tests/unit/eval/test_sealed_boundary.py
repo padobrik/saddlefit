@@ -22,6 +22,21 @@ def _absolute(node: ast.ImportFrom, package: str) -> str:
     return ".".join([*base, node.module] if node.module else base)
 
 
+def _static_str(node: ast.AST) -> str | None:
+    """The value of a string expression built only from literals, else None."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        left, right = _static_str(node.left), _static_str(node.right)
+        return left + right if left is not None and right is not None else None
+    if isinstance(node, ast.JoinedStr):
+        parts = [
+            _static_str(v.value if isinstance(v, ast.FormattedValue) else v) for v in node.values
+        ]
+        return "".join(p for p in parts if p is not None) if None not in parts else None
+    return None
+
+
 def imports_accessor(tree: ast.AST, package: str = "saddlefit") -> list[int]:
     """Line numbers of imports of the accessor, including relative and dynamic imports."""
     lines = []
@@ -42,12 +57,10 @@ def imports_accessor(tree: ast.AST, package: str = "saddlefit") -> list[int]:
             hit = node.attr == "sealed"
         elif isinstance(node, ast.Call):
             # getattr(ev, "sealed") or importlib.import_module(".sealed", "saddlefit.eval")
-            hit = any(
-                isinstance(arg, ast.Constant) and arg.value in {"sealed", ".sealed"}
-                for arg in node.args
-            )
-        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
-            hit = ACCESSOR in node.value  # e.g. importlib.import_module("saddlefit.eval.sealed")
+            hit = any(_static_str(arg) in {"sealed", ".sealed"} for arg in node.args)
+        elif isinstance(node, ast.Constant | ast.BinOp | ast.JoinedStr):
+            # "saddlefit.eval.sealed", also built as "saddlefit.eval." + "sealed" or an f-string
+            hit = ACCESSOR in (_static_str(node) or "")
         else:
             hit = False
         if hit:
@@ -103,6 +116,12 @@ def test_detector_catches_every_import_form(tmp_path: Path) -> None:
         "student/k.py": (
             "import importlib\nm = importlib.import_module('.sealed', 'saddlefit.eval')\n"
         ),
+        "student/l.py": (
+            "import importlib\nm = importlib.import_module('saddlefit.eval.' + 'sealed')\n"
+        ),
+        "student/m.py": (
+            "import importlib\nm = importlib.import_module(f'saddlefit.{\"eval\"}.sealed')\n"
+        ),
     }
     for name, text in samples.items():
         (tmp_path / name).parent.mkdir(parents=True, exist_ok=True)
@@ -117,4 +136,6 @@ def test_detector_catches_every_import_form(tmp_path: Path) -> None:
         "student/i.py",
         "student/j.py",
         "student/k.py",
+        "student/l.py",
+        "student/m.py",
     }
