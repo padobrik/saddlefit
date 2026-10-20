@@ -58,7 +58,7 @@ class Evaluator:
     def evaluate(self, task_id: str, base_snapshot: Path, diff: str, run_id: str) -> Verdict:
         """Judge ``diff`` against task ``task_id`` starting from ``base_snapshot``."""
         hidden = self._store.hidden_test_paths(task_id)
-        tampered = tampered_paths(diff_paths(diff), self._evaluation.protected_paths, hidden)
+        tampered = _tampered(diff_paths(diff), self._evaluation.protected_paths, hidden)
         if tampered:
             return Verdict(passed=False, exit_code=None, duration_s=0.0, tampered=tuple(tampered))
         with tempfile.TemporaryDirectory(prefix="saddlefit-eval-") as tmp:
@@ -82,7 +82,7 @@ class Evaluator:
             if diff.strip():
                 (work / DIFF_FILE).write_text(diff, encoding="utf-8")
                 applied = box.exec(f"git apply --whitespace=nowarn {DIFF_FILE}", APPLY_TIMEOUT_S)
-                (work / DIFF_FILE).unlink()
+                (work / DIFF_FILE).unlink(missing_ok=True)
                 if applied.exit_code != 0:
                     return Verdict(passed=False, exit_code=None, duration_s=0.0, diff_applied=False)
             try:
@@ -110,6 +110,23 @@ class Evaluator:
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(source / PurePosixPath(rel), target)
         shutil.copyfile(self._store.check_script(task_id), _inside(work, CHECK_FILE))
+
+
+def _tampered(touched: set[str], protected: tuple[str, ...], hidden: list[str]) -> list[str]:
+    """Tampered paths, including any that stand in the way of a file the evaluator writes.
+
+    The evaluator copies the hidden tests and ``check.sh`` in after the diff is applied, so
+    a diff may not create those paths, a file where one needs a directory, or a directory
+    where one needs a file.
+    """
+    reserved = [*hidden, CHECK_FILE, DIFF_FILE]
+    in_the_way = {
+        path
+        for path in touched
+        for name in reserved
+        if path.startswith(name + "/") or name.startswith(path + "/")
+    }
+    return sorted(set(tampered_paths(touched, protected, reserved)) | in_the_way)
 
 
 class PlantedSymlinkError(Exception):

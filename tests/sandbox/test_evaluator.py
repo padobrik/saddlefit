@@ -123,7 +123,8 @@ def test_a_symlink_planted_by_the_diff_is_refused(
     outside = tmp_path / "outside"
     outside.mkdir()
     # the diff creates `checks` as a symlink to a host directory; `checks` itself is not a
-    # protected path, so only the evaluator's copy step can catch it
+    # protected path, but it stands where a hidden test's directory goes, so the diff is
+    # refused before any container starts (the copy step's symlink guard is the backstop)
     planted = "\n".join(
         [
             "diff --git a/checks b/checks",
@@ -145,7 +146,7 @@ def test_a_symlink_planted_by_the_diff_is_refused(
     )
     verdict = evaluator.evaluate("symlink-trap-0001", base, planted, RUN_ID)
     assert not verdict.passed
-    assert verdict.tampered == ("checks is a symlink",)
+    assert verdict.tampered == ("checks",)
     assert list(outside.iterdir()) == []
 
 
