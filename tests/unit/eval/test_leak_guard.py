@@ -83,6 +83,7 @@ def test_canary_anywhere_in_a_prompt_aborts(
     assert where in exc.value.locations
     assert inner.calls == []  # the prompt never reached the model
     incident = json.loads(log.read_text(encoding="utf-8"))
+    assert incident["schema_version"] == 1
     assert incident["type"] == "canary_leak"
     assert incident["tasks"] == ["fix-0001"]
     assert CANARY not in log.read_text(encoding="utf-8")
@@ -188,3 +189,10 @@ def test_locations_never_contain_a_canary(tmp_path: Path) -> None:
         "messages[0].tool_calls[0].arguments.<key>",
         "messages[0].tool_calls[0].arguments.<redacted>.nested",
     )
+
+
+def test_tool_call_ids_are_scanned() -> None:
+    message = Message(role="tool", content="ok", tool_call_id=f"id-{CANARY}")
+    with pytest.raises(LeakDetected) as exc:
+        LeakGuard(CANARIES).check([message])
+    assert exc.value.locations == ("messages[0].tool_call_id",)
