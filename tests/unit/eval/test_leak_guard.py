@@ -188,3 +188,10 @@ def test_locations_never_contain_a_canary(tmp_path: Path) -> None:
         "messages[0].tool_calls[0].arguments.<key>",
         "messages[0].tool_calls[0].arguments.<redacted>.nested",
     )
+
+
+def test_tool_call_ids_are_scanned() -> None:
+    message = Message(role="tool", content="ok", tool_call_id=f"id-{CANARY}")
+    with pytest.raises(LeakDetected) as exc:
+        LeakGuard(CANARIES).check([message])
+    assert exc.value.locations == ("messages[0].tool_call_id",)

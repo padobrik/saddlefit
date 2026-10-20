@@ -66,6 +66,8 @@ def _texts(
 ) -> Iterator[tuple[Location, str]]:
     for i, message in enumerate(messages):
         yield (f"messages[{i}]", ".content"), message.content
+        if message.tool_call_id is not None:  # sent to the provider too
+            yield (f"messages[{i}]", ".tool_call_id"), message.tool_call_id
         for j, call in enumerate(message.tool_calls):
             yield from _strings(call.model_dump(), (f"messages[{i}]", f".tool_calls[{j}]"))
     for k, tool in enumerate(tools or ()):
