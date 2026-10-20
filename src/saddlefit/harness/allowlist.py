@@ -13,6 +13,7 @@ ALLOWED_DIRS: frozenset[str] = frozenset({"skills", "tools"})
 
 
 def is_allowed(path: str) -> bool:
+    """Whether ``path`` (relative to the harness store) may be changed by a proposal."""
     # Judge the raw segments: PurePosixPath would quietly normalize "./x" and "a//b".
     segments = path.split("/")
     if not path or any(seg in {"", ".", ".."} for seg in segments):

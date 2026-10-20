@@ -12,6 +12,7 @@ class _UniqueKeyLoader(yaml.SafeLoader):
 
 
 def _construct_mapping(loader: _UniqueKeyLoader, node: yaml.MappingNode, deep: bool = False) -> Any:
+    """Build a mapping, refusing unhashable and repeated keys."""
     seen: set[Any] = set()
     for key_node, _ in node.value:
         key = loader.construct_object(key_node, deep=deep)
