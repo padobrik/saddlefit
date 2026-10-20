@@ -35,6 +35,7 @@ from saddlefit.providers.parsing import (
     extract_json_object,
     json_mode_schema,
     parse_json_tool_call,
+    validate_tool_call,
 )
 from saddlefit.providers.retry import LOCAL_TIMEOUT_S, call_with_retries
 
@@ -229,14 +230,13 @@ class OpenAICompatibleClient:
         for i, call in enumerate(message.tool_calls or []):
             arguments = call.function.arguments or "{}"
             try:
-                args, was_repaired = extract_json_object(arguments)
+                parsed, was_repaired = extract_json_object(arguments)
+                name, args = validate_tool_call(call.function.name, parsed, tools)
             except MalformedToolCall:
                 malformed.append(arguments)
                 continue
             repaired = repaired or was_repaired
-            calls.append(
-                ToolCall(id=call.id or f"call_{i}", name=call.function.name, arguments=args)
-            )
+            calls.append(ToolCall(id=call.id or f"call_{i}", name=name, arguments=args))
         return ModelReply(
             text=text,
             tool_calls=tuple(calls),

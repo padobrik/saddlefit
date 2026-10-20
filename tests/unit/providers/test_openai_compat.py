@@ -179,3 +179,24 @@ def test_message_conversion() -> None:
         "arguments": '{"path": "a"}',
     }
     assert out[1] == {"role": "tool", "content": "text", "tool_call_id": "c1"}
+
+
+def named_call(name: Any, args: str, call_id: str = "c9") -> Any:
+    return SimpleNamespace(id=call_id, function=SimpleNamespace(name=name, arguments=args))
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        named_call("rm_rf", '{"path": "/"}'),
+        named_call(None, '{"path": "a"}'),
+        named_call("read_file", "{}"),
+        named_call("read_file", '{"path": 3}'),
+    ],
+    ids=["undeclared-tool", "missing-name", "missing-required-arg", "wrong-arg-type"],
+)
+def test_native_calls_are_validated_against_declared_tools(call: Any) -> None:
+    sdk = StubSDK(response(tool_calls=[call, native_call('{"path": "ok.py"}')]))
+    reply = client(sdk).chat(USER, [READ], GenParams())
+    assert [c.arguments for c in reply.tool_calls] == [{"path": "ok.py"}]
+    assert len(reply.malformed) == 1
