@@ -203,8 +203,14 @@ def schema_errors(value: Any, schema: dict[str, Any], path: str = "args") -> lis
 def parse_json_tool_call(text: str, tools: Sequence[ToolSpec]) -> tuple[str, dict[str, Any], bool]:
     """Parse ``{"tool": ..., "args": {...}}``; return name, args and whether it was repaired."""
     obj, repaired = extract_json_object(text)
-    name = obj.get("tool")
-    args = obj.get("args", {})
+    name, args = validate_tool_call(obj.get("tool"), obj.get("args", {}), tools)
+    return name, args, repaired
+
+
+def validate_tool_call(
+    name: object, args: object, tools: Sequence[ToolSpec]
+) -> tuple[str, dict[str, Any]]:
+    """Check a call against the declared tools and its parameter schema, in any tool mode."""
     by_name = {t.name: t for t in tools}
     if not isinstance(name, str) or name not in by_name:
         raise MalformedToolCall(f"unknown tool {name!r}; expected one of {sorted(by_name)}")
@@ -213,7 +219,7 @@ def parse_json_tool_call(text: str, tools: Sequence[ToolSpec]) -> tuple[str, dic
     errors = schema_errors(args, by_name[name].parameters)
     if errors:
         raise MalformedToolCall("; ".join(errors))
-    return name, args, repaired
+    return name, args
 
 
 def json_mode_schema(tools: Sequence[ToolSpec]) -> dict[str, Any]:
