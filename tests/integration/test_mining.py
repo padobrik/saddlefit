@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 from tests.fixtures.toyrepo.build import FIXES, build
 
+from saddlefit.tasks import mining
 from saddlefit.tasks.mining import (
     Candidate,
     LocalRunner,
@@ -347,3 +348,35 @@ def test_a_symlink_loop_is_a_snapshot_error_not_a_crash(tmp_path: Path) -> None:
     else:
         # 3.13+ resolves a loop without raising; the link stays inside the snapshot
         assert verdict is None
+
+
+def test_snapshots_never_contain_saddlefit_state(tmp_path: Path) -> None:
+    repo = build(tmp_path / "repo")
+    sealed = repo / ".saddlefit" / "tasks" / "sealed" / "fix-0001"
+    sealed.mkdir(parents=True)
+    (sealed / "check.sh").write_text("# hidden check\n", encoding="utf-8")
+    commit_all(repo, "chore: commit state by mistake")
+    dest = tmp_path / "snapshot"
+    mining._export(repo, "HEAD", dest)
+    assert (dest / "src" / "toykit").is_dir()
+    assert not (dest / ".saddlefit").exists()
+
+
+def test_commits_touching_saddlefit_state_are_rejected(tmp_path: Path) -> None:
+    repo = build(tmp_path / "repo")
+    state = repo / ".saddlefit" / "tasks" / "public"
+    state.mkdir(parents=True)
+    (state / "notes.py").write_text("x = 1\n", encoding="utf-8")
+    add_fix(repo, "tests/test_double.py")
+    (state / "notes.py").write_text("x = 2\n", encoding="utf-8")
+    (repo / "src" / "toykit" / "extra.py").write_text(
+        "def double(x):\n    return 2 * x\n", encoding="utf-8"
+    )
+    (repo / "tests" / "test_double.py").write_text(
+        "from toykit.extra import double\n\n\ndef test_double():\n    assert double(3) == 6\n",
+        encoding="utf-8",
+    )
+    commit_all(repo, "fix: double again")
+    newest, reason = iter_commits(repo, limit=1)[0]
+    assert newest is None
+    assert reason == "touches_state"

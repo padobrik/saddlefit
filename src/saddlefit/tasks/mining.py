@@ -17,7 +17,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from pathlib import Path, PurePosixPath
-from typing import Literal, Protocol
+from typing import Final, Literal, Protocol
 
 from saddlefit.eval.tamper import matches_any
 
@@ -27,8 +27,12 @@ _FAILED_ON_PARENT = frozenset({1, 2})
 _FIELD = "\x1f"
 _RECORD = "\x1e"
 
+# Saddlefit's own state, sealed tasks included, never enters a snapshot or a task (B3).
+STATE_DIR: Final = ".saddlefit"
+
 Rejection = Literal[
     "root_commit",
+    "touches_state",
     "no_test_change",
     "no_source_change",
     "test_deleted",
@@ -100,6 +104,47 @@ def is_test_path(path: str, patterns: Iterable[str] = DEFAULT_TEST_PATTERNS) -> 
     return path.endswith(".py") and matches_any(path, tuple(patterns))
 
 
+@dataclass
+class _ChangedFiles:
+    tests: list[str] = field(default_factory=list)
+    sources: list[str] = field(default_factory=list)
+    data: list[str] = field(default_factory=list)
+    deleted_test: bool = False
+    touches_state: bool = False
+
+
+def _classify(changes: str) -> _ChangedFiles:
+    """Sort one commit's ``--name-status`` lines into tests, test data and sources."""
+    files = _ChangedFiles()
+    for line in changes.strip().splitlines():
+        status, _, path = line.partition("\t")
+        if path == STATE_DIR or path.startswith(STATE_DIR + "/"):
+            files.touches_state = True
+        elif is_test_path(path):
+            files.deleted_test = files.deleted_test or status.startswith("D")
+            files.tests.append(path)
+        elif matches_any(path, DEFAULT_TEST_PATTERNS):
+            files.deleted_test = files.deleted_test or status.startswith("D")
+            files.data.append(path)
+        elif path.endswith(".py"):
+            files.sources.append(path)
+    return files
+
+
+def _rejection(files: _ChangedFiles, *, has_parent: bool) -> Rejection | None:
+    if not has_parent:
+        return "root_commit"
+    if files.touches_state:
+        return "touches_state"
+    if not files.tests:
+        return "no_test_change"
+    if not files.sources:
+        return "no_source_change"
+    if files.deleted_test:
+        return "test_deleted"
+    return None
+
+
 def iter_commits(
     repo: Path, *, since: date | None = None, limit: int | None = None
 ) -> list[tuple[Candidate | None, str | None]]:
@@ -118,29 +163,8 @@ def iter_commits(
     out: list[tuple[Candidate | None, str | None]] = []
     for record in _git(repo, *args).split(_RECORD)[1:]:
         sha, parents, stamp, subject, body, changes = record.split(_FIELD, 5)
-        tests: list[str] = []
-        sources: list[str] = []
-        data: list[str] = []
-        deleted_test = False
-        for line in changes.strip().splitlines():
-            status, _, path = line.partition("\t")
-            if is_test_path(path):
-                deleted_test = deleted_test or status.startswith("D")
-                tests.append(path)
-            elif matches_any(path, DEFAULT_TEST_PATTERNS):
-                deleted_test = deleted_test or status.startswith("D")
-                data.append(path)
-            elif path.endswith(".py"):
-                sources.append(path)
-        reason: Rejection | None = None
-        if not parents.strip():
-            reason = "root_commit"
-        elif not tests:
-            reason = "no_test_change"
-        elif not sources:
-            reason = "no_source_change"
-        elif deleted_test:
-            reason = "test_deleted"
+        files = _classify(changes)
+        reason = _rejection(files, has_parent=bool(parents.strip()))
         candidate = None
         if reason is None:
             candidate = Candidate(
@@ -149,9 +173,9 @@ def iter_commits(
                 committed=datetime.fromtimestamp(int(stamp), UTC),
                 subject=subject.strip(),
                 body=body.strip(),
-                test_files=tuple(sorted(tests)),
-                source_files=tuple(sorted(sources)),
-                test_data=tuple(sorted(data)),
+                test_files=tuple(sorted(files.tests)),
+                source_files=tuple(sorted(files.sources)),
+                test_data=tuple(sorted(files.data)),
             )
         out.append((candidate, reason))
     return out
@@ -163,6 +187,8 @@ def _export(repo: Path, ref: str, dest: Path) -> None:
     with tempfile.TemporaryDirectory(prefix="saddlefit-index-") as tmp:
         env = _git_env(GIT_INDEX_FILE=str(Path(tmp) / "index"))
         _git_bytes(repo, "read-tree", ref, env=env)
+        # a repository that committed its state by mistake must not leak it into snapshots
+        _git_bytes(repo, "rm", "-r", "-q", "--cached", "--ignore-unmatch", "--", STATE_DIR, env=env)
         _git_bytes(repo, "checkout-index", "--all", f"--prefix={dest}{os.sep}", env=env)
 
 
