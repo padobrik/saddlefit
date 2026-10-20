@@ -141,8 +141,97 @@ def candidate(subject: str) -> Candidate:
         ("Refactor everything!!!", "refactor-everything-abcdef1", "change"),
         ("!!!", "change-abcdef1", "change"),
         ("feat(eval): add leak guard (#65)", "add-leak-guard-abcdef1", "feature"),
+        ("fix!: drop py3.8", "drop-py3-8-abcdef1", "bugfix"),
+        ("feat!: new api", "new-api-abcdef1", "feature"),
     ],
 )
 def test_ids_and_types(subject: str, task_id: str, task_type: str) -> None:
     assert task_id_for(candidate(subject)) == task_id
     assert task_type_for(candidate(subject)) == task_type
+
+
+def commit_all(repo: Path, message: str) -> None:
+    git(repo, "add", "-A")
+    git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", message)
+
+
+def add_fix(repo: Path, test_rel: str) -> None:
+    """A commit that fixes clamp's bug again on a fresh function, tested in ``test_rel``."""
+    src = repo / "src" / "toykit" / "extra.py"
+    src.write_text("def double(x):\n    return x + x + 1\n", encoding="utf-8")
+    commit_all(repo, "feat: add double")
+    src.write_text("def double(x):\n    return x + x\n", encoding="utf-8")
+    test = repo / test_rel
+    test.parent.mkdir(parents=True, exist_ok=True)
+    test.write_text(
+        "from toykit.extra import double\n\n\ndef test_double():\n    assert double(2) == 4\n",
+        encoding="utf-8",
+    )
+    commit_all(repo, "fix: double")
+
+
+def test_non_ascii_test_paths(tmp_path: Path) -> None:
+    repo = build(tmp_path / "repo")
+    add_fix(repo, "tests/test_dátum.py")
+    report = mine(repo, RUNNER, limit=1)
+    assert report.summary()["viable"] == 1
+    assert report.viable[0].test_files == ("tests/test_dátum.py",)
+
+
+def test_export_ignore_does_not_hide_tests(tmp_path: Path) -> None:
+    repo = build(tmp_path / "repo")
+    (repo / ".gitattributes").write_text("tests/** export-ignore\n", encoding="utf-8")
+    commit_all(repo, "chore: keep tests out of archives")
+    add_fix(repo, "tests/test_double.py")
+    assert mine(repo, RUNNER, limit=1).summary()["viable"] == 1
+
+
+def test_inherited_git_dir_is_ignored(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    repo = build(tmp_path / "repo")
+    other = tmp_path / "other"
+    other.mkdir()
+    git(other, "init", "-q")  # an empty repository: none of repo's commits exist there
+    monkeypatch.setenv("GIT_DIR", str(other / ".git"))
+    report = mine(repo, RUNNER, limit=2)
+    assert report.summary()["viable"] == 2
+
+
+def test_overlay_never_writes_through_a_symlink(tmp_path: Path) -> None:
+    repo = build(tmp_path / "repo")
+    source = repo / "src" / "toykit" / "numbers.py"
+    original = source.read_text(encoding="utf-8")
+    link = repo / "tests" / "test_link.py"
+    link.symlink_to(Path("../src/toykit/numbers.py"))
+    commit_all(repo, "chore: link")
+    link.unlink()
+    link.write_text("def test_x():\n    assert False\n", encoding="utf-8")
+    source.write_text(original + "\n# touched\n", encoding="utf-8")
+    commit_all(repo, "fix: replace link")
+    candidate = next(c for c, _ in iter_commits(repo, limit=1) if c is not None)
+
+    class Inspecting:
+        def __init__(self) -> None:
+            self.seen: list[str] = []
+
+        def run_tests(self, snapshot: Path, test_files: Sequence[str]) -> int:
+            self.seen.append((snapshot / "src/toykit/numbers.py").read_text(encoding="utf-8"))
+            return 0 if len(self.seen) == 1 else 1
+
+    runner = Inspecting()
+    assert check_candidate(repo, candidate, runner) is None
+    # the parent snapshot's source must be the parent's, not the overlaid test file
+    assert runner.seen[1] == original
+
+
+def test_snapshot_errors_are_a_rejection_not_a_crash(toyrepo: Path) -> None:
+    good = next(c for c, _ in iter_commits(toyrepo) if c is not None)
+    broken = Candidate(
+        sha=good.sha,
+        parent="0" * 40,
+        committed=good.committed,
+        subject=good.subject,
+        body="",
+        test_files=good.test_files,
+        source_files=good.source_files,
+    )
+    assert check_candidate(toyrepo, broken, Scripted(0, 1)) == "snapshot_error"
