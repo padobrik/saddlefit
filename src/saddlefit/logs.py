@@ -51,6 +51,31 @@ def _redact_quoted(match: re.Match[str]) -> str:
 
 _MIN_SECRET_LEN = 8
 
+# Field names whose values are masked whatever they look like (compared lowercased,
+# trimmed, with "-" read as "_").
+_SENSITIVE_FIELD_NAMES = frozenset(
+    {
+        "api_key",
+        "apikey",
+        "x_api_key",
+        "authorization",
+        "proxy_authorization",
+        "password",
+        "passwd",
+        "secret",
+        "client_secret",
+        "token",
+        "access_token",
+        "refresh_token",
+        "cookie",
+        "set_cookie",
+    }
+)
+
+
+def _is_sensitive_field(key: object) -> bool:
+    return isinstance(key, str) and key.strip().lower().replace("-", "_") in _SENSITIVE_FIELD_NAMES
+
 
 def _secret_values(env: Mapping[str, str]) -> list[str]:
     values = [env[name] for name in SECRET_ENV_VARS if len(env.get(name, "")) >= _MIN_SECRET_LEN]
@@ -75,7 +100,10 @@ def _redact_value(value: Any) -> Any:
     if isinstance(value, str):
         return redact(value)
     if isinstance(value, Mapping):
-        return {_redact_value(k): _redact_value(v) for k, v in value.items()}
+        return {
+            _redact_value(k): REDACTED if _is_sensitive_field(k) else _redact_value(v)
+            for k, v in value.items()
+        }
     if isinstance(value, list | tuple):
         return [_redact_value(v) for v in value]
     # Anything else would reach json.dumps(default=str) unredacted.

@@ -109,3 +109,22 @@ def test_mapping_keys_and_objects_are_redacted(log_stream: io.StringIO) -> None:
     assert line["headers"] == {REDACTED: "present", "nested": {REDACTED: [1, 2.5, True, None]}}
     assert line["error"] == f"failed with {REDACTED}"
     assert line["count"] == 3
+
+
+def test_values_under_sensitive_keys_are_masked(log_stream: io.StringIO) -> None:
+    extras = {
+        "request": {
+            "API-Key ": "short-val1",
+            "password": {"nested": "hunter2xx"},
+            "Authorization": ["x" * 9],
+            "model": "qwen3:8b",
+        }
+    }
+    logging.getLogger("saddlefit").info("call", extra=extras)
+    line = json.loads(log_stream.getvalue())
+    assert line["request"] == {
+        "API-Key ": REDACTED,
+        "password": REDACTED,
+        "Authorization": REDACTED,
+        "model": "qwen3:8b",
+    }
