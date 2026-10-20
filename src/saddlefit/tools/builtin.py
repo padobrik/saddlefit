@@ -83,19 +83,20 @@ def load(arg):
 args = [load(a) for a in args]
 if op == "edit":
     path, old, new = args
-    with open(path, encoding="utf-8") as fh:
+    # newline="": keep CRLF and CR bytes exactly; only the replaced text changes
+    with open(path, encoding="utf-8", newline="") as fh:
         text = fh.read()
     count = text.count(old)
     if count != 1:
         print(f"ERROR old text found {count} times; it must occur exactly once")
         sys.exit(1)
-    with open(path, "w", encoding="utf-8") as fh:
+    with open(path, "w", encoding="utf-8", newline="") as fh:
         fh.write(text.replace(old, new, 1))
     print("OK edited")
 elif op == "write":
     path, content = args
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    with open(path, "w", encoding="utf-8") as fh:
+    with open(path, "w", encoding="utf-8", newline="") as fh:
         fh.write(content)
     print(f"OK wrote {len(content)} characters")
 """

@@ -63,3 +63,12 @@ def test_search_without_matches_is_not_an_error(box: Toolbox) -> None:
     result = box.search("no-such-text-anywhere")
     assert result.ok
     assert result.output.strip() == "no matches"
+
+
+def test_edits_and_writes_keep_line_endings(box: Toolbox, tmp_path: Path) -> None:
+    (tmp_path / "crlf.txt").write_bytes(b"one\r\ntwo\r\nthree\r\n")
+    edited = box.edit_file("crlf.txt", "two\r\n", "2\r\n")
+    assert edited.ok, edited.output
+    assert (tmp_path / "crlf.txt").read_bytes() == b"one\r\n2\r\nthree\r\n"
+    assert box.write_file("written.txt", "a\r\nb\n").ok
+    assert (tmp_path / "written.txt").read_bytes() == b"a\r\nb\n"
