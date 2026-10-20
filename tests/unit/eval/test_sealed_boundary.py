@@ -33,6 +33,10 @@ def imports_accessor(tree: ast.AST, package: str = "saddlefit") -> list[int]:
             hit = _names_accessor(module) or (
                 module == "saddlefit.eval" and any(a.name == "sealed" for a in node.names)
             )
+        # The two branches below are deliberately broad: outside eval/, ANY attribute named
+        # `sealed` and ANY call with a "sealed" argument fails test 11, even a harmless
+        # `config.sealed`. For a security boundary a false positive (rename the attribute)
+        # is the safe failure mode; a false negative would leak sealed data.
         elif isinstance(node, ast.Attribute):
             # e.g. ev.sealed.SealedStore after `from .. import eval as ev`
             hit = node.attr == "sealed"
