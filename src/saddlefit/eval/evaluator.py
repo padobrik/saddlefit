@@ -41,6 +41,11 @@ class Verdict:
 
 
 class Evaluator:
+    """Judges a student's diff in a fresh no-network container (B10).
+
+    Hidden-check output goes to the sealed store only; callers get a ``Verdict``.
+    """
+
     def __init__(
         self,
         store: SealedStore,
