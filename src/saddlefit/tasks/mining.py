@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 import subprocess
 import tempfile
 from collections import Counter
@@ -17,9 +18,11 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from pathlib import Path, PurePosixPath
-from typing import Literal, Protocol
+from typing import Any, Literal, Protocol
 
+from saddlefit.config import SandboxConfig
 from saddlefit.eval.tamper import matches_any
+from saddlefit.sandbox.container import Sandbox, SandboxError
 
 DEFAULT_TEST_PATTERNS: tuple[str, ...] = ("tests/**", "**/test_*.py", "**/*_test.py")
 # pytest: 0 all passed, 1 tests failed, 2 interrupted (e.g. an import error in a new test)
@@ -220,7 +223,7 @@ def check_candidate(repo: Path, candidate: Candidate, runner: Runner) -> Rejecti
             if on_commit != 0:
                 return "fails_on_commit"
             on_parent = runner.run_tests(before, candidate.test_files)
-        except (OSError, subprocess.SubprocessError):
+        except (OSError, subprocess.SubprocessError, SandboxError):
             return "runner_error"
         return None if on_parent in _FAILED_ON_PARENT else "passes_on_parent"
 
@@ -284,3 +287,42 @@ class LocalRunner:
             check=False,
         )
         return result.returncode
+
+
+@dataclass(frozen=True)
+class SandboxRunner:
+    """Runs a candidate's tests in the student sandbox (no network, B11 limits).
+
+    The default for ``tasks mine``: mining runs the repository's own tests, and a cloned
+    repository is not necessarily trusted.
+    """
+
+    docker_client: Any
+    image: str
+    limits: SandboxConfig
+    timeout_s: float = 300
+
+    def run_tests(self, snapshot: Path, test_files: Sequence[str]) -> int:
+        command = " ".join(
+            [
+                "PYTHONPATH=src:.",
+                "python",
+                "-B",
+                "-m",
+                "pytest",
+                "-q",
+                "-p",
+                "no:cacheprovider",
+                *(shlex.quote(f) for f in test_files),
+            ]
+        )
+        with Sandbox(
+            self.docker_client,
+            self.image,
+            snapshot,
+            self.limits,
+            run_timeout_s=self.timeout_s + 60,
+            labels={"saddlefit.role": "mining"},
+        ) as box:
+            result = box.exec(command, self.timeout_s)
+        return result.exit_code
