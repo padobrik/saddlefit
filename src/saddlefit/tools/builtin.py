@@ -18,6 +18,7 @@ from typing import Any, Protocol
 
 from saddlefit.providers.base import ToolSpec
 from saddlefit.providers.parsing import MalformedToolCall, validate_tool_call
+from saddlefit.sandbox.container import SandboxError
 
 WORKDIR = "/work"
 DEFAULT_COMMAND_TIMEOUT_S = 120
@@ -119,7 +120,10 @@ class Toolbox:
     def _run(
         self, command: str, timeout_s: float = 30, ok_codes: tuple[int, ...] = (0,)
     ) -> ToolResult:
-        result = self.sandbox.exec(command, timeout_s)
+        try:
+            result = self.sandbox.exec(command, timeout_s)
+        except SandboxError as exc:  # a dead container is a failed call, not a crash
+            return ToolResult(ok=False, output=f"sandbox error: {exc}")
         note = "\n[timed out]" if result.timed_out else ""
         output = truncate(result.output + note, self.max_chars)
         return ToolResult(ok=result.exit_code in ok_codes and not result.timed_out, output=output)
@@ -130,18 +134,19 @@ class Toolbox:
         if sum(len(e) for e in encoded) <= INLINE_LIMIT:
             return self._run(_python(op, *encoded))
         stage = f"/tmp/saddlefit-{uuid.uuid4().hex}"  # noqa: S108 - the sandbox's private tmpfs
-        refs = []
-        for i, text in enumerate(encoded):
-            path = f"{stage}-{i}"
-            for start in range(0, len(text), STAGE_CHUNK) or [0]:
-                chunk = text[start : start + STAGE_CHUNK]
-                staged = self._run(f"printf %s {shlex.quote(chunk)} >> {path}")
-                if not staged.ok:
-                    return staged
-            refs.append(f"@{path}")
-        result = self._run(_python(op, *refs))
-        self.sandbox.exec(f"rm -f {stage}-*", 10)
-        return result
+        try:
+            refs = []
+            for i, text in enumerate(encoded):
+                path = f"{stage}-{i}"
+                for start in range(0, len(text), STAGE_CHUNK) or [0]:
+                    chunk = text[start : start + STAGE_CHUNK]
+                    staged = self._run(f"printf %s {shlex.quote(chunk)} >> {path}")
+                    if not staged.ok:
+                        return staged
+                refs.append(f"@{path}")
+            return self._run(_python(op, *refs))
+        finally:
+            self._run(f"rm -f {stage}-*", timeout_s=10)  # also after a failed staging step
 
     def read_file(self, path: str, start: int | None = None, end: int | None = None) -> ToolResult:
         target = shlex.quote(confine(path))

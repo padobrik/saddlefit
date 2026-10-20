@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from saddlefit.sandbox.container import ExecResult
+from saddlefit.sandbox.container import ExecResult, SandboxError
 from saddlefit.tools.builtin import (
     MAX_COMMAND_TIMEOUT_S,
     TOOL_NAMES,
@@ -163,3 +163,29 @@ def test_large_content_is_staged_in_bounded_chunks() -> None:
     helper = next(c for c in commands if c.startswith("python3 -c"))
     assert " write @/tmp/saddlefit-" in helper
     assert commands[-1].startswith("rm -f /tmp/saddlefit-")
+
+
+class BrokenSandbox:
+    def __init__(self, fail_after: int = 0) -> None:
+        self.calls: list[str] = []
+        self.fail_after = fail_after
+
+    def exec(self, command: str, timeout_s: float) -> ExecResult:
+        self.calls.append(command)
+        if command.startswith("rm -f"):
+            return ExecResult(exit_code=0, output="", timed_out=False, duration_s=0.0)
+        if len(self.calls) > self.fail_after:
+            raise SandboxError("container is gone")
+        return ExecResult(exit_code=0, output="", timed_out=False, duration_s=0.0)
+
+
+def test_sandbox_failures_become_failed_results() -> None:
+    result = Toolbox(BrokenSandbox()).call("list_dir", {})
+    assert (result.ok, result.output) == (False, "sandbox error: container is gone")
+
+
+def test_staged_chunks_are_removed_when_staging_fails() -> None:
+    sandbox = BrokenSandbox(fail_after=2)
+    result = Toolbox(sandbox).write_file("big.txt", "x" * 200_000)
+    assert not result.ok
+    assert sandbox.calls[-1].startswith("rm -f /tmp/saddlefit-")
