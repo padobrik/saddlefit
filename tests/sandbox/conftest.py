@@ -49,11 +49,13 @@ def docker_client() -> Iterator["docker.DockerClient"]:
 
 @pytest.fixture(scope="session")
 def sandbox_image(docker_client: "docker.DockerClient") -> str:
-    """The sandbox image under test: CI builds it; locally it is built once and cached."""
+    """The sandbox image under test. Building it needs the network, so tests never do."""
     image = os.environ.get("SADDLEFIT_SANDBOX_IMAGE", "saddlefit-sandbox:test")
     try:
         docker_client.images.get(image)
     except docker.errors.ImageNotFound:
-        context = Path(__file__).resolve().parents[2] / "sandbox"
-        docker_client.images.build(path=str(context), tag=image, rm=True)
+        hint = f"sandbox image {image!r} not found; build it with: docker build -t {image} sandbox/"
+        if os.environ.get("SADDLEFIT_REQUIRE_DOCKER") == "1":
+            pytest.fail(hint)
+        pytest.skip(hint)
     return image

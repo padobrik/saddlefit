@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from saddlefit.config import SandboxConfig
-from saddlefit.sandbox.container import Sandbox
+from saddlefit.sandbox.container import OUTPUT_LIMIT_BYTES, Sandbox
 
 pytestmark = pytest.mark.docker
 
@@ -94,3 +94,19 @@ def test_capabilities_are_dropped(sandbox: Sandbox) -> None:
     assert status.split()[-1] == "0000000000000000"
     nnp = sandbox.exec("grep NoNewPrivs /proc/self/status", timeout_s=10).output
     assert nnp.split()[-1] == "1"
+
+
+def test_huge_output_is_capped_on_the_host(sandbox: Sandbox) -> None:
+    result = sandbox.exec("head -c 5000000 /dev/zero | tr '\\0' a; echo END", timeout_s=30)
+    assert result.exit_code == 0
+    assert len(result.output) < OUTPUT_LIMIT_BYTES + 200
+    assert "bytes of output truncated" in result.output
+    assert result.output.rstrip().endswith("END")
+
+
+def test_process_escaping_its_group_does_not_block_the_host(sandbox: Sandbox) -> None:
+    # setsid moves sleep out of timeout's process group; the call must still return on time
+    # (the host-side deadline for a pipe that stays open is covered by a unit test)
+    result = sandbox.exec("setsid sleep 120", timeout_s=2)
+    assert result.timed_out
+    assert result.duration_s < 2 + 5 + 5 + 5

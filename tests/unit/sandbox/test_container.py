@@ -1,3 +1,4 @@
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -10,25 +11,46 @@ from saddlefit.sandbox.container import (
     SANDBOX_ENV,
     Sandbox,
     SandboxError,
+    _CappedOutput,
     container_options,
+    memory_bytes,
     sandbox_user,
 )
 
 LIMITS = SandboxConfig(cpus=1.5, memory="512m", pids_limit=128)
 
 
-class FakeContainer:
-    def __init__(self, replies: list[Any]) -> None:
-        self.replies = replies
-        self.execs: list[dict[str, Any]] = []
-        self.removed = False
+class FakeAPI:
+    """Scripted ``client.api``: each exec yields chunks and then reports an exit code."""
 
-    def exec_run(self, cmd: list[str], **kwargs: Any) -> Any:
-        self.execs.append({"cmd": cmd, **kwargs})
-        reply = self.replies.pop(0)
-        if isinstance(reply, Exception):
-            raise reply
-        return reply
+    def __init__(self, scripts: list[Any]) -> None:
+        self.scripts = scripts
+        self.created: list[dict[str, Any]] = []
+        self.current: Any = None
+
+    def exec_create(self, container_id: str, cmd: list[str], **kwargs: Any) -> dict[str, str]:
+        self.created.append({"container": container_id, "cmd": cmd, **kwargs})
+        self.current = self.scripts.pop(0)
+        if isinstance(self.current, Exception):
+            raise self.current
+        return {"Id": f"exec{len(self.created)}"}
+
+    def exec_start(self, exec_id: str, stream: bool) -> Any:
+        assert stream
+        chunks = self.current["chunks"]
+        if isinstance(chunks, Exception):
+            raise chunks
+        return chunks
+
+    def exec_inspect(self, exec_id: str) -> dict[str, int]:
+        return {"ExitCode": self.current["code"]}
+
+
+class FakeContainer:
+    id = "c0ffee"
+
+    def __init__(self) -> None:
+        self.removed = False
 
     def remove(self, force: bool) -> None:
         assert force
@@ -36,15 +58,15 @@ class FakeContainer:
 
 
 class FakeClient:
-    def __init__(self, box: FakeContainer | Exception) -> None:
-        self.box = box
-        self.runs: list[tuple[str, dict[str, Any]]] = []
+    def __init__(self, scripts: list[Any], fail_start: Exception | None = None) -> None:
+        self.box = FakeContainer()
+        self.api = FakeAPI(scripts)
+        self.fail_start = fail_start
         self.containers = SimpleNamespace(run=self._run)
 
     def _run(self, image: str, **kwargs: Any) -> FakeContainer:
-        self.runs.append((image, kwargs))
-        if isinstance(self.box, Exception):
-            raise self.box
+        if self.fail_start:
+            raise self.fail_start
         return self.box
 
 
@@ -54,6 +76,10 @@ class Clock:
 
     def __call__(self) -> float:
         return self.now
+
+
+def done(code: int, *chunks: bytes) -> dict[str, Any]:
+    return {"chunks": list(chunks), "code": code}
 
 
 def test_options_enforce_every_limit(tmp_path: Path) -> None:
@@ -79,6 +105,30 @@ def test_workspace_must_be_an_existing_absolute_dir(bad: Path) -> None:
         container_options(bad, LIMITS)
 
 
+@pytest.mark.parametrize(
+    ("limits", "message"),
+    [
+        (SandboxConfig(cpus=0.000000001), "cpu limit too small"),
+        (SandboxConfig(memory="0"), "6m minimum"),
+        (SandboxConfig(memory="0g"), "6m minimum"),
+        (SandboxConfig(memory="5m"), "6m minimum"),
+    ],
+)
+def test_limits_docker_would_treat_as_unlimited_are_rejected(
+    tmp_path: Path, limits: SandboxConfig, message: str
+) -> None:
+    with pytest.raises(SandboxError, match=message):
+        container_options(tmp_path, limits)
+
+
+def test_memory_parsing() -> None:
+    assert memory_bytes("4g") == 4 * 1024**3
+    assert memory_bytes("512M") == 512 * 1024**2
+    assert memory_bytes("1024") == 1024
+    with pytest.raises(SandboxError, match="invalid memory"):
+        memory_bytes("lots")
+
+
 def test_user_is_never_root(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(mod.os, "getuid", lambda: 0, raising=False)
     monkeypatch.setattr(mod.os, "getgid", lambda: 0, raising=False)
@@ -90,46 +140,129 @@ def test_user_is_never_root(monkeypatch: pytest.MonkeyPatch) -> None:
     assert sandbox_user() == "1000:1000"
 
 
-def test_exec_wraps_commands_in_a_timeout(tmp_path: Path) -> None:
-    box = FakeContainer([(0, b"ok\n"), (124, b""), (137, b"Killed")])
+def test_exec_streams_output_and_reads_the_exit_code(tmp_path: Path) -> None:
+    client = FakeClient([done(0, b"o", b"k\n"), done(124), done(137, b"Killed")])
     clock = Clock()
-    with Sandbox(FakeClient(box), "img", tmp_path, LIMITS, run_timeout_s=100, clock=clock) as sb:
+    with Sandbox(client, "img", tmp_path, LIMITS, run_timeout_s=100, clock=clock) as sb:
         result = sb.exec("pytest -q", timeout_s=30)
         assert (result.exit_code, result.output, result.timed_out) == (0, "ok\n", False)
-        assert box.execs[0]["cmd"] == ["timeout", "--kill-after=5", "30", "bash", "-c", "pytest -q"]
-        assert box.execs[0]["environment"] == SANDBOX_ENV
-        assert box.execs[0]["workdir"] == "/work"
+        call = client.api.created[0]
+        assert call["container"] == "c0ffee"
+        assert call["cmd"] == ["timeout", "--kill-after=5", "30", "bash", "-c", "pytest -q"]
+        assert call["environment"] == SANDBOX_ENV
+        assert call["workdir"] == "/work"
         assert sb.exec("sleep 99", timeout_s=5).timed_out
         # 137 without exhausting the budget is an OOM kill, not a timeout
         assert not sb.exec("big", timeout_s=5).timed_out
-    assert box.removed
+    assert client.box.removed
 
 
 def test_run_deadline_caps_each_command(tmp_path: Path) -> None:
-    box = FakeContainer([(0, b"")])
+    client = FakeClient([done(0)])
     clock = Clock()
-    with Sandbox(FakeClient(box), "img", tmp_path, LIMITS, run_timeout_s=10, clock=clock) as sb:
+    with Sandbox(client, "img", tmp_path, LIMITS, run_timeout_s=10, clock=clock) as sb:
         clock.now = 7.5
         sb.exec("x", timeout_s=60)
-        assert box.execs[0]["cmd"][2] == "2"
+        assert client.api.created[0]["cmd"][2] == "2"
         clock.now = 10
         late = sb.exec("y", timeout_s=60)
     assert late.timed_out
     assert late.exit_code == 124
-    assert len(box.execs) == 1
+    assert len(client.api.created) == 1
+
+
+def test_host_deadline_kills_a_stream_that_never_ends(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(mod, "KILL_GRACE_S", 0)
+    monkeypatch.setattr(mod, "HOST_MARGIN_S", 0.05)
+    release = threading.Event()
+
+    def endless() -> Any:
+        yield b"partial"
+        release.wait(5)
+
+    client = FakeClient([{"chunks": endless(), "code": 0}])
+    sb = Sandbox(client, "img", tmp_path, LIMITS, run_timeout_s=100)
+    sb.start()
+    result = sb.exec("setsid sleep 999", timeout_s=1)
+    release.set()
+    assert result.timed_out
+    assert result.exit_code == 137
+    assert result.output.startswith("partial")
+    assert "sandbox killed" in result.output
+    assert client.box.removed
+    with pytest.raises(SandboxError, match="not running"):
+        sb.exec("true", timeout_s=1)
+
+
+def test_output_keeps_head_and_tail() -> None:
+    buf = _CappedOutput(10)
+    for chunk in (b"abc", b"defgh", b"ijklmnop", b"qrst"):
+        buf.add(chunk)
+    assert buf.text() == "abcde\n[... 10 bytes of output truncated ...]\npqrst"
+    small = _CappedOutput(10)
+    small.add(b"abcdefg")
+    assert small.text() == "abcdefg"
 
 
 def test_errors_become_sandbox_errors(tmp_path: Path) -> None:
     with pytest.raises(SandboxError, match="cannot start"):
         Sandbox(
-            FakeClient(RuntimeError("no image")), "img", tmp_path, LIMITS, run_timeout_s=5
+            FakeClient([], fail_start=RuntimeError("no image")),
+            "img",
+            tmp_path,
+            LIMITS,
+            run_timeout_s=5,
         ).start()
-    box = FakeContainer([RuntimeError("gone")])
-    sb = Sandbox(FakeClient(box), "img", tmp_path, LIMITS, run_timeout_s=5)
+    client = FakeClient(
+        [
+            RuntimeError("gone"),
+            {"chunks": RuntimeError("reset"), "code": 0},
+            {"chunks": iter_raising(), "code": 0},
+        ]
+    )
+    sb = Sandbox(client, "img", tmp_path, LIMITS, run_timeout_s=50)
     with pytest.raises(SandboxError, match="not running"):
         sb.exec("x", timeout_s=1)
     sb.start()
-    with pytest.raises(SandboxError, match="exec failed"):
-        sb.exec("x", timeout_s=5)
+    for _ in range(3):
+        with pytest.raises(SandboxError, match="exec failed"):
+            sb.exec("x", timeout_s=5)
     sb.close()
     sb.close()
+
+
+def iter_raising() -> Any:
+    yield b"x"
+    raise ConnectionResetError("stream broke")
+
+
+class Closable:
+    def __init__(self) -> None:
+        self.closed = False
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class ClosingStream:
+    def __init__(self, chunks: list[bytes]) -> None:
+        self.chunks = chunks
+        self.closed = False
+        self._response = Closable()
+
+    def __iter__(self) -> Any:
+        return iter(self.chunks)
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def test_exec_stream_is_closed_after_reading(tmp_path: Path) -> None:
+    stream = ClosingStream([b"ok"])
+    client = FakeClient([{"chunks": stream, "code": 0}])
+    with Sandbox(client, "img", tmp_path, LIMITS, run_timeout_s=10) as sb:
+        assert sb.exec("x", timeout_s=5).output == "ok"
+    assert stream.closed
+    assert stream._response.closed
