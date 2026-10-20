@@ -1,0 +1,87 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+language: en-US
+reviews:
+  profile: assertive
+  request_changes_workflow: true      # approve only when comments are resolved and checks pass
+  allow_author_approval: false        # the PR author cannot self-approve or bulk-resolve
+  high_level_summary: true
+  poem: false
+  review_status: true
+  collapse_walkthrough: true
+  enable_prompt_for_ai_agents: true
+  auto_review:
+    enabled: true
+    drafts: false
+    auto_incremental_review: true
+    auto_pause_after_reviewed_commits: 0
+  path_filters:
+    - "!uv.lock"
+    - "!schemas/**"
+    - "!tests/fixtures/toyrepo/**"
+  path_instructions:
+    - path: "src/saddlefit/eval/**"
+      instructions: |
+        Evaluation-integrity boundary. Flag any path that lets the student, the tutor,
+        the generator or the fast loop read sealed data (hidden tests, check.sh, reference
+        solutions) or held-out and control outcomes. Control results must never feed a decision.
+    - path: "src/saddlefit/sandbox/**"
+      instructions: |
+        Flag anything that enables network access, mounts host paths beyond the run workspace,
+        passes environment variables beyond the allowlist, runs as root, or removes CPU,
+        memory, pids or time limits.
+    - path: "src/saddlefit/harness/**"
+      instructions: |
+        Proposals may touch only allowlisted harness paths. Check patch validation, size
+        limits and schema validation of loop.yaml.
+    - path: "src/saddlefit/providers/**"
+      instructions: |
+        Check timeouts, retries with backoff for transient errors only, usage accounting,
+        and that no API key can reach logs, prompts or the sandbox.
+    - path: "src/saddlefit/storage/**"
+      instructions: |
+        Any change to a persisted model must bump schema_version and ship a migration with tests.
+    - path: "tests/**"
+      instructions: |
+        Tests must be deterministic and must not use the network unless marked live.
+    - path: ".github/workflows/**"
+      instructions: |
+        Least-privilege permissions, actions pinned to commit SHAs, no secrets in workflows
+        triggered by pull_request.
+  pre_merge_checks:
+    title:
+      mode: error
+      requirements: "Conventional Commits format, for example 'feat(loops): add ablation'."
+    description:
+      mode: warning
+    custom_checks:
+      - name: "Evaluation integrity"
+        mode: error
+        instructions: |
+          Fail if the change lets the student, the tutor, the generator or the fast loop read
+          sealed task data or held-out or control outcomes, or lets control results influence
+          any decision. Pass otherwise.
+      - name: "Schema versioning"
+        mode: error
+        instructions: |
+          Fail if a persisted data model changes without a schema_version bump, a migration
+          and a test. Pass if no persisted model changed.
+  tools:
+    ruff:
+      enabled: true
+    actionlint:
+      enabled: true
+    zizmor:
+      enabled: true
+    hadolint:
+      enabled: true
+    gitleaks:
+      enabled: true
+    osvScanner:
+      enabled: true
+    skillspector:
+      enabled: true
+chat:
+  auto_reply: true
+knowledge_base:
+  learnings:
+    scope: local
