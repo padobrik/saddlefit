@@ -164,6 +164,13 @@ def test_registry_guards() -> None:
         upgrade("bad", {"schema_version": 0}, 1)
 
 
+@pytest.mark.parametrize("bad", ["not-a-ulid", "../escape", "01J/2", ""])
+def test_writer_rejects_a_non_ulid_run_id_before_touching_disk(tmp_path: Path, bad: str) -> None:
+    with pytest.raises(ValueError, match="not a ULID"):
+        RunWriter(tmp_path, bad, now=NOW)
+    assert list(tmp_path.iterdir()) == []
+
+
 def test_second_writer_for_the_same_run_is_refused_before_any_event(tmp_path: Path) -> None:
     run_id = new_run_id()
     first = RunWriter(tmp_path, run_id, now=NOW)

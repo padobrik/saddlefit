@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Final, Literal, Self, cast
@@ -177,6 +178,9 @@ class RunWriter:
 
     def __init__(self, runs_root: Path, run_id: str, *, now: datetime | None = None) -> None:
         """Create ``runs/<date>/<run_id>.jsonl`` exclusively; refuse if it exists."""
+        # the id becomes a path component, and finish() needs a summary-valid id
+        if not re.fullmatch(ULID_PATTERN, run_id):
+            raise ValueError(f"run_id is not a ULID: {run_id!r}")
         when = now or datetime.now(UTC)
         self.run_id = run_id
         self.path = runs_root / when.strftime("%Y-%m-%d") / f"{run_id}.jsonl"
