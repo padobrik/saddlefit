@@ -10,8 +10,10 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from saddlefit.tasks.models import TASK_ID_PATTERN
 from saddlefit.tasks.sealing import CANARY_PREFIX
 
+_TASK_ID = re.compile(TASK_ID_PATTERN)
 _RUN_ID = re.compile(r"^[0-9A-HJKMNP-TV-Z]{26}$")  # a ULID
 
 
@@ -26,6 +28,8 @@ class SealedStore:
         self._root = sealed_root
 
     def _task_dir(self, task_id: str) -> Path:
+        if not _TASK_ID.match(task_id):
+            raise SealedStoreError(f"invalid task id: {task_id!r}")
         path = self._root / task_id
         if path.parent != self._root or not path.is_dir():
             raise SealedStoreError(f"no sealed data for task {task_id!r}")
@@ -63,7 +67,10 @@ class SealedStore:
         if not self._root.is_dir():
             return frozenset()
         return frozenset(
-            self.canary(p.name) for p in sorted(self._root.iterdir()) if (p / "canary.txt").exists()
+            self.canary(p.name)
+            for p in sorted(self._root.iterdir())
+            # skips staging directories (".<id>.*") left by an interrupted write
+            if _TASK_ID.match(p.name) and (p / "canary.txt").exists()
         )
 
     def record_check_output(self, task_id: str, run_id: str, output: str) -> Path:

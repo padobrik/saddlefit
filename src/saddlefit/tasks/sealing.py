@@ -11,6 +11,7 @@ import os
 import re
 import secrets
 import shutil
+import tempfile
 from pathlib import Path, PurePosixPath
 
 from saddlefit.tasks.models import TASK_ID_PATTERN
@@ -70,25 +71,60 @@ class SealedWriter:
             raise SealingError(f"invalid task id: {task_id!r}")
         if (target_commit is None) == (reference_patch is None):
             raise SealingError("give exactly one of target_commit (history) or reference_patch")
-        rels = {path: _safe_relative(path) for path in hidden_tests}
+        rels = _checked_paths(hidden_tests)
         task_dir = self._root / task_id
-        if task_dir.exists():
-            if not replace:
-                raise SealingError(f"sealed task already exists: {task_id}")
-            shutil.rmtree(task_dir)
+        if task_dir.exists() and not replace:
+            raise SealingError(f"sealed task already exists: {task_id}")
         self._root.mkdir(parents=True, exist_ok=True, mode=0o700)
-        task_dir.mkdir(mode=0o700)
 
-        canary = new_canary()
-        _write(task_dir / "canary.txt", canary + "\n")
-        _write(task_dir / "check.sh", _embed(check_sh, ".sh", canary), executable=True)
-        for path, content in hidden_tests.items():
-            rel = rels[path]
-            _write(task_dir / "hidden_tests" / rel, _embed(content, rel.suffix, canary))
-        if target_commit is not None:
-            _write(task_dir / "target_commit", target_commit.strip() + "\n")
-        if reference_patch is not None:
-            _write(task_dir / "reference.patch", reference_patch)
+        # Build the task beside its final place, then swap it in, so a failed write never
+        # leaves a partial task or destroys the one being replaced.
+        staging = Path(tempfile.mkdtemp(prefix=f".{task_id}.", dir=self._root))
+        try:
+            os.chmod(staging, 0o700)
+            canary = new_canary()
+            _write(staging / "canary.txt", canary + "\n")
+            _write(staging / "check.sh", _embed(check_sh, ".sh", canary), executable=True)
+            for path, content in hidden_tests.items():
+                rel = rels[path]
+                _write(staging / "hidden_tests" / rel, _embed(content, rel.suffix, canary))
+            if target_commit is not None:
+                _write(staging / "target_commit", target_commit.strip() + "\n")
+            if reference_patch is not None:
+                _write(staging / "reference.patch", reference_patch)
+            _swap_into_place(staging, task_dir)
+        finally:
+            if staging.exists():
+                shutil.rmtree(staging)
+
+
+def _checked_paths(hidden_tests: dict[str, str]) -> dict[str, PurePosixPath]:
+    """Normalize hidden-test paths; reject duplicates and a file that is another's parent."""
+    rels = {path: _safe_relative(path) for path in hidden_tests}
+    seen: dict[PurePosixPath, str] = {}
+    for path, rel in rels.items():
+        if rel in seen:
+            raise SealingError(f"hidden test paths collide: {seen[rel]!r} and {path!r}")
+        seen[rel] = path
+    for rel, path in seen.items():
+        for parent in rel.parents:
+            if parent in seen:
+                raise SealingError(f"hidden test paths collide: {seen[parent]!r} and {path!r}")
+    return rels
+
+
+def _swap_into_place(staging: Path, task_dir: Path) -> None:
+    if not task_dir.exists():
+        staging.rename(task_dir)
+        return
+    retired = staging.with_name(staging.name + ".old")
+    task_dir.rename(retired)
+    try:
+        staging.rename(task_dir)
+    except OSError:
+        retired.rename(task_dir)
+        raise
+    shutil.rmtree(retired)
 
 
 def _write(path: Path, content: str, *, executable: bool = False) -> None:

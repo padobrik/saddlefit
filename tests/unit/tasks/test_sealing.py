@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from saddlefit.eval.sealed import SealedStore, SealedStoreError
+from saddlefit.tasks import sealing
 from saddlefit.tasks.sealing import CANARY_PREFIX, SealedWriter, SealingError
 
 RUN_ID = "01JB2Y8Q4V9N1K3D7M5R6T0W2X"
@@ -96,7 +97,7 @@ def test_writer_has_no_read_operations() -> None:
 
 def test_reader_guards_paths_and_ids(tmp_path: Path) -> None:
     store = seal(tmp_path)
-    for bad in ("../fix-0001", "fix-0001/..", "missing"):
+    for bad in ("../fix-0001", "fix-0001/..", "missing", "..", ".", ""):
         with pytest.raises(SealedStoreError):
             store.check_script(bad)
     path = store.record_check_output("fix-0001", RUN_ID, "FAILED secret details")
@@ -106,3 +107,43 @@ def test_reader_guards_paths_and_ids(tmp_path: Path) -> None:
     (tmp_path / "fix-0001" / "canary.txt").write_text("nope\n", encoding="utf-8")
     with pytest.raises(SealedStoreError, match="malformed canary"):
         store.canary("fix-0001")
+
+
+@pytest.mark.parametrize(
+    "hidden",
+    [
+        {"tests": "x", "tests/x.py": "y"},
+        {"tests/a.py": "x", "tests/./a.py": "y"},
+    ],
+    ids=["file-prefix-of-dir", "same-normalized-path"],
+)
+def test_colliding_hidden_paths_are_rejected(tmp_path: Path, hidden: dict[str, str]) -> None:
+    with pytest.raises(SealingError, match="collide"):
+        seal(tmp_path, hidden_tests=hidden)
+    assert not (tmp_path / "fix-0001").exists()
+
+
+def test_failed_replace_keeps_the_old_task(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    store = seal(tmp_path)
+    old_canary = store.canary("fix-0001")
+    real_write = sealing._write
+
+    def failing_write(path: Path, content: str, *, executable: bool = False) -> None:
+        if path.name == "test_dates.py":
+            raise OSError("disk full")
+        real_write(path, content, executable=executable)
+
+    monkeypatch.setattr(sealing, "_write", failing_write)
+    with pytest.raises(OSError, match="disk full"):
+        seal(tmp_path, replace=True)
+    assert store.canary("fix-0001") == old_canary
+    assert store.hidden_test_paths("fix-0001") == ["tests/data.json", "tests/test_dates.py"]
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["fix-0001"]
+
+
+def test_leftover_staging_directories_are_ignored(tmp_path: Path) -> None:
+    store = seal(tmp_path)
+    leftover = tmp_path / ".fix-0002.abc123"
+    leftover.mkdir()
+    (leftover / "canary.txt").write_text(CANARY_PREFIX + "0" * 32 + "\n", encoding="utf-8")
+    assert store.all_canaries() == {store.canary("fix-0001")}
