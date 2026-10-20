@@ -1,3 +1,4 @@
+import ast
 import json
 from datetime import UTC, datetime
 from pathlib import Path
@@ -6,11 +7,14 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
+import saddlefit
+from saddlefit.eval.records import read_any_run
 from saddlefit.storage import migrations
 from saddlefit.storage.migrations import MigrationError, register, upgrade
 from saddlefit.storage.runs import (
     RUN_KIND,
     ErrorData,
+    RestrictedRunError,
     RunEvent,
     RunSummary,
     RunWriter,
@@ -220,3 +224,34 @@ def test_typed_events_round_trip(tmp_path: Path) -> None:
         "LoopWarningData",
         "CompactionData",
     ]
+
+
+@pytest.mark.parametrize("split", ["held_out", "control"])
+def test_held_out_and_control_records_are_refused_outside_eval(tmp_path: Path, split: str) -> None:
+    run_id = new_run_id()
+    writer = RunWriter(tmp_path, run_id, now=NOW)
+    writer.finish(summary(run_id, split=split))
+    with pytest.raises(RestrictedRunError, match=r"read only by saddlefit\.eval"):
+        read_run(writer.path)
+    events, result = read_any_run(writer.path)
+    assert (events, result.split) == ([], split)
+
+
+def test_only_eval_imports_the_unrestricted_reader() -> None:
+    root = Path(saddlefit.__file__).parent
+    offenders = []
+    for path in sorted(root.rglob("*.py")):
+        rel = path.relative_to(root).as_posix()
+        if rel.startswith("eval/") or rel == "storage/runs.py":
+            continue
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            names = []
+            if isinstance(node, ast.ImportFrom):
+                names = [a.name for a in node.names]
+            elif isinstance(node, ast.Attribute):
+                names = [node.attr]
+            elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+                names = [node.value]
+            if "_read_run_any" in names:
+                offenders.append(rel)
+    assert offenders == []

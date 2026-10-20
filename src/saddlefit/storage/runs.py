@@ -198,8 +198,16 @@ class RunWriter:
         self._closed = True
 
 
-def read_run(path: Path) -> tuple[list[RunEvent], RunSummary]:
-    """Read a run record, upgrading the previous schema version; the summary must be last."""
+class RestrictedRunError(PermissionError):
+    """A held-out or control run record was read outside ``saddlefit.eval`` (B10)."""
+
+
+# Only training runs may reach the tutor, the fast loop or reports in detail (B10).
+PUBLIC_SPLITS: Final = frozenset({"train"})
+
+
+def _read_run_any(path: Path) -> tuple[list[RunEvent], RunSummary]:
+    """Read any run record. Evaluator only: import it solely from ``saddlefit.eval``."""
     lines = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
     if not lines:
         raise ValueError(f"empty run record: {path}")
@@ -208,6 +216,20 @@ def read_run(path: Path) -> tuple[list[RunEvent], RunSummary]:
     if last.get("type") != "summary":
         raise ValueError(f"run record has no summary line: {path}")
     return [RunEvent.model_validate(e) for e in events], RunSummary.model_validate(last)
+
+
+def read_run(path: Path) -> tuple[list[RunEvent], RunSummary]:
+    """Read a training run record; held-out and control records are refused.
+
+    Their traces and per-task outcomes are visible only to the evaluator, which reads them
+    through ``saddlefit.eval.records`` and reports aggregates.
+    """
+    events, summary = _read_run_any(path)
+    if summary.split not in PUBLIC_SPLITS:
+        raise RestrictedRunError(
+            f"{summary.split} run records are read only by saddlefit.eval: {path.name}"
+        )
+    return events, summary
 
 
 def find_runs(runs_root: Path) -> list[Path]:
