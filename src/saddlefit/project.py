@@ -1,18 +1,31 @@
 """A Saddlefit project: the ``.saddlefit/`` directory at a repository's root (B3).
 
-The CLI is a thin layer over these operations: ``init``, mining tasks and listing them.
+The CLI is a thin layer over these operations: ``init``, mining tasks, listing them, the
+baseline and its report.
 """
 
 from __future__ import annotations
 
+import json
+import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
+from saddlefit import __version__
 from saddlefit.config import CONFIG_SCHEMA_VERSION, Config, StudentConfig, dump_config, load_config
 from saddlefit.errors import UserError
+from saddlefit.eval.evaluator import Evaluator
+from saddlefit.eval.leak_guard import GuardedClient, guard_for_suite
+from saddlefit.harness.loop_config import LoopConfig, clamp, load_loop_config
 from saddlefit.harness.store import HarnessStore
+from saddlefit.loops.baseline import BASELINE_SPLITS, BaselineRunner, RunOutcome
+from saddlefit.providers.base import ModelClient
+from saddlefit.reports.baseline import ReportContext
+from saddlefit.reports.baseline import build as build_report
+from saddlefit.reports.baseline import write as write_report
 from saddlefit.tasks.mining import STATE_DIR, MiningReport, Runner, mine
 from saddlefit.tasks.models import TaskMeta
 from saddlefit.tasks.suite import SuitePaths, load_lock, load_meta, materialize, save_lock
@@ -39,6 +52,18 @@ class Project:
     @property
     def suite(self) -> SuitePaths:
         return SuitePaths(self.state / "tasks")
+
+    @property
+    def runs(self) -> Path:
+        return self.state / "runs"
+
+    @property
+    def reports(self) -> Path:
+        return self.state / "reports"
+
+    @property
+    def incidents(self) -> Path:
+        return self.state / "incidents.jsonl"
 
     def config(self) -> Config:
         if not self.config_path.exists():
@@ -100,3 +125,71 @@ class Project:
         if task_id not in {meta.id for meta in self.tasks()}:
             raise UserError(f"no such task: {task_id}")
         return (self.suite.public_dir / task_id / "task.md").read_text(encoding="utf-8")
+
+    def effective_loop(self) -> tuple[LoopConfig, list[str]]:
+        """``loop.yaml`` from the harness store, clamped to ``saddlefit.yaml``."""
+        return clamp(load_loop_config(self.harness.path / "loop.yaml"), self.config())
+
+    def baseline(
+        self,
+        *,
+        docker_client: Any,
+        model_client: Callable[[], ModelClient],
+        limit: int | None = None,
+        on_run: Callable[[RunOutcome], None] | None = None,
+    ) -> tuple[dict[str, Any], Path]:
+        """Run the baseline on training and held-out tasks and write its report."""
+        config = self.config()
+        loop, _ = self.effective_loop()
+        lock = load_lock(self.suite, config.splits)
+        metas = [m for m in self.tasks() if m.split in BASELINE_SPLITS][:limit]
+        if not metas:
+            raise UserError("no training or held-out tasks; run `saddlefit tasks mine` first")
+        sealed = self.suite.sealed_dir
+        commit = self.harness.head()
+        with tempfile.TemporaryDirectory(prefix="saddlefit-harness-") as tmp:
+            self.harness.export(commit, Path(tmp))
+            runner = BaselineRunner(
+                repo=self.root,
+                config=config,
+                loop=loop,
+                harness_dir=Path(tmp),
+                harness_commit=commit,
+                suite_hash=lock.suite_hash(),
+                public_dir=self.suite.public_dir,
+                runs_root=self.runs,
+                client_factory=lambda: GuardedClient(
+                    model_client(), guard_for_suite(sealed, self.incidents)
+                ),
+                evaluator=Evaluator.for_suite(
+                    sealed, docker_client, config.sandbox.image, config.sandbox, config.evaluation
+                ),
+                docker_client=docker_client,
+                image=config.sandbox.image,
+                on_run=on_run,
+            )
+            result = runner.run(metas)
+        info = model_client().info()
+        ctx = ReportContext(
+            model=info.model,
+            model_digest=info.digest,
+            harness_commit=commit,
+            suite_hash=lock.suite_hash(),
+            saddlefit_version=__version__,
+        )
+        report = build_report(result, ctx)
+        markdown, _ = write_report(report, self.reports, report_id("baseline"))
+        return report, markdown
+
+    def latest_report(self) -> dict[str, Any]:
+        """The newest baseline report's JSON."""
+        reports = sorted(self.reports.glob("baseline-*.json"))
+        if not reports:
+            raise UserError("no baseline report yet; run `saddlefit baseline`")
+        loaded: dict[str, Any] = json.loads(reports[-1].read_text(encoding="utf-8"))
+        return loaded
+
+
+def report_id(kind: str) -> str:
+    """A sortable report name, ``<kind>-<UTC timestamp>``."""
+    return f"{kind}-{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}"

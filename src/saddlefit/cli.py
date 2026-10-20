@@ -14,7 +14,11 @@ from saddlefit import __version__
 from saddlefit.config import ConfigError, SandboxConfig, StudentConfig, load_config
 from saddlefit.doctor import doctor_for, render
 from saddlefit.errors import EnvironmentFailure, SaddlefitError, UserError
+from saddlefit.loops.baseline import RunOutcome
 from saddlefit.project import Project
+from saddlefit.providers.base import ModelClient
+from saddlefit.providers.openai_compat import OpenAICompatibleClient
+from saddlefit.reports.baseline import render_markdown
 from saddlefit.tasks.mining import Runner, SandboxRunner
 
 
@@ -172,6 +176,39 @@ def doctor(
         raise EnvironmentFailure("Docker or the model runner is not usable; see the checks above")
     if not report.compact:
         raise typer.Exit(ExitCode.USER_ERROR)
+
+
+@app.command()
+def baseline(
+    ctx: typer.Context,
+    limit: Annotated[int | None, typer.Option(help="Run at most N tasks.")] = None,
+) -> None:
+    """Measure the student on training and held-out tasks; control is never run."""
+    project = _project()
+    config = project.config()
+
+    def model_client() -> ModelClient:
+        return OpenAICompatibleClient(
+            base_url=config.student.base_url,
+            model=config.student.model,
+            context_length=config.student.context_length,
+        )
+
+    def progress(run: RunOutcome) -> None:
+        if not (ctx.find_root().obj or {}).get("json"):
+            typer.echo(f"{run.split:8} {run.classification.primary:20} {run.task_id}")
+
+    report, markdown = project.baseline(
+        docker_client=_docker(), model_client=model_client, limit=limit, on_run=progress
+    )
+    _emit(ctx, report, markdown.read_text(encoding="utf-8"))
+
+
+@app.command()
+def report(ctx: typer.Context) -> None:
+    """Show the latest baseline report (training and held-out aggregates)."""
+    data = _project().latest_report()
+    _emit(ctx, data, render_markdown(data))
 
 
 def main() -> None:
