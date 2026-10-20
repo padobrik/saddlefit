@@ -206,9 +206,9 @@ class HarnessStore:
             mode = entry.split(" ", 1)[0]
             if mode not in _FILE_MODES:
                 raise HarnessStoreError(f"patch stages a symlink or special file (mode {mode})")
-        changed = [
-            p for p in self._git("diff", "--cached", "--name-only", "-z", MAIN).split("\0") if p
-        ]
+        # --no-renames: a rename would report only the new path and hide the deleted one
+        staged = self._git("diff", "--cached", "--no-renames", "--name-only", "-z", MAIN)
+        changed = [p for p in staged.split("\0") if p]
         refused = disallowed(changed)
         if refused:
             raise HarnessStoreError(f"patch touches paths outside the allowlist: {refused}")
