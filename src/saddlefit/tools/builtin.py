@@ -1,0 +1,280 @@
+"""The student's tools (B6): read, list, search, edit, write, bash and finish.
+
+Every tool runs inside the sandbox through ``exec``; nothing touches the host filesystem,
+so a symlink in the workspace cannot reach host files. Paths are confined to ``/work``.
+File contents travel as base64 arguments to a small in-container Python helper, so no
+content is ever interpolated into a shell command.
+"""
+
+from __future__ import annotations
+
+import base64
+import posixpath
+import shlex
+import uuid
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
+from typing import Any, Protocol
+
+from saddlefit.providers.base import ToolSpec
+from saddlefit.providers.parsing import MalformedToolCall, validate_tool_call
+from saddlefit.sandbox.container import SandboxError
+
+WORKDIR = "/work"
+DEFAULT_COMMAND_TIMEOUT_S = 120
+MAX_COMMAND_TIMEOUT_S = 1800  # the run's own deadline still applies on top
+MAX_WRITE_BYTES = 512_000
+
+
+class Executor(Protocol):
+    """What tools need from a sandbox: run a shell command in ``/work`` with a timeout."""
+
+    def exec(self, command: str, timeout_s: float) -> Any: ...
+
+
+@dataclass(frozen=True)
+class ToolResult:
+    ok: bool
+    output: str
+    finished: bool = False
+
+
+class ToolError(ValueError):
+    """Bad tool arguments; returned to the model as a failed tool call."""
+
+
+def confine(path: str) -> str:
+    """Resolve ``path`` inside ``/work``; refuse anything that would leave it."""
+    if not path or "\x00" in path:
+        raise ToolError("path must be a non-empty string")
+    resolved = posixpath.normpath(posixpath.join(WORKDIR, path))
+    if resolved != WORKDIR and not resolved.startswith(WORKDIR + "/"):
+        raise ToolError(f"path is outside the workspace: {path}")
+    return resolved
+
+
+def _cut_note(cut: int) -> str:
+    return f"\n[... {cut} characters cut; narrow the request ...]\n"
+
+
+def truncate(text: str, max_chars: int) -> str:
+    """Keep the head and tail of ``text``, with a note saying how much was cut.
+
+    The note counts toward ``max_chars``, so the result never exceeds it.
+    """
+    if len(text) <= max_chars:
+        return text
+    keep = max(max_chars - len(_cut_note(len(text))), 0)
+    note = _cut_note(len(text) - keep)  # fewer digits than the bound above, never more
+    if keep == 0:
+        return note.strip()[:max_chars]
+    head, tail = (keep + 1) // 2, keep // 2
+    return text[:head] + note + (text[-tail:] if tail else "")
+
+
+def _b64(value: str) -> str:
+    return base64.b64encode(value.encode("utf-8")).decode("ascii")
+
+
+# Runs inside the sandbox: python3 -c HELPER <op> <b64 args...>; prints a status line first.
+_HELPER = r"""
+import base64, os, sys
+op, *args = sys.argv[1:]
+
+
+def load(arg):
+    # "@path": the base64 text was staged in a file, for content beyond argument limits
+    if arg.startswith("@"):
+        with open(arg[1:], encoding="ascii") as fh:
+            arg = fh.read()
+    return base64.b64decode(arg).decode("utf-8")
+
+
+args = [load(a) for a in args]
+if op == "edit":
+    path, old, new = args
+    # newline="": keep CRLF and CR bytes exactly; only the replaced text changes
+    with open(path, encoding="utf-8", newline="") as fh:
+        text = fh.read()
+    count = text.count(old)
+    if count != 1:
+        print(f"ERROR old text found {count} times; it must occur exactly once")
+        sys.exit(1)
+    with open(path, "w", encoding="utf-8", newline="") as fh:
+        fh.write(text.replace(old, new, 1))
+    print("OK edited")
+elif op == "write":
+    path, content = args
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "w", encoding="utf-8", newline="") as fh:
+        fh.write(content)
+    print(f"OK wrote {len(content)} characters")
+"""
+
+
+# Linux caps one argument at about 128 KB; content beyond this goes through staged files.
+INLINE_LIMIT = 100_000
+STAGE_CHUNK = 60_000
+
+
+def _python(op: str, *args: str) -> str:
+    return " ".join(["python3", "-c", shlex.quote(_HELPER), op, *args])
+
+
+@dataclass
+class Toolbox:
+    """Executes tool calls against one sandbox."""
+
+    sandbox: Executor
+    max_chars: int = 4000
+
+    def _run(
+        self, command: str, timeout_s: float = 30, ok_codes: tuple[int, ...] = (0,)
+    ) -> ToolResult:
+        try:
+            result = self.sandbox.exec(command, timeout_s)
+        except SandboxError as exc:  # a dead container is a failed call, not a crash
+            return ToolResult(ok=False, output=truncate(f"sandbox error: {exc}", self.max_chars))
+        note = "\n[timed out]" if result.timed_out else ""
+        output = truncate(result.output + note, self.max_chars)
+        return ToolResult(ok=result.exit_code in ok_codes and not result.timed_out, output=output)
+
+    def _helper(self, op: str, *values: str) -> ToolResult:
+        """Run the in-sandbox helper; large values are staged in /tmp in bounded chunks."""
+        encoded = [_b64(v) for v in values]
+        if sum(len(e) for e in encoded) <= INLINE_LIMIT:
+            return self._run(_python(op, *encoded))
+        stage = f"/tmp/saddlefit-{uuid.uuid4().hex}"  # noqa: S108 - the sandbox's private tmpfs
+        try:
+            refs = []
+            for i, text in enumerate(encoded):
+                path = f"{stage}-{i}"
+                for start in range(0, len(text), STAGE_CHUNK) or [0]:
+                    chunk = text[start : start + STAGE_CHUNK]
+                    staged = self._run(f"printf %s {shlex.quote(chunk)} >> {path}")
+                    if not staged.ok:
+                        return staged
+                refs.append(f"@{path}")
+            return self._run(_python(op, *refs))
+        finally:
+            self._run(f"rm -f {stage}-*", timeout_s=10)  # also after a failed staging step
+
+    def read_file(self, path: str, start: int | None = None, end: int | None = None) -> ToolResult:
+        target = shlex.quote(confine(path))
+        if start is None and end is None:
+            return self._run(f"cat -n -- {target}")
+        first = max(1, start or 1)
+        if end is not None and end < first:
+            raise ToolError("end must not be before start")
+        last = str(end) if end is not None else "$"
+        # pipefail: a missing file must fail, not look like an empty range
+        return self._run(f"set -o pipefail; cat -n -- {target} | sed -n '{first},{last}p'")
+
+    def list_dir(self, path: str = ".") -> ToolResult:
+        return self._run(f"ls -1Ap -- {shlex.quote(confine(path))}")
+
+    def search(self, pattern: str, path: str = ".") -> ToolResult:
+        target = shlex.quote(confine(path))
+        command = f"rg -n --max-columns 300 -e {shlex.quote(pattern)} -- {target}"
+        result = self._run(command, ok_codes=(0, 1))  # rg exits 1 when nothing matches
+        if result.ok and not result.output.strip():
+            return ToolResult(ok=True, output="no matches")
+        return result
+
+    def edit_file(self, path: str, old: str, new: str) -> ToolResult:
+        if not old:
+            raise ToolError("old text must not be empty; use write_file to create a file")
+        return self._helper("edit", confine(path), old, new)
+
+    def write_file(self, path: str, content: str) -> ToolResult:
+        if len(content.encode("utf-8")) > MAX_WRITE_BYTES:
+            raise ToolError(f"content is larger than {MAX_WRITE_BYTES} bytes")
+        return self._helper("write", confine(path), content)
+
+    def bash(self, command: str, timeout: int | None = None) -> ToolResult:
+        if not command.strip():
+            raise ToolError("command must not be empty")
+        if timeout is not None and timeout <= 0:
+            raise ToolError("timeout must be positive")
+        limit = min(timeout or DEFAULT_COMMAND_TIMEOUT_S, MAX_COMMAND_TIMEOUT_S)
+        return self._run(command, timeout_s=limit)
+
+    def finish(self, summary: str) -> ToolResult:
+        return ToolResult(ok=True, output=truncate(summary, self.max_chars), finished=True)
+
+    def call(self, name: str, arguments: Mapping[str, Any]) -> ToolResult:
+        """Dispatch a validated tool call; bad arguments come back as a failed result."""
+        handler: Callable[..., ToolResult] | None = getattr(self, name, None)
+        if name not in TOOL_NAMES or handler is None:
+            return ToolResult(ok=False, output=f"unknown tool: {name}")
+        try:
+            # types and required arguments from TOOL_SPECS; this also rejects bools for integers
+            validate_tool_call(name, dict(arguments), TOOL_SPECS)
+        except MalformedToolCall as exc:
+            return ToolResult(ok=False, output=f"error: bad arguments for {name}: {exc}")
+        # JSON can carry lone surrogates; nothing downstream can encode them
+        for key, value in arguments.items():
+            if isinstance(value, str) and not _is_utf8(value):
+                return ToolResult(ok=False, output=f"error: {key} for {name} is not valid UTF-8")
+        try:
+            return handler(**arguments)
+        except ToolError as exc:
+            return ToolResult(ok=False, output=f"error: {exc}")
+
+
+def _is_utf8(value: str) -> bool:
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
+def _spec(name: str, description: str, props: dict[str, Any], required: list[str]) -> ToolSpec:
+    schema = {
+        "type": "object",
+        "properties": props,
+        "required": required,
+        "additionalProperties": False,
+    }
+    return ToolSpec(name=name, description=description, parameters=schema)
+
+
+_STR = {"type": "string"}
+_INT = {"type": "integer"}
+
+TOOL_SPECS: tuple[ToolSpec, ...] = (
+    _spec(
+        "read_file",
+        "Read a file, optionally lines start..end.",
+        {"path": _STR, "start": _INT, "end": _INT},
+        ["path"],
+    ),
+    _spec("list_dir", "List a directory.", {"path": _STR}, []),
+    _spec(
+        "search",
+        "Search files with a regular expression.",
+        {"pattern": _STR, "path": _STR},
+        ["pattern"],
+    ),
+    _spec(
+        "edit_file",
+        "Replace text that occurs exactly once in a file.",
+        {"path": _STR, "old": _STR, "new": _STR},
+        ["path", "old", "new"],
+    ),
+    _spec(
+        "write_file",
+        "Create or overwrite a file.",
+        {"path": _STR, "content": _STR},
+        ["path", "content"],
+    ),
+    _spec(
+        "bash",
+        "Run a shell command in the workspace (no network).",
+        {"command": _STR, "timeout": _INT},
+        ["command"],
+    ),
+    _spec("finish", "End the task with a short summary.", {"summary": _STR}, ["summary"]),
+)
+TOOL_NAMES: frozenset[str] = frozenset(spec.name for spec in TOOL_SPECS)
