@@ -174,3 +174,17 @@ def test_each_location_is_reported_once() -> None:
     with pytest.raises(LeakDetected) as exc:
         LeakGuard(CANARIES).check([Message(role="user", content=text)])
     assert exc.value.locations == ("messages[0].content",)
+
+
+def test_locations_never_contain_a_canary(tmp_path: Path) -> None:
+    call = ToolCall(id="c", name="write_file", arguments={CANARY: {"nested": f"again {CANARY}"}})
+    log = tmp_path / "incidents.jsonl"
+    with pytest.raises(LeakDetected) as exc:
+        LeakGuard(CANARIES, incident_log=log).check([Message(role="assistant", tool_calls=(call,))])
+    assert CANARY not in str(exc.value)
+    assert CANARY not in " ".join(exc.value.locations)
+    assert CANARY not in log.read_text(encoding="utf-8")
+    assert exc.value.locations == (
+        "messages[0].tool_calls[0].arguments.<key>",
+        "messages[0].tool_calls[0].arguments.<redacted>.nested",
+    )

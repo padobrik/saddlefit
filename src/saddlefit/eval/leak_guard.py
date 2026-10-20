@@ -41,32 +41,35 @@ class LeakDetected(IntegrityViolation):
         )
 
 
-def _strings(value: Any, where: str) -> Iterator[tuple[str, str]]:
-    """Every raw string inside ``value``, keys included, with its location.
+Location = tuple[str, ...]
+
+
+def _strings(value: Any, where: Location) -> Iterator[tuple[Location, str]]:
+    """Every raw string inside ``value``, keys included, with its location as path parts.
 
     Raw values are scanned, not their JSON: serialization could escape characters and
-    hide a canary.
+    hide a canary. Locations stay in parts so a key holding a canary can be redacted.
     """
     if isinstance(value, str):
         yield where, value
     elif isinstance(value, Mapping):
         for key, item in value.items():
-            yield from _strings(key, f"{where}.<key>")
-            yield from _strings(item, f"{where}.{key}")
+            yield from _strings(key, (*where, ".<key>"))
+            yield from _strings(item, (*where, f".{key}"))
     elif isinstance(value, list | tuple):
         for i, item in enumerate(value):
-            yield from _strings(item, f"{where}[{i}]")
+            yield from _strings(item, (*where, f"[{i}]"))
 
 
 def _texts(
     messages: Sequence[Message], tools: Sequence[ToolSpec] | None
-) -> Iterator[tuple[str, str]]:
+) -> Iterator[tuple[Location, str]]:
     for i, message in enumerate(messages):
-        yield f"messages[{i}].content", message.content
+        yield (f"messages[{i}]", ".content"), message.content
         for j, call in enumerate(message.tool_calls):
-            yield from _strings(call.model_dump(), f"messages[{i}].tool_calls[{j}]")
+            yield from _strings(call.model_dump(), (f"messages[{i}]", f".tool_calls[{j}]"))
     for k, tool in enumerate(tools or ()):
-        yield from _strings(tool.model_dump(), f"tools[{k}]")
+        yield from _strings(tool.model_dump(), (f"tools[{k}]",))
 
 
 class LeakGuard:
@@ -79,10 +82,11 @@ class LeakGuard:
     def check(self, messages: Sequence[Message], tools: Sequence[ToolSpec] | None = None) -> None:
         tasks: list[str] = []
         locations: list[str] = []
-        for where, text in _texts(messages, tools):
+        for parts, text in _texts(messages, tools):
             for canary, task_id in self._canaries.items():
                 if canary in text:
                     tasks.append(task_id)
+                    where = self._render(parts)
                     if where not in locations:
                         locations.append(where)
         if tasks:
@@ -93,6 +97,12 @@ class LeakGuard:
             except OSError as exc:  # the leak still aborts with exit code 2
                 log_error = f"{type(exc).__name__}: {exc}"
             raise LeakDetected(unique_tasks, locations, log_error=log_error)
+
+    def _render(self, parts: Location) -> str:
+        """Join a location, hiding any part (such as a mapping key) that holds a canary."""
+        return "".join(
+            ".<redacted>" if any(c in part for c in self._canaries) else part for part in parts
+        )
 
     def _record(self, task_ids: list[str], locations: list[str]) -> None:
         log.error("leak guard: canary found in prompt", extra={"tasks": task_ids, "at": locations})
