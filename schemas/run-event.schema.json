@@ -1,0 +1,40 @@
+{
+  "additionalProperties": false,
+  "description": "One step of a run.",
+  "properties": {
+    "data": {
+      "additionalProperties": true,
+      "title": "Data",
+      "type": "object"
+    },
+    "schema_version": {
+      "const": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "time": {
+      "format": "date-time",
+      "title": "Time",
+      "type": "string"
+    },
+    "type": {
+      "enum": [
+        "model_call",
+        "tool_call",
+        "compaction",
+        "loop_warning",
+        "finish_gate",
+        "error"
+      ],
+      "title": "Type",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "type",
+    "time"
+  ],
+  "title": "RunEvent",
+  "type": "object"
+}

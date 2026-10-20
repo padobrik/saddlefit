@@ -9,6 +9,7 @@ from typing import Annotated
 import typer
 
 from saddlefit import __version__
+from saddlefit.errors import SaddlefitError
 
 
 class ExitCode(IntEnum):
@@ -49,5 +50,9 @@ def root(
 
 
 def main() -> None:
-    """Console-script entry point."""
-    app()
+    """Console-script entry point; maps Saddlefit errors onto exit codes 1, 2 and 3."""
+    try:
+        app()
+    except SaddlefitError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise SystemExit(exc.exit_code) from exc
