@@ -58,7 +58,7 @@ def test_commands_quote_paths_and_patterns() -> None:
     box.search("x; rm -rf /", "src")
     commands = [c for c, _ in box.sandbox.commands]  # type: ignore[attr-defined]
     assert commands[0] == "cat -n -- '/work/my file.py'"
-    assert commands[1] == "cat -n -- /work/a.py | sed -n '3,7p'"
+    assert commands[1] == "set -o pipefail; cat -n -- /work/a.py | sed -n '3,7p'"
     assert commands[2] == "ls -1Ap -- /work"
     assert commands[3] == "rg -n --max-columns 300 -e 'x; rm -rf /' -- /work/src"
 
@@ -151,3 +151,15 @@ def test_long_timeouts_are_capped() -> None:
     sandbox = FakeSandbox()
     Toolbox(sandbox).call("bash", {"command": "ls", "timeout": 99_999})
     assert sandbox.commands[0][1] == MAX_COMMAND_TIMEOUT_S
+
+
+def test_large_content_is_staged_in_bounded_chunks() -> None:
+    sandbox = FakeSandbox()
+    Toolbox(sandbox).write_file("big.txt", "x" * 200_000)
+    commands = [c for c, _ in sandbox.commands]
+    staged = [c for c in commands if c.startswith("printf %s ")]
+    assert len(staged) >= 5
+    assert all(len(c) < 70_000 for c in commands)
+    helper = next(c for c in commands if c.startswith("python3 -c"))
+    assert " write @/tmp/saddlefit-" in helper
+    assert commands[-1].startswith("rm -f /tmp/saddlefit-")

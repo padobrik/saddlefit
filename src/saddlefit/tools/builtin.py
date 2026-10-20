@@ -11,6 +11,7 @@ from __future__ import annotations
 import base64
 import posixpath
 import shlex
+import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -68,7 +69,17 @@ def _b64(value: str) -> str:
 _HELPER = r"""
 import base64, os, sys
 op, *args = sys.argv[1:]
-args = [base64.b64decode(a).decode("utf-8") for a in args]
+
+
+def load(arg):
+    # "@path": the base64 text was staged in a file, for content beyond argument limits
+    if arg.startswith("@"):
+        with open(arg[1:], encoding="ascii") as fh:
+            arg = fh.read()
+    return base64.b64decode(arg).decode("utf-8")
+
+
+args = [load(a) for a in args]
 if op == "edit":
     path, old, new = args
     with open(path, encoding="utf-8") as fh:
@@ -89,8 +100,13 @@ elif op == "write":
 """
 
 
+# Linux caps one argument at about 128 KB; content beyond this goes through staged files.
+INLINE_LIMIT = 100_000
+STAGE_CHUNK = 60_000
+
+
 def _python(op: str, *args: str) -> str:
-    return " ".join(["python3", "-c", shlex.quote(_HELPER), op, *(_b64(a) for a in args)])
+    return " ".join(["python3", "-c", shlex.quote(_HELPER), op, *args])
 
 
 @dataclass
@@ -100,11 +116,32 @@ class Toolbox:
     sandbox: Executor
     max_chars: int = 4000
 
-    def _run(self, command: str, timeout_s: float = 30) -> ToolResult:
+    def _run(
+        self, command: str, timeout_s: float = 30, ok_codes: tuple[int, ...] = (0,)
+    ) -> ToolResult:
         result = self.sandbox.exec(command, timeout_s)
         note = "\n[timed out]" if result.timed_out else ""
         output = truncate(result.output + note, self.max_chars)
-        return ToolResult(ok=result.exit_code == 0 and not result.timed_out, output=output)
+        return ToolResult(ok=result.exit_code in ok_codes and not result.timed_out, output=output)
+
+    def _helper(self, op: str, *values: str) -> ToolResult:
+        """Run the in-sandbox helper; large values are staged in /tmp in bounded chunks."""
+        encoded = [_b64(v) for v in values]
+        if sum(len(e) for e in encoded) <= INLINE_LIMIT:
+            return self._run(_python(op, *encoded))
+        stage = f"/tmp/saddlefit-{uuid.uuid4().hex}"  # noqa: S108 - the sandbox's private tmpfs
+        refs = []
+        for i, text in enumerate(encoded):
+            path = f"{stage}-{i}"
+            for start in range(0, len(text), STAGE_CHUNK) or [0]:
+                chunk = text[start : start + STAGE_CHUNK]
+                staged = self._run(f"printf %s {shlex.quote(chunk)} >> {path}")
+                if not staged.ok:
+                    return staged
+            refs.append(f"@{path}")
+        result = self._run(_python(op, *refs))
+        self.sandbox.exec(f"rm -f {stage}-*", 10)
+        return result
 
     def read_file(self, path: str, start: int | None = None, end: int | None = None) -> ToolResult:
         target = shlex.quote(confine(path))
@@ -114,24 +151,29 @@ class Toolbox:
         if end is not None and end < first:
             raise ToolError("end must not be before start")
         last = str(end) if end is not None else "$"
-        return self._run(f"cat -n -- {target} | sed -n '{first},{last}p'")
+        # pipefail: a missing file must fail, not look like an empty range
+        return self._run(f"set -o pipefail; cat -n -- {target} | sed -n '{first},{last}p'")
 
     def list_dir(self, path: str = ".") -> ToolResult:
         return self._run(f"ls -1Ap -- {shlex.quote(confine(path))}")
 
     def search(self, pattern: str, path: str = ".") -> ToolResult:
         target = shlex.quote(confine(path))
-        return self._run(f"rg -n --max-columns 300 -e {shlex.quote(pattern)} -- {target}")
+        command = f"rg -n --max-columns 300 -e {shlex.quote(pattern)} -- {target}"
+        result = self._run(command, ok_codes=(0, 1))  # rg exits 1 when nothing matches
+        if result.ok and not result.output.strip():
+            return ToolResult(ok=True, output="no matches")
+        return result
 
     def edit_file(self, path: str, old: str, new: str) -> ToolResult:
         if not old:
             raise ToolError("old text must not be empty; use write_file to create a file")
-        return self._run(_python("edit", confine(path), old, new))
+        return self._helper("edit", confine(path), old, new)
 
     def write_file(self, path: str, content: str) -> ToolResult:
         if len(content.encode("utf-8")) > MAX_WRITE_BYTES:
             raise ToolError(f"content is larger than {MAX_WRITE_BYTES} bytes")
-        return self._run(_python("write", confine(path), content))
+        return self._helper("write", confine(path), content)
 
     def bash(self, command: str, timeout: int | None = None) -> ToolResult:
         if not command.strip():

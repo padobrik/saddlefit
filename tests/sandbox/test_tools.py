@@ -45,3 +45,21 @@ def test_edit_write_and_run(box: Toolbox, tmp_path: Path) -> None:
 def test_escapes_are_refused_before_reaching_the_sandbox(box: Toolbox) -> None:
     assert not box.call("read_file", {"path": "/etc/passwd"}).ok
     assert not box.call("write_file", {"path": "../outside.py", "content": "x"}).ok
+
+
+def test_large_writes_survive_argument_limits(box: Toolbox, tmp_path: Path) -> None:
+    content = "".join(f"line {i:06d} ü\n" for i in range(34_000))  # about 510 KB
+    assert len(content.encode("utf-8")) < 512_000
+    result = box.write_file("big.txt", content)
+    assert result.ok, result.output
+    assert (tmp_path / "big.txt").read_text(encoding="utf-8") == content
+
+
+def test_missing_file_in_a_ranged_read_fails(box: Toolbox) -> None:
+    assert not box.read_file("nope.py", start=1, end=3).ok
+
+
+def test_search_without_matches_is_not_an_error(box: Toolbox) -> None:
+    result = box.search("no-such-text-anywhere")
+    assert result.ok
+    assert result.output.strip() == "no matches"
