@@ -16,6 +16,11 @@ guidance, tool scripts, loop settings, reasoning mode and an `EXPERIENCE.md` of 
 
 ## Three loops
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/three-loops-dark.svg">
+  <img alt="Three loops: the fast loop during a task, the middle loop overnight, the slow loop that improves the tutor itself" src="docs/diagrams/three-loops-light.svg" width="760">
+</picture>
+
 - **Fast — during a task.** When the task's own check fails, the student probes a few harness
   variants locally and keeps what passes; the finding goes on probation in a journal.
 - **Middle — overnight.** A tutor diagnoses training failures and proposes one change at a
@@ -23,6 +28,39 @@ guidance, tool scripts, loop settings, reasoning mode and an `EXPERIENCE.md` of 
   ablation once it stops paying for its context.
 - **Slow — every few weeks.** Statistics on accepted changes become a ranked playbook, gated by
   an A/B test, until a compact local tutor can take over.
+
+<details>
+<summary>The fast loop in detail</summary>
+<br>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/fast-loop-dark.svg">
+  <img alt="Fast loop: a failed check triggers local probes, and a change that helps stays on probation in the journal" src="docs/diagrams/fast-loop-light.svg" width="760">
+</picture>
+
+</details>
+
+<details>
+<summary>The middle loop in detail</summary>
+<br>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/middle-loop-dark.svg">
+  <img alt="Middle loop: a change is accepted only if it wins on the training batch and again on held-out tasks" src="docs/diagrams/middle-loop-light.svg" width="760">
+</picture>
+
+</details>
+
+<details>
+<summary>The slow loop in detail</summary>
+<br>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/slow-loop-dark.svg">
+  <img alt="Slow loop: a new playbook must beat the old one in an A/B run before the tutor uses it, and a shadow tutor takes over once it is as good as the cloud one" src="docs/diagrams/slow-loop-light.svg" width="760">
+</picture>
+
+</details>
 
 ## What counts as a compact model
 
@@ -56,6 +94,24 @@ saddlefit report
 ```
 
 Every command also accepts `--json`.
+
+## Where it comes from
+
+The middle loop follows AutoSaddler; the fast loop and the improver that improves itself
+follow Harness². What Saddlefit adds is the focus on one compact local model, measured on your
+own tasks, with a harness that stays small.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/origins-dark.svg">
+  <img alt="Ideas from AutoSaddler and Harness², and what Saddlefit adds" src="docs/diagrams/origins-light.svg" width="760">
+</picture>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/landscape-dark.svg">
+  <img alt="Map of related approaches by when the harness improves and who executes; Saddlefit learns ahead of time for a small local model" src="docs/diagrams/landscape-light.svg" width="760">
+</picture>
+
+See [the spec, Part D](docs/SPEC.md#part-d--background) for sources and a fuller comparison.
 
 ## Documentation
 
