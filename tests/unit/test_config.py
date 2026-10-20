@@ -61,8 +61,8 @@ def test_spec_example_loads(tmp_path: Path) -> None:
 
 
 def test_minimal_config_uses_defaults(tmp_path: Path) -> None:
-    config = load_config(write(tmp_path, "project: p\n"))
-    assert config == Config(project="p")
+    config = load_config(write(tmp_path, "schema_version: 1\nproject: p\n"))
+    assert config == Config(schema_version=1, project="p")
 
 
 def test_round_trip(tmp_path: Path) -> None:
@@ -73,12 +73,19 @@ def test_round_trip(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("text", "message"),
     [
-        ("project: p\nbogus: 1\n", "bogus: unknown key"),
-        ("project: p\nstudent:\n  modle: x\n", "student.modle: unknown key"),
-        ("project: p\nschema_version: 2\n", "schema_version"),
-        ("project: p\nsplits: {train: 0.5, held_out: 0.5, control: 0.5}\n", "sum to 1.0"),
-        ("project: p\nevaluation: {runs_per_task: 3, solved_threshold: 4}\n", "cannot exceed"),
-        ("project: p\nsandbox: {memory: lots}\n", "sandbox.memory"),
+        ("schema_version: 1\nproject: p\nbogus: 1\n", "bogus: unknown key"),
+        ("schema_version: 1\nproject: p\nstudent:\n  modle: x\n", "student.modle: unknown key"),
+        ("schema_version: 2\nproject: p\n", "schema_version"),
+        ("project: p\n", "schema_version: Field required"),
+        (
+            "schema_version: 1\nproject: p\nsplits: {train: 0.5, held_out: 0.5, control: 0.5}\n",
+            "sum to 1.0",
+        ),
+        (
+            "schema_version: 1\nproject: p\nevaluation: {runs_per_task: 3, solved_threshold: 4}\n",
+            "cannot exceed",
+        ),
+        ("schema_version: 1\nproject: p\nsandbox: {memory: lots}\n", "sandbox.memory"),
         ("- a\n- b\n", "must be a mapping"),
         ("project: [unclosed\n", "not valid YAML"),
     ],
@@ -95,15 +102,15 @@ def test_missing_file_points_to_init(tmp_path: Path) -> None:
 
 
 def test_dump_is_safe_yaml() -> None:
-    assert yaml.safe_load(dump_config(Config(project="p")))["project"] == "p"
+    assert yaml.safe_load(dump_config(Config(schema_version=1, project="p")))["project"] == "p"
 
 
 @pytest.mark.parametrize(
     "text",
     [
-        "project: p\ntutor: {max_usd_per_round: .inf}\n",
-        "project: p\nstudent: {temperature: .nan}\n",
-        "project: p\nfast_loop: {time_budget_minutes: .inf}\n",
+        "schema_version: 1\nproject: p\ntutor: {max_usd_per_round: .inf}\n",
+        "schema_version: 1\nproject: p\nstudent: {temperature: .nan}\n",
+        "schema_version: 1\nproject: p\nfast_loop: {time_budget_minutes: .inf}\n",
     ],
 )
 def test_non_finite_limits_are_rejected(tmp_path: Path, text: str) -> None:
@@ -112,7 +119,9 @@ def test_non_finite_limits_are_rejected(tmp_path: Path, text: str) -> None:
 
 
 def test_unquoted_release_date(tmp_path: Path) -> None:
-    config = load_config(write(tmp_path, "project: p\nstudent: {release_date: 2026-10-20}\n"))
+    config = load_config(
+        write(tmp_path, "schema_version: 1\nproject: p\nstudent: {release_date: 2026-10-20}\n")
+    )
     assert str(config.student.release_date) == "2026-10-20"
     assert "release_date: '2026-10-20'" in dump_config(config)
     assert load_config(write(tmp_path, dump_config(config))) == config

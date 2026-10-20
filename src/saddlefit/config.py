@@ -115,7 +115,7 @@ class FastLoopConfig(_Strict):
 class Config(_Strict):
     """The whole ``saddlefit.yaml`` file."""
 
-    schema_version: Literal[1] = CONFIG_SCHEMA_VERSION
+    schema_version: Literal[1]
     project: str = Field(min_length=1)
     student: StudentConfig = StudentConfig()
     tutor: TutorConfig = TutorConfig()
