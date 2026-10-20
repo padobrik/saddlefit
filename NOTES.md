@@ -25,3 +25,11 @@ Assumptions taken where the spec leaves a detail open. Deviations from the spec 
   run's wall clock is also bounded by the sandbox's per-run deadline.
 - **Allowlist paths.** Harness paths are judged on their raw segments: empty, `.` and `..`
   segments are refused rather than normalized.
+- **Doctor size estimates.** Memory is 4-bit weights (0.5 byte per parameter, plus 10% for
+  scales and embeddings) plus an fp16 KV cache for a 32k context, from the layer count, KV heads
+  and key length Ollama reports. A mixture of experts counts `parameters × experts used ÷
+  experts` as active, a rough estimate in the model's favour. A runner without that metadata
+  gets tier "unknown" rather than a guess.
+- **Doctor speed and exit codes.** Speed is measured after one unmeasured warm-up call, so model
+  loading does not count. `doctor` exits 1 when the model is not compact or its tier is unknown,
+  and 3 when Docker or the runner is unusable.

@@ -1,0 +1,82 @@
+{
+  "additionalProperties": false,
+  "description": "``.saddlefit/doctor.json``: the probe result, stored with the model digest (B5).",
+  "properties": {
+    "checked_at": {
+      "format": "date-time",
+      "title": "Checked At",
+      "type": "string"
+    },
+    "digest": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Digest"
+    },
+    "json_probes": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Json Probes"
+    },
+    "model": {
+      "title": "Model",
+      "type": "string"
+    },
+    "native_probes": {
+      "title": "Native Probes",
+      "type": "integer"
+    },
+    "schema_version": {
+      "const": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "tier": {
+      "enum": [
+        "S",
+        "M",
+        "L",
+        "not compact",
+        "unknown"
+      ],
+      "title": "Tier",
+      "type": "string"
+    },
+    "tokens_per_second": {
+      "title": "Tokens Per Second",
+      "type": "number"
+    },
+    "tool_mode": {
+      "enum": [
+        "native",
+        "json"
+      ],
+      "title": "Tool Mode",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "model",
+    "digest",
+    "tool_mode",
+    "native_probes",
+    "json_probes",
+    "tokens_per_second",
+    "tier",
+    "checked_at"
+  ],
+  "title": "DoctorRecord",
+  "type": "object"
+}
