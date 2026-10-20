@@ -16,15 +16,19 @@ import json
 import os
 import re
 import subprocess
-import tempfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Final, Literal
 
 from pydantic import BaseModel, ConfigDict
 
 from saddlefit.eval.tamper import diff_paths
 from saddlefit.harness.allowlist import disallowed
-from saddlefit.harness.loop_config import default_loop_config, dump_loop_config
+from saddlefit.harness.loop_config import (
+    LoopConfigError,
+    default_loop_config,
+    dump_loop_config,
+    load_loop_config,
+)
 
 MAIN: Final = "main"
 HARNESS_SCHEMA_VERSION: Final = 1
@@ -37,6 +41,7 @@ _COMMIT = re.compile(r"[0-9a-f]{7,64}")
 # Regular files only: a symlink could point a skill at anything on the host.
 _MODE_LINE = re.compile(r"^(?:new file mode|new mode) (\d+)$", re.MULTILINE)
 _FILE_MODES: Final = frozenset({"100644", "100755"})
+MAX_PATCH_LINES: Final = 200  # B8: a proposal changes at most 200 lines
 
 DEFAULT_FILES: dict[str, str] = {
     "systemprompt.md": "You are a careful software engineer. Solve the task, then run its check.\n",
@@ -72,6 +77,10 @@ class HarnessStore:
         self.path = path
 
     def _git(self, *args: str, stdin: str | None = None, index: Path | None = None) -> str:
+        out = self._git_bytes(*args, stdin=stdin, index=index)
+        return out.decode("utf-8", errors="replace").strip()
+
+    def _git_bytes(self, *args: str, stdin: str | None = None, index: Path | None = None) -> bytes:
         env = {
             "PATH": os.environ.get("PATH", ""),
             "HOME": str(self.path),
@@ -97,7 +106,7 @@ class HarnessStore:
         if result.returncode != 0:
             stderr = result.stderr.decode("utf-8", errors="replace").strip()
             raise HarnessStoreError(f"git {args[0]} failed: {stderr}")
-        return result.stdout.decode("utf-8", errors="replace").strip()
+        return result.stdout
 
     def init(self) -> str:
         """Create the store with default harness files; return the initial commit SHA."""
@@ -156,11 +165,14 @@ class HarnessStore:
         if refused:
             raise HarnessStoreError(f"patch touches paths outside the allowlist: {refused}")
         self._check_format()
+        self._check_size(patch)
         branch = f"candidate/{proposal_id}"
         self._git("switch", "--quiet", "-c", branch, MAIN)
         try:
             self._git("apply", "--check", "--whitespace=nowarn", "-", stdin=patch)
             self._git("apply", "--index", "--whitespace=nowarn", "-", stdin=patch)
+            # the text checks above are early rejections; this judges what git actually staged
+            self._check_staged()
             self._git("commit", "--quiet", "-m", f"{message}\n\nproposal: {proposal_id}")
             sha = self.head(branch)
         except HarnessStoreError:
@@ -173,11 +185,50 @@ class HarnessStore:
         self._git("switch", "--quiet", MAIN)
         return sha
 
+    def _check_size(self, patch: str) -> None:
+        """Refuse a patch that changes more than ``MAX_PATCH_LINES`` lines, or binary data."""
+        changed = 0
+        for line in self._git("apply", "--numstat", "-", stdin=patch).splitlines():
+            added, deleted, _ = line.split("\t", 2)
+            if not (added.isdigit() and deleted.isdigit()):
+                raise HarnessStoreError("patch changes a binary file")
+            changed += int(added) + int(deleted)
+        if changed > MAX_PATCH_LINES:
+            raise HarnessStoreError(
+                f"patch changes {changed} lines; a proposal may change at most {MAX_PATCH_LINES}"
+            )
+
+    def _check_staged(self) -> None:
+        """Regular files on allowlisted paths only, and a ``loop.yaml`` that still validates."""
+        for entry in self._git("ls-files", "--stage", "-z").split("\0"):
+            if not entry:
+                continue
+            mode = entry.split(" ", 1)[0]
+            if mode not in _FILE_MODES:
+                raise HarnessStoreError(f"patch stages a symlink or special file (mode {mode})")
+        changed = [
+            p for p in self._git("diff", "--cached", "--name-only", "-z", MAIN).split("\0") if p
+        ]
+        refused = disallowed(changed)
+        if refused:
+            raise HarnessStoreError(f"patch touches paths outside the allowlist: {refused}")
+        if "loop.yaml" in changed:
+            try:
+                load_loop_config(self.path / "loop.yaml")
+            except LoopConfigError as exc:
+                raise HarnessStoreError(f"loop.yaml no longer validates: {exc}") from exc
+
     def accept(self, proposal_id: str) -> str:
         """Merge the candidate into ``main``; return the new ``main`` SHA."""
         branch = f"candidate/{_checked(_PROPOSAL_ID, proposal_id, 'proposal id')}"
         self._check_format()
-        self._git("merge", "--quiet", "--no-ff", "-m", f"accept {proposal_id}", branch)
+        try:
+            self._git("merge", "--quiet", "--no-ff", "-m", f"accept {proposal_id}", branch)
+        except HarnessStoreError:
+            # a conflicting merge must not leave the store mid-merge
+            with contextlib.suppress(HarnessStoreError):
+                self._git("merge", "--abort")
+            raise
         self._git("branch", "-d", branch)
         return self.head()
 
@@ -204,17 +255,27 @@ class HarnessStore:
         self._git("tag", _checked(_REF, name, "tag name"), _checked(_REF, ref, "ref"))
 
     def export(self, ref: str, dest: Path) -> None:
-        """Write the harness files at ``ref`` into ``dest`` (no .git).
+        """Write the harness files at ``ref`` into ``dest`` (no .git), byte for byte.
 
-        A temporary index is checked out instead of ``git archive``, which would honour
-        ``export-ignore`` and let a committed ``.gitattributes`` hide files.
+        Each blob is written as committed: neither ``git archive`` (which honours
+        ``export-ignore``) nor a checkout (which applies ``text``/``eol`` attributes) could
+        let a committed ``.gitattributes`` change or hide what the student gets.
         """
         _checked(_REF, ref, "ref")
         self._check_format(ref)
-        # git runs in the store, so a relative prefix would land inside it
         dest = dest.resolve()
         dest.mkdir(parents=True, exist_ok=True)
-        with tempfile.TemporaryDirectory(prefix="saddlefit-harness-index-") as tmp:
-            index = Path(tmp) / "index"
-            self._git("read-tree", ref, index=index)
-            self._git("checkout-index", "--all", f"--prefix={dest}{os.sep}", index=index)
+        for entry in self._git("ls-tree", "-r", "-z", "--full-tree", ref).split("\0"):
+            if not entry:
+                continue
+            meta, _, path = entry.partition("\t")
+            mode, kind, sha = meta.split(" ")
+            rel = PurePosixPath(path)
+            if kind != "blob" or mode not in _FILE_MODES:
+                raise HarnessStoreError(f"{path} at {ref} is not a regular file (mode {mode})")
+            if rel.is_absolute() or ".." in rel.parts:
+                raise HarnessStoreError(f"{path} at {ref} leaves the export directory")
+            target = dest / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(self._git_bytes("cat-file", "blob", sha))
+            target.chmod(0o755 if mode == "100755" else 0o644)

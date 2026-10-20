@@ -1,3 +1,4 @@
+import difflib
 import json
 import os
 import subprocess
@@ -30,10 +31,21 @@ def store(tmp_path: Path) -> HarnessStore:
     return store
 
 
+def git_env(home: Path) -> dict[str, str]:
+    """A clean environment: no GIT_DIR or GIT_INDEX_FILE from a hook, no user config."""
+    return {
+        "PATH": os.environ.get("PATH", ""),
+        "HOME": str(home),
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_GLOBAL": os.devnull,
+    }
+
+
 def log(store: HarnessStore, ref: str = "main") -> list[str]:
     out = subprocess.run(
         ["git", "log", "--format=%s", ref],
         cwd=store.path,
+        env=git_env(store.path),
         capture_output=True,
         text=True,
         check=True,
@@ -142,7 +154,12 @@ def test_symlinks_are_refused(store: HarnessStore) -> None:
     assert (
         "candidate/p-link"
         not in subprocess.run(
-            ["git", "branch", "--list"], cwd=store.path, capture_output=True, text=True, check=True
+            ["git", "branch", "--list"],
+            cwd=store.path,
+            env=git_env(store.path),
+            capture_output=True,
+            text=True,
+            check=True,
         ).stdout
     )
 
@@ -220,12 +237,7 @@ def commit_raw(store: HarnessStore, rel: str, content: str | None) -> None:
         path.unlink()
     else:
         path.write_text(content, encoding="utf-8")
-    env = {
-        "PATH": os.environ.get("PATH", ""),
-        "HOME": str(store.path),
-        "GIT_CONFIG_NOSYSTEM": "1",
-        "GIT_CONFIG_GLOBAL": os.devnull,
-    }
+    env = git_env(store.path)
     for args in (
         ["add", "--all"],
         ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "raw"],
@@ -261,3 +273,74 @@ def test_a_store_with_a_bad_version_is_refused(
         store.propose("p-after", LESSON, "x")
     with pytest.raises(HarnessStoreError, match=message):
         store.export("main", tmp_path / "out")
+
+
+def unified(path: str, old: str, new: str) -> str:
+    """A git-style patch turning ``old`` into ``new`` at ``path``."""
+    body = "".join(
+        difflib.unified_diff(
+            old.splitlines(keepends=True),
+            new.splitlines(keepends=True),
+            fromfile=f"a/{path}" if old else "/dev/null",
+            tofile=f"b/{path}",
+        )
+    )
+    header = f"diff --git a/{path} b/{path}\n" + ("new file mode 100644\n" if not old else "")
+    return header + body
+
+
+@pytest.mark.parametrize("mode_line", ["new file mode  120000", "new file mode 120000\r"])
+def test_a_symlink_hidden_by_odd_spacing_is_refused(store: HarnessStore, mode_line: str) -> None:
+    link = (
+        f"diff --git a/skills/leak b/skills/leak\n{mode_line}\n"
+        "--- /dev/null\n+++ b/skills/leak\n@@ -0,0 +1 @@\n+/etc/passwd\n"
+        "\\ No newline at end of file\n"
+    )
+    with pytest.raises(HarnessStoreError):
+        store.propose("p-odd", link, "link")
+    assert (
+        "candidate/p-odd"
+        not in subprocess.run(
+            ["git", "branch", "--list"],
+            cwd=store.path,
+            env=git_env(store.path),
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+    )
+
+
+def test_a_proposal_may_change_at_most_200_lines(store: HarnessStore) -> None:
+    ok = unified("skills/big/SKILL.md", "", "".join(f"line {i}\n" for i in range(200)))
+    store.propose("p-200", ok, "200 lines")
+    too_big = unified("skills/bigger/SKILL.md", "", "".join(f"line {i}\n" for i in range(201)))
+    with pytest.raises(HarnessStoreError, match="200"):
+        store.propose("p-201", too_big, "201 lines")
+
+
+def test_an_invalid_loop_yaml_is_refused(store: HarnessStore) -> None:
+    current = (store.path / "loop.yaml").read_text(encoding="utf-8")
+    broken = current.replace("max_steps:", "max_steps: banana\nignored:", 1)
+    with pytest.raises(HarnessStoreError, match=r"loop\.yaml"):
+        store.propose("p-loop", unified("loop.yaml", current, broken), "break loop.yaml")
+    assert (store.path / "loop.yaml").read_text(encoding="utf-8") == current
+
+
+def test_a_conflicting_accept_is_aborted_cleanly(store: HarnessStore) -> None:
+    store.propose("p-a", LESSON, "a")
+    store.propose("p-b", patch_for("EXPERIENCE.md", "# Lessons", "# Lessons (other)"), "b")
+    store.accept("p-a")
+    with pytest.raises(HarnessStoreError, match="merge"):
+        store.accept("p-b")
+    assert not (store.path / ".git" / "MERGE_HEAD").exists()
+    store.propose("p-c", NEW_SKILL, "still usable")
+
+
+def test_export_writes_the_committed_bytes(store: HarnessStore, tmp_path: Path) -> None:
+    crlf = unified("skills/.gitattributes", "", "* text eol=crlf\n")
+    store.propose("p-eol", crlf + NEW_SKILL, "eol")
+    store.accept("p-eol")
+    dest = tmp_path / "out"
+    store.export("main", dest)
+    assert b"\r" not in (dest / "skills" / "pydantic" / "SKILL.md").read_bytes()
