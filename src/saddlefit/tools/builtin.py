@@ -53,13 +53,23 @@ def confine(path: str) -> str:
     return resolved
 
 
+def _cut_note(cut: int) -> str:
+    return f"\n[... {cut} characters cut; narrow the request ...]\n"
+
+
 def truncate(text: str, max_chars: int) -> str:
-    """Keep the head and tail of ``text``, with a note saying how much was cut."""
+    """Keep the head and tail of ``text``, with a note saying how much was cut.
+
+    The note counts toward ``max_chars``, so the result never exceeds it.
+    """
     if len(text) <= max_chars:
         return text
-    half = max_chars // 2
-    cut = len(text) - 2 * half
-    return f"{text[:half]}\n[... {cut} characters cut; narrow the request ...]\n{text[-half:]}"
+    keep = max(max_chars - len(_cut_note(len(text))), 0)
+    note = _cut_note(len(text) - keep)  # fewer digits than the bound above, never more
+    if keep == 0:
+        return note.strip()[:max_chars]
+    head, tail = (keep + 1) // 2, keep // 2
+    return text[:head] + note + (text[-tail:] if tail else "")
 
 
 def _b64(value: str) -> str:
@@ -190,7 +200,7 @@ class Toolbox:
         return self._run(command, timeout_s=limit)
 
     def finish(self, summary: str) -> ToolResult:
-        return ToolResult(ok=True, output=summary, finished=True)
+        return ToolResult(ok=True, output=truncate(summary, self.max_chars), finished=True)
 
     def call(self, name: str, arguments: Mapping[str, Any]) -> ToolResult:
         """Dispatch a validated tool call; bad arguments come back as a failed result."""

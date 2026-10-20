@@ -1,4 +1,5 @@
 import base64
+import re
 import shlex
 from dataclasses import dataclass, field
 
@@ -44,10 +45,26 @@ def test_confine_refuses_escapes(path: str) -> None:
 
 def test_truncate_keeps_head_and_tail() -> None:
     assert truncate("short", 10) == "short"
-    out = truncate("a" * 50 + "b" * 50, 20)
-    assert out.startswith("a" * 10)
-    assert out.endswith("b" * 10)
-    assert "80 characters cut" in out
+    out = truncate("a" * 500 + "b" * 500, 200)
+    assert out.startswith("a" * 70)
+    assert out.endswith("b" * 70)
+    match = re.search(r"\[\.\.\. (\d+) characters cut", out)
+    assert match is not None
+    kept = (len(out) - len(out.lstrip("a"))) + (len(out) - len(out.rstrip("b")))
+    assert int(match[1]) == 1000 - kept
+    assert len(out) <= 200
+
+
+@pytest.mark.parametrize("max_chars", [0, 1, 10, 40, 60, 100, 999, 1000])
+def test_truncate_never_exceeds_the_cap(max_chars: int) -> None:
+    assert len(truncate("x" * 1000 + "y", max_chars)) <= max_chars
+
+
+def test_finish_summary_is_capped() -> None:
+    box = Toolbox(FakeSandbox(), max_chars=100)
+    result = box.finish("s" * 5000)
+    assert result.finished
+    assert len(result.output) <= 100
 
 
 def test_commands_quote_paths_and_patterns() -> None:
