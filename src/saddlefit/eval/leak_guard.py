@@ -28,12 +28,15 @@ log = logging.getLogger(__name__)
 class LeakDetected(IntegrityViolation):
     """A sealed canary was found in an outgoing prompt."""
 
-    def __init__(self, task_ids: Sequence[str], locations: Sequence[str]) -> None:
+    def __init__(
+        self, task_ids: Sequence[str], locations: Sequence[str], *, log_error: str | None = None
+    ) -> None:
         self.task_ids = tuple(task_ids)
         self.locations = tuple(locations)
+        note = f"; incident log could not be written: {log_error}" if log_error else ""
         super().__init__(
             f"sealed data leaked into a prompt (tasks: {', '.join(self.task_ids)}; "
-            f"at: {', '.join(self.locations)}); run aborted"
+            f"at: {', '.join(self.locations)}); run aborted{note}"
         )
 
 
@@ -65,8 +68,12 @@ class LeakGuard:
                     locations.append(where)
         if tasks:
             unique_tasks = sorted(set(tasks))
-            self._record(unique_tasks, locations)
-            raise LeakDetected(unique_tasks, locations)
+            log_error = None
+            try:
+                self._record(unique_tasks, locations)
+            except OSError as exc:  # the leak still aborts with exit code 2
+                log_error = f"{type(exc).__name__}: {exc}"
+            raise LeakDetected(unique_tasks, locations, log_error=log_error)
 
     def _record(self, task_ids: list[str], locations: list[str]) -> None:
         log.error("leak guard: canary found in prompt", extra={"tasks": task_ids, "at": locations})

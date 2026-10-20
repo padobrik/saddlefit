@@ -142,3 +142,13 @@ def test_cli_passes_other_exits_through(monkeypatch: pytest.MonkeyPatch) -> None
     with pytest.raises((SystemExit, typer.Exit)) as exc:
         cli.main()
     assert getattr(exc.value, "code", getattr(exc.value, "exit_code", None)) == 0
+
+
+def test_unwritable_incident_log_still_raises_the_integrity_error(tmp_path: Path) -> None:
+    blocker = tmp_path / "not-a-dir"
+    blocker.write_text("x", encoding="utf-8")
+    guard = LeakGuard(CANARIES, incident_log=blocker / "incidents.jsonl")
+    with pytest.raises(LeakDetected) as exc:
+        guard.check([Message(role="user", content=CANARY)])
+    assert exc.value.exit_code == 2
+    assert "incident log could not be written" in str(exc.value)
