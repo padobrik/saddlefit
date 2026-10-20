@@ -1,0 +1,98 @@
+from pathlib import Path
+
+import pytest
+import yaml
+
+from saddlefit.config import Config, ConfigError, dump_config, load_config
+
+SPEC_EXAMPLE = """\
+schema_version: 1
+project: my-service
+student:
+  provider: openai-compatible
+  base_url: http://localhost:11434/v1
+  model: qwen3:8b
+  tool_mode: auto
+  temperature: 0.2
+  seed: 7
+  context_length: 32768
+  release_date: null
+tutor:
+  provider: anthropic
+  model: claude-opus-5-5
+  max_calls_per_round: 20
+  max_usd_per_round: 5.0
+  prices_usd_per_mtok: {input: 0.0, output: 0.0}
+generator:
+  provider: anthropic
+  model: claude-fable-5-1
+evaluation:
+  runs_per_task: 3
+  solved_threshold: 2
+  timeout_seconds: 900
+  protected_paths: ["tests/**", "**/test_*.py", "**/*_test.py"]
+splits:
+  train: 0.5
+  held_out: 0.25
+  control: 0.25
+sandbox:
+  image: ghcr.io/OWNER/saddlefit-sandbox:0.1.0
+  cpus: 2
+  memory: 4g
+  pids_limit: 512
+fast_loop:
+  max_variants: 3
+  runs_per_variant: 2
+  time_budget_minutes: 10
+"""
+
+
+def write(tmp_path: Path, text: str) -> Path:
+    path = tmp_path / "saddlefit.yaml"
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def test_spec_example_loads(tmp_path: Path) -> None:
+    config = load_config(write(tmp_path, SPEC_EXAMPLE))
+    assert config.project == "my-service"
+    assert config.evaluation.solved_threshold == 2
+    assert config.splits.held_out == 0.25
+
+
+def test_minimal_config_uses_defaults(tmp_path: Path) -> None:
+    config = load_config(write(tmp_path, "project: p\n"))
+    assert config == Config(project="p")
+
+
+def test_round_trip(tmp_path: Path) -> None:
+    config = load_config(write(tmp_path, SPEC_EXAMPLE))
+    assert load_config(write(tmp_path, dump_config(config))) == config
+
+
+@pytest.mark.parametrize(
+    ("text", "message"),
+    [
+        ("project: p\nbogus: 1\n", "bogus: unknown key"),
+        ("project: p\nstudent:\n  modle: x\n", "student.modle: unknown key"),
+        ("project: p\nschema_version: 2\n", "schema_version"),
+        ("project: p\nsplits: {train: 0.5, held_out: 0.5, control: 0.5}\n", "sum to 1.0"),
+        ("project: p\nevaluation: {runs_per_task: 3, solved_threshold: 4}\n", "cannot exceed"),
+        ("project: p\nsandbox: {memory: lots}\n", "sandbox.memory"),
+        ("- a\n- b\n", "must be a mapping"),
+        ("project: [unclosed\n", "not valid YAML"),
+    ],
+)
+def test_invalid_configs_have_clear_errors(tmp_path: Path, text: str, message: str) -> None:
+    with pytest.raises(ConfigError) as exc:
+        load_config(write(tmp_path, text))
+    assert message in str(exc.value)
+
+
+def test_missing_file_points_to_init(tmp_path: Path) -> None:
+    with pytest.raises(ConfigError, match="saddlefit init"):
+        load_config(tmp_path / "absent.yaml")
+
+
+def test_dump_is_safe_yaml() -> None:
+    assert yaml.safe_load(dump_config(Config(project="p")))["project"] == "p"
