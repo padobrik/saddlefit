@@ -248,10 +248,16 @@ def test_only_eval_imports_the_unrestricted_reader() -> None:
             names = []
             if isinstance(node, ast.ImportFrom):
                 names = [a.name for a in node.names]
+                if (node.module or "").endswith("eval.records") or (
+                    node.module == "saddlefit.eval" and "records" in names
+                ):
+                    names.append("read_any_run")  # the module itself grants the access
+            elif isinstance(node, ast.Import):
+                names = ["read_any_run" for a in node.names if a.name == "saddlefit.eval.records"]
             elif isinstance(node, ast.Attribute):
                 names = [node.attr]
             elif isinstance(node, ast.Constant) and isinstance(node.value, str):
                 names = [node.value]
-            if "_read_run_any" in names:
+            if {"_read_run_any", "read_any_run"} & set(names):
                 offenders.append(rel)
     assert offenders == []
