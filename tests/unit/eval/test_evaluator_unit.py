@@ -128,3 +128,24 @@ def test_a_slow_diff_parse_counts_as_a_diff_that_does_not_apply(
     evaluator = Evaluator(_store(tmp_path), None, "img", SandboxConfig(), EvaluationConfig())
     verdict = evaluator.evaluate("t-0001", tmp_path, diff, "01JB2Y8Q4V9N1K3D7M5R6T0W2X")
     assert (verdict.passed, verdict.diff_applied) == (False, False)
+
+
+@pytest.mark.parametrize("bad", [chr(0xD800), chr(0xDC80)], ids=["high", "low-escape"])
+def test_a_diff_that_is_not_utf8_fails_without_a_crash(tmp_path: Path, bad: str) -> None:
+    diff = f"--- a/src/a.py\n+++ b/src/a.py\n@@ -1 +1 @@\n-x\n+{bad}\n"
+    evaluator = Evaluator(_store(tmp_path), None, "img", SandboxConfig(), EvaluationConfig())
+    verdict = evaluator.evaluate("t-0001", tmp_path, diff, "01JB2Y8Q4V9N1K3D7M5R6T0W2X")
+    assert (verdict.passed, verdict.diff_applied) == (False, False)
+
+
+def test_the_size_check_comes_before_the_python_diff_parser(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def no_parsing(diff: str) -> set[str]:
+        raise AssertionError("an oversized diff must not be parsed")
+
+    monkeypatch.setattr(evaluator_module, "diff_paths", no_parsing)
+    diff = "--- a/src/a.py\n+++ b/src/a.py\n@@ -1 +1 @@\n-x\n+" + "y" * MAX_DIFF_BYTES + "\n"
+    evaluator = Evaluator(_store(tmp_path), None, "img", SandboxConfig(), EvaluationConfig())
+    verdict = evaluator.evaluate("t-0001", tmp_path, diff, "01JB2Y8Q4V9N1K3D7M5R6T0W2X")
+    assert verdict.diff_applied is False

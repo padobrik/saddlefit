@@ -67,11 +67,17 @@ class Evaluator:
 
     def evaluate(self, task_id: str, base_snapshot: Path, diff: str, run_id: str) -> Verdict:
         """Judge ``diff`` against task ``task_id`` starting from ``base_snapshot``."""
-        touched = diff_paths(diff)
-        if len(diff.encode("utf-8", errors="surrogateescape")) > MAX_DIFF_BYTES:
+        # encode once, strictly, before anything parses the diff; the same bytes then go to
+        # the host-side parse and into the container
+        try:
+            raw = diff.encode("utf-8")
+        except UnicodeEncodeError:
             return Verdict(passed=False, exit_code=None, duration_s=0.0, diff_applied=False)
+        if len(raw) > MAX_DIFF_BYTES:
+            return Verdict(passed=False, exit_code=None, duration_s=0.0, diff_applied=False)
+        touched = diff_paths(diff)
         if diff.strip():
-            applied = _applied_paths(diff)
+            applied = _applied_paths(raw)
             if applied is None:
                 return Verdict(passed=False, exit_code=None, duration_s=0.0, diff_applied=False)
             # git apply also accepts diffs without a "diff --git" header; judge what it applies
@@ -84,11 +90,13 @@ class Evaluator:
             work = Path(tmp) / "work"
             shutil.copytree(base_snapshot, work, symlinks=True)
             try:
-                return self._run(task_id, work, diff, hidden, run_id)
+                return self._run(task_id, work, raw, hidden, run_id)
             except SandboxError as exc:
                 return Verdict(passed=False, exit_code=None, duration_s=0.0, env_error=str(exc))
 
-    def _run(self, task_id: str, work: Path, diff: str, hidden: list[str], run_id: str) -> Verdict:
+    def _run(
+        self, task_id: str, work: Path, diff: bytes, hidden: list[str], run_id: str
+    ) -> Verdict:
         timeout = self._evaluation.timeout_seconds
         with Sandbox(
             self._client,
@@ -99,7 +107,7 @@ class Evaluator:
             labels={"saddlefit.role": "evaluation", "saddlefit.task": task_id},
         ) as box:
             if diff.strip():
-                (work / DIFF_FILE).write_text(diff, encoding="utf-8")
+                (work / DIFF_FILE).write_bytes(diff)
                 applied = box.exec(f"git apply --whitespace=nowarn {DIFF_FILE}", APPLY_TIMEOUT_S)
                 (work / DIFF_FILE).unlink(missing_ok=True)
                 if applied.exit_code != 0:
@@ -131,7 +139,7 @@ class Evaluator:
         shutil.copyfile(self._store.check_script(task_id), _inside(work, CHECK_FILE))
 
 
-def _applied_paths(diff: str) -> set[str] | None:
+def _applied_paths(diff: bytes) -> set[str] | None:
     """Every path ``git apply`` would touch, from its own parser; ``None`` if it cannot parse."""
     env = {
         "PATH": os.environ.get("PATH", ""),
@@ -144,7 +152,7 @@ def _applied_paths(diff: str) -> set[str] | None:
                 ["git", "apply", "--numstat", "-z", "-"],  # noqa: S607
                 cwd=tmp,  # outside any repository, so nothing is resolved against one
                 env=env,
-                input=diff.encode("utf-8", errors="surrogateescape"),
+                input=diff,
                 capture_output=True,
                 timeout=PARSE_TIMEOUT_S,
                 check=False,
