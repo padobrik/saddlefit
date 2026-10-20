@@ -45,3 +45,15 @@ def docker_client() -> Iterator["docker.DockerClient"]:
     client = docker.from_env()
     yield client
     client.close()
+
+
+@pytest.fixture(scope="session")
+def sandbox_image(docker_client: "docker.DockerClient") -> str:
+    """The sandbox image under test: CI builds it; locally it is built once and cached."""
+    image = os.environ.get("SADDLEFIT_SANDBOX_IMAGE", "saddlefit-sandbox:test")
+    try:
+        docker_client.images.get(image)
+    except docker.errors.ImageNotFound:
+        context = Path(__file__).resolve().parents[2] / "sandbox"
+        docker_client.images.build(path=str(context), tag=image, rm=True)
+    return image
