@@ -134,3 +134,27 @@ def test_everything_else_is_refused(path: str) -> None:
 def test_a_change_touching_saddlefit_yaml_is_refused() -> None:
     assert disallowed(["loop.yaml", "saddlefit.yaml", "skills/a/SKILL.md"]) == ["saddlefit.yaml"]
     assert disallowed(["loop.yaml"]) == []
+
+
+@pytest.mark.parametrize(
+    ("text", "message"),
+    [
+        ('schema_version: 1\nmax_steps: "40"\n', "max_steps"),
+        ("schema_version: 1\ntool_output: {max_chars: 4000.0}\n", "max_chars"),
+        (
+            "schema_version: 1\ncontext: {budget_tokens: 99999999, bogus: 1}\n"
+            "context: {budget_tokens: 24000}\n",
+            "duplicate key 'context'",
+        ),
+        (
+            "schema_version: 1\nreasoning:\n  effort: low\n  effort: high\n",
+            "duplicate key 'effort'",
+        ),
+    ],
+    ids=["quoted-int", "float-for-int", "duplicate-top-level", "duplicate-nested"],
+)
+def test_strict_types_and_no_duplicate_keys(tmp_path: Path, text: str, message: str) -> None:
+    path = tmp_path / "loop.yaml"
+    path.write_text(text, encoding="utf-8")
+    with pytest.raises(LoopConfigError, match=message):
+        load_loop_config(path)
