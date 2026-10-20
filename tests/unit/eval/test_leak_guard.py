@@ -6,7 +6,6 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
-import typer
 
 from saddlefit import cli
 from saddlefit.cli import ExitCode
@@ -66,9 +65,9 @@ def guarded(tmp_path: Path) -> tuple[GuardedClient, RecordingClient, Path]:
                 )
             ],
             None,
-            "messages[0].tool_calls[0]",
+            "messages[0].tool_calls[0].arguments.content",
         ),
-        (CLEAN, [ToolSpec(name="t", description=f"leaky {CANARY}")], "tools[0]"),
+        (CLEAN, [ToolSpec(name="t", description=f"leaky {CANARY}")], "tools[0].description"),
     ],
     ids=["user", "tool-output", "tool-call-args", "tool-description"],
 )
@@ -139,9 +138,9 @@ def test_cli_exits_with_code_2_on_a_leak(
 
 def test_cli_passes_other_exits_through(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(sys, "argv", ["saddlefit", "--version"])
-    with pytest.raises((SystemExit, typer.Exit)) as exc:
+    with pytest.raises(SystemExit) as exc:
         cli.main()
-    assert getattr(exc.value, "code", getattr(exc.value, "exit_code", None)) == 0
+    assert exc.value.code == 0
 
 
 def test_unwritable_incident_log_still_raises_the_integrity_error(tmp_path: Path) -> None:
@@ -152,3 +151,26 @@ def test_unwritable_incident_log_still_raises_the_integrity_error(tmp_path: Path
         guard.check([Message(role="user", content=CANARY)])
     assert exc.value.exit_code == 2
     assert "incident log could not be written" in str(exc.value)
+
+
+def test_canaries_nested_in_arguments_and_schemas_are_found() -> None:
+    call = ToolCall(id="c", name="write_file", arguments={"files": [{"body": f"x {CANARY}"}]})
+    schema_tool = ToolSpec(
+        name="t",
+        description="d",
+        parameters={"type": "object", "properties": {"mode": {"enum": ["a", OTHER]}}},
+    )
+    with pytest.raises(LeakDetected) as exc:
+        LeakGuard(CANARIES).check([Message(role="assistant", tool_calls=(call,))], [schema_tool])
+    assert exc.value.task_ids == ("fix-0001", "fix-0002")
+    assert exc.value.locations == (
+        "messages[0].tool_calls[0].arguments.files[0].body",
+        "tools[0].parameters.properties.mode.enum[1]",
+    )
+
+
+def test_each_location_is_reported_once() -> None:
+    text = f"{CANARY} and again {CANARY} and {OTHER}"
+    with pytest.raises(LeakDetected) as exc:
+        LeakGuard(CANARIES).check([Message(role="user", content=text)])
+    assert exc.value.locations == ("messages[0].content",)

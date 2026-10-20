@@ -11,6 +11,7 @@ import logging
 from collections.abc import Iterator, Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from saddlefit.errors import IntegrityViolation
 from saddlefit.providers.base import (
@@ -40,15 +41,32 @@ class LeakDetected(IntegrityViolation):
         )
 
 
+def _strings(value: Any, where: str) -> Iterator[tuple[str, str]]:
+    """Every raw string inside ``value``, keys included, with its location.
+
+    Raw values are scanned, not their JSON: serialization could escape characters and
+    hide a canary.
+    """
+    if isinstance(value, str):
+        yield where, value
+    elif isinstance(value, Mapping):
+        for key, item in value.items():
+            yield from _strings(key, f"{where}.<key>")
+            yield from _strings(item, f"{where}.{key}")
+    elif isinstance(value, list | tuple):
+        for i, item in enumerate(value):
+            yield from _strings(item, f"{where}[{i}]")
+
+
 def _texts(
     messages: Sequence[Message], tools: Sequence[ToolSpec] | None
 ) -> Iterator[tuple[str, str]]:
     for i, message in enumerate(messages):
         yield f"messages[{i}].content", message.content
         for j, call in enumerate(message.tool_calls):
-            yield f"messages[{i}].tool_calls[{j}]", json.dumps(call.arguments, ensure_ascii=False)
+            yield from _strings(call.model_dump(), f"messages[{i}].tool_calls[{j}]")
     for k, tool in enumerate(tools or ()):
-        yield f"tools[{k}]", json.dumps(tool.model_dump(), ensure_ascii=False)
+        yield from _strings(tool.model_dump(), f"tools[{k}]")
 
 
 class LeakGuard:
@@ -65,7 +83,8 @@ class LeakGuard:
             for canary, task_id in self._canaries.items():
                 if canary in text:
                     tasks.append(task_id)
-                    locations.append(where)
+                    if where not in locations:
+                        locations.append(where)
         if tasks:
             unique_tasks = sorted(set(tasks))
             log_error = None
