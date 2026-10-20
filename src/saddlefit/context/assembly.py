@@ -22,8 +22,51 @@ TIER_HARNESS_BUDGET: dict[Tier, int] = {"S": 2500, "M": 4000, "L": 6000}
 DEFAULT_MAX_SKILLS = 3
 
 TokenCounter = Callable[[str], int]
-_WORD = re.compile(r"[a-z0-9_]{3,}")
-_TOOL_SECTION = re.compile(r"^## +([A-Za-z0-9_]+)\s*$", re.MULTILINE)
+_WORD = re.compile(r"[a-z0-9_]{2,}")  # keeps short terms such as "ui" and "go"
+_STOP_WORDS = frozenset(
+    [
+        "an",
+        "as",
+        "at",
+        "be",
+        "by",
+        "do",
+        "if",
+        "in",
+        "is",
+        "it",
+        "no",
+        "of",
+        "on",
+        "or",
+        "so",
+        "to",
+        "up",
+        "we",
+        "and",
+        "are",
+        "but",
+        "can",
+        "for",
+        "has",
+        "its",
+        "not",
+        "the",
+        "was",
+        "use",
+        "with",
+        "this",
+        "that",
+        "from",
+        "into",
+    ]
+)
+# The student's tools (saddlefit.tools.builtin.TOOL_NAMES); other "##" headings stay in the
+# preamble.
+KNOWN_TOOLS = frozenset(
+    {"read_file", "list_dir", "search", "edit_file", "write_file", "bash", "finish"}
+)
+_TOOL_SECTION = re.compile(rf"^## +({'|'.join(sorted(KNOWN_TOOLS))})\s*$", re.MULTILINE)
 _FRONTMATTER = re.compile(r"\A---\n(.*?)\n---\n?(.*)\Z", re.DOTALL)
 _MODEL_LABEL = re.compile(r"\((?:model|for):\s*([^)]+)\)")
 
@@ -34,7 +77,7 @@ def estimate_tokens(text: str) -> int:
 
 
 def _words(text: str) -> set[str]:
-    return set(_WORD.findall(text.lower()))
+    return set(_WORD.findall(text.lower())) - _STOP_WORDS
 
 
 @dataclass(frozen=True)
