@@ -380,3 +380,36 @@ def test_commits_touching_saddlefit_state_are_rejected(tmp_path: Path) -> None:
     newest, reason = iter_commits(repo, limit=1)[0]
     assert newest is None
     assert reason == "touches_state"
+
+
+def test_export_drops_state_even_when_the_checkout_differs(tmp_path: Path) -> None:
+    repo = build(tmp_path / "repo")
+    state = repo / ".saddlefit" / "x"
+    state.parent.mkdir()
+    state.write_text("1\n", encoding="utf-8")
+    commit_all(repo, "chore: state 1")
+    state.write_text("2\n", encoding="utf-8")
+    commit_all(repo, "chore: state 2")
+    state.write_text("3\n", encoding="utf-8")
+    dest = tmp_path / "snapshot"
+    mining._export(repo, "HEAD~1", dest)
+    assert (dest / "src" / "toykit").is_dir()
+    assert not (dest / ".saddlefit").exists()
+
+
+def test_local_runner_does_not_inherit_the_host_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    snapshot = tmp_path / "snapshot"
+    (snapshot / "tests").mkdir(parents=True)
+    (snapshot / "tests" / "test_env.py").write_text(
+        "import os, sys\n\n\ndef test_env():\n"
+        "    assert 'SADDLEFIT_TEST_SECRET' not in os.environ\n"
+        "    assert os.environ.get('PWD') is None\n"
+        "    assert not any('evil-path' in p for p in sys.path)\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("SADDLEFIT_TEST_SECRET", "x")
+    monkeypatch.setenv("PWD", str(tmp_path))
+    monkeypatch.setenv("PYTHONPATH", str(tmp_path / "evil-path"))
+    assert RUNNER.run_tests(snapshot, ["tests/test_env.py"]) == 0

@@ -188,7 +188,20 @@ def _export(repo: Path, ref: str, dest: Path) -> None:
         env = _git_env(GIT_INDEX_FILE=str(Path(tmp) / "index"))
         _git_bytes(repo, "read-tree", ref, env=env)
         # a repository that committed its state by mistake must not leak it into snapshots
-        _git_bytes(repo, "rm", "-r", "-q", "--cached", "--ignore-unmatch", "--", STATE_DIR, env=env)
+        # --force: the safety check compares with the live HEAD and checkout, which say
+        # nothing about this throwaway index
+        _git_bytes(
+            repo,
+            "rm",
+            "-r",
+            "-q",
+            "--cached",
+            "--force",
+            "--ignore-unmatch",
+            "--",
+            STATE_DIR,
+            env=env,
+        )
         _git_bytes(repo, "checkout-index", "--all", f"--prefix={dest}{os.sep}", env=env)
 
 
@@ -291,6 +304,26 @@ def task_type_for(candidate: Candidate) -> str:
     return {"fix": "bugfix", "feat": "feature"}.get(prefix, "change")
 
 
+# What a test process needs to start on Linux, macOS and Windows; nothing that names the
+# original repository, the user's projects or credentials.
+_RUNNER_ENV_KEYS: Final = ("PATH", "SYSTEMROOT", "PATHEXT", "COMSPEC", "TEMP", "TMP", "TMPDIR")
+
+
+def _runner_env(snapshot: Path) -> dict[str, str]:
+    """A minimal environment for a test run: no inherited PYTHONPATH, PWD or secrets."""
+    env = {key: os.environ[key] for key in _RUNNER_ENV_KEYS if key in os.environ}
+    env.update(
+        HOME=str(snapshot),
+        LANG="C.UTF-8",
+        PYTHONDONTWRITEBYTECODE="1",
+        PYTHONNOUSERSITE="1",
+    )
+    # src-layout projects: import the snapshot's package, not an installed copy
+    if (snapshot / "src").is_dir():
+        env["PYTHONPATH"] = str(snapshot / "src")
+    return env
+
+
 @dataclass(frozen=True)
 class LocalRunner:
     """Runs pytest on the host. Only for repositories you trust: their code executes here."""
@@ -299,13 +332,11 @@ class LocalRunner:
     timeout_s: float = 300
 
     def run_tests(self, snapshot: Path, test_files: Sequence[str]) -> int:
-        # src-layout projects: import the snapshot's package, not an installed copy
-        paths = [str(snapshot / "src")] if (snapshot / "src").is_dir() else []
-        pythonpath = os.pathsep.join([*paths, os.environ.get("PYTHONPATH", "")]).strip(os.pathsep)
+        """Run ``test_files`` in ``snapshot``; return pytest's exit code."""
         result = subprocess.run(  # noqa: S603 - argv built from a fixed command and file names
             [self.python, "-B", "-m", "pytest", "-q", "-p", "no:cacheprovider", *test_files],
             cwd=snapshot,
-            env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1", "PYTHONPATH": pythonpath},
+            env=_runner_env(snapshot),
             capture_output=True,
             timeout=self.timeout_s,
             check=False,
