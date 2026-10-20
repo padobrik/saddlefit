@@ -22,8 +22,51 @@ TIER_HARNESS_BUDGET: dict[Tier, int] = {"S": 2500, "M": 4000, "L": 6000}
 DEFAULT_MAX_SKILLS = 3
 
 TokenCounter = Callable[[str], int]
-_WORD = re.compile(r"[a-z0-9_]{3,}")
-_TOOL_SECTION = re.compile(r"^## +([A-Za-z0-9_]+)\s*$", re.MULTILINE)
+_WORD = re.compile(r"[a-z0-9_]{2,}")  # keeps short terms such as "ui" and "go"
+_STOP_WORDS = frozenset(
+    [
+        "an",
+        "as",
+        "at",
+        "be",
+        "by",
+        "do",
+        "if",
+        "in",
+        "is",
+        "it",
+        "no",
+        "of",
+        "on",
+        "or",
+        "so",
+        "to",
+        "up",
+        "we",
+        "and",
+        "are",
+        "but",
+        "can",
+        "for",
+        "has",
+        "its",
+        "not",
+        "the",
+        "was",
+        "use",
+        "with",
+        "this",
+        "that",
+        "from",
+        "into",
+    ]
+)
+# The student's tools (saddlefit.tools.builtin.TOOL_NAMES); other "##" headings stay in the
+# preamble.
+KNOWN_TOOLS = frozenset(
+    {"read_file", "list_dir", "search", "edit_file", "write_file", "bash", "finish"}
+)
+_ANY_SECTION = re.compile(r"^## +(.+?)\s*$", re.MULTILINE)
 _FRONTMATTER = re.compile(r"\A---\n(.*?)\n---\n?(.*)\Z", re.DOTALL)
 _MODEL_LABEL = re.compile(r"\((?:model|for):\s*([^)]+)\)")
 
@@ -34,7 +77,7 @@ def estimate_tokens(text: str) -> int:
 
 
 def _words(text: str) -> set[str]:
-    return set(_WORD.findall(text.lower()))
+    return set(_WORD.findall(text.lower())) - _STOP_WORDS
 
 
 @dataclass(frozen=True)
@@ -89,18 +132,24 @@ def _parse_skill(dirname: str, text: str) -> Skill:
 
 
 def guidance_for(tool_guidance: str, enabled: Iterable[str]) -> tuple[str, list[str]]:
-    """The preamble plus ``## <tool>`` sections for enabled tools, and the section details.
+    """The always-kept guidance, and one text per enabled tool section.
 
-    Returns the preamble and, separately, one text per enabled tool section, so details can
-    be dropped under budget pressure while the preamble stays.
+    Every ``## `` heading ends the section before it. Sections headed by a known tool name
+    are kept only when that tool is enabled, and are returned separately so they can be
+    dropped under budget pressure; every other section (``## Safety``, say) is kept with
+    the preamble.
     """
     enabled_set = set(enabled)
-    parts = _TOOL_SECTION.split(tool_guidance)
-    preamble, sections = parts[0], []
-    for name, body in zip(parts[1::2], parts[2::2], strict=True):
-        if name in enabled_set:
-            sections.append(f"## {name}\n{body.strip()}\n")
-    return preamble.strip(), sections
+    parts = _ANY_SECTION.split(tool_guidance)
+    general, sections = [parts[0].strip()], []
+    for heading, body in zip(parts[1::2], parts[2::2], strict=True):
+        name = heading.strip()
+        if name in KNOWN_TOOLS:
+            if name in enabled_set:
+                sections.append(f"## {name}\n{body.strip()}\n")
+        else:
+            general.append(f"## {name}\n{body.strip()}")
+    return "\n\n".join(g for g in general if g), sections
 
 
 def rank_skills(skills: Iterable[Skill], task_type: str, task_text: str) -> list[Skill]:

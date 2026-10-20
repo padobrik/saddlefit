@@ -150,3 +150,32 @@ def test_load_from_a_harness_directory(tmp_path: Path) -> None:
 def test_tier_budgets_match_spec() -> None:
     assert TIER_HARNESS_BUDGET == {"S": 2500, "M": 4000, "L": 6000}
     assert estimate_tokens("abcd") == 2
+
+
+def test_short_terms_count_for_skill_selection() -> None:
+    skills = (Skill("go-tips", "Go modules", "x"), Skill("ui", "UI layout rules", "y"))
+    ranked = rank_skills(skills, "change", "Fix the UI layout of the settings page")
+    assert [s.name for s in ranked] == ["ui"]
+    assert [s.name for s in rank_skills(skills, "change", "Bump Go to 1.23")] == ["go-tips"]
+    # short stop words alone never select a skill
+    assert rank_skills((Skill("of", "an it to", "z"),), "change", "it is an issue of to") == []
+
+
+def test_only_real_tool_names_are_tool_sections() -> None:
+    guidance = "Intro.\n\n## Safety\nNever delete user data.\n\n## bash\nRun tests.\n"
+    preamble, sections = guidance_for(guidance, [])
+    assert "## Safety" in preamble
+    assert "Never delete user data." in preamble
+    assert sections == []
+    _, enabled = guidance_for(guidance, ["bash"])
+    assert enabled == ["## bash\nRun tests.\n"]
+
+
+def test_general_sections_after_a_tool_section_survive() -> None:
+    guidance = "Intro.\n\n## bash\nRun tests.\n\n## Safety\nNever delete user data.\n"
+    preamble, sections = guidance_for(guidance, [])
+    assert "## Safety\nNever delete user data." in preamble
+    assert "Run tests." not in preamble
+    assert sections == []
+    _, enabled = guidance_for(guidance, ["bash"])
+    assert enabled == ["## bash\nRun tests.\n"]
