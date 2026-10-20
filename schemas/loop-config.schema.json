@@ -1,0 +1,179 @@
+{
+  "$defs": {
+    "ContextConfig": {
+      "additionalProperties": false,
+      "description": "Token budgets for the whole prompt and for the harness share of it.",
+      "properties": {
+        "budget_tokens": {
+          "default": 24000,
+          "exclusiveMinimum": 0,
+          "title": "Budget Tokens",
+          "type": "integer"
+        },
+        "harness_budget_tokens": {
+          "default": 4000,
+          "exclusiveMinimum": 0,
+          "title": "Harness Budget Tokens",
+          "type": "integer"
+        }
+      },
+      "title": "ContextConfig",
+      "type": "object"
+    },
+    "FinishGateConfig": {
+      "additionalProperties": false,
+      "description": "What runs when the student calls ``finish``.",
+      "properties": {
+        "max_retries": {
+          "default": 1,
+          "minimum": 0,
+          "title": "Max Retries",
+          "type": "integer"
+        },
+        "reread_task": {
+          "default": true,
+          "title": "Reread Task",
+          "type": "boolean"
+        },
+        "run": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": "pytest -q",
+          "title": "Run"
+        }
+      },
+      "title": "FinishGateConfig",
+      "type": "object"
+    },
+    "LoopDetectionConfig": {
+      "additionalProperties": false,
+      "description": "Stop after this many identical calls with no workspace change.",
+      "properties": {
+        "identical_calls": {
+          "default": 3,
+          "minimum": 2,
+          "title": "Identical Calls",
+          "type": "integer"
+        }
+      },
+      "title": "LoopDetectionConfig",
+      "type": "object"
+    },
+    "ReasoningConfig": {
+      "additionalProperties": false,
+      "description": "Reasoning language, amount and latent depth (looped models only).",
+      "properties": {
+        "effort": {
+          "default": "low",
+          "enum": [
+            "off",
+            "low",
+            "high"
+          ],
+          "title": "Effort",
+          "type": "string"
+        },
+        "language": {
+          "default": "mixed",
+          "enum": [
+            "english",
+            "user",
+            "mixed"
+          ],
+          "title": "Language",
+          "type": "string"
+        },
+        "latent_depth": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Latent Depth"
+        }
+      },
+      "title": "ReasoningConfig",
+      "type": "object"
+    },
+    "ToolOutputConfig": {
+      "additionalProperties": false,
+      "description": "How much of each tool's output the student sees.",
+      "properties": {
+        "max_chars": {
+          "default": 4000,
+          "exclusiveMinimum": 0,
+          "title": "Max Chars",
+          "type": "integer"
+        }
+      },
+      "title": "ToolOutputConfig",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "The whole ``loop.yaml`` file.",
+  "properties": {
+    "context": {
+      "$ref": "#/$defs/ContextConfig",
+      "default": {
+        "budget_tokens": 24000,
+        "harness_budget_tokens": 4000
+      }
+    },
+    "finish_gate": {
+      "$ref": "#/$defs/FinishGateConfig",
+      "default": {
+        "max_retries": 1,
+        "reread_task": true,
+        "run": "pytest -q"
+      }
+    },
+    "loop_detection": {
+      "$ref": "#/$defs/LoopDetectionConfig",
+      "default": {
+        "identical_calls": 3
+      }
+    },
+    "max_steps": {
+      "default": 40,
+      "exclusiveMinimum": 0,
+      "title": "Max Steps",
+      "type": "integer"
+    },
+    "reasoning": {
+      "$ref": "#/$defs/ReasoningConfig",
+      "default": {
+        "effort": "low",
+        "language": "mixed",
+        "latent_depth": null
+      }
+    },
+    "schema_version": {
+      "const": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "tool_output": {
+      "$ref": "#/$defs/ToolOutputConfig",
+      "default": {
+        "max_chars": 4000
+      }
+    }
+  },
+  "required": [
+    "schema_version"
+  ],
+  "title": "LoopConfig",
+  "type": "object"
+}
