@@ -1,4 +1,5 @@
 import contextlib
+import sys
 
 import pytest
 from hypothesis import given
@@ -138,5 +139,31 @@ def test_python_escapes_are_decoded_on_repair() -> None:
     ids=["huge-integer", "deep-nesting"],
 )
 def test_pathological_numbers_and_nesting_are_malformed(text: str) -> None:
-    with pytest.raises(MalformedToolCall):
-        parse_json_tool_call(text, [WRITE])
+    # Pin the interpreter's int-conversion limit; PYTHONINTMAXSTRDIGITS=0 would disable it.
+    saved = sys.get_int_max_str_digits()
+    sys.set_int_max_str_digits(4300)
+    try:
+        with pytest.raises(MalformedToolCall):
+            parse_json_tool_call(text, [WRITE])
+    finally:
+        sys.set_int_max_str_digits(saved)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        '{not_json}\n~~~json\n{"tool": "write_file", "args": {"content": "ok"}}\n~~~~\n',
+        '{not_json}\n   ```json\n{"tool": "write_file", "args": {"content": "ok"}}\n   ```\n',
+    ],
+    ids=["tilde-fence", "indented-fence"],
+)
+def test_tilde_and_indented_fences(text: str) -> None:
+    _, args, _ = parse_json_tool_call(text, [WRITE])
+    assert args["content"] == "ok"
+
+
+def test_closing_fence_must_use_the_same_character() -> None:
+    # A ~~~ line cannot close a backtick fence, so the JSON after it is still inside.
+    text = '{not_json}\n```\n~~~\n{"tool": "write_file", "args": {"content": "ok"}}\n```\n'
+    _, args, _ = parse_json_tool_call(text, [WRITE])
+    assert args["content"] == "ok"

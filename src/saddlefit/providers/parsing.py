@@ -15,8 +15,14 @@ from typing import Any
 
 from saddlefit.providers.base import ToolSpec
 
-# A fence opens and closes at line starts; the closer may be longer than the opener.
-_FENCE = re.compile(r"^(`{3,})[^\n]*\n(.*?)^\1`*[ \t]*$", re.DOTALL | re.MULTILINE)
+# CommonMark fences: ``` or ~~~, indented up to three spaces. The closer uses the same
+# character and is at least as long as the opener.
+_FENCE = re.compile(
+    r"^ {0,3}(?P<fence>(?P<ch>[`~])(?P=ch){2,})[^\n]*\n"
+    r"(?P<body>.*?)"
+    r"^ {0,3}(?P=fence)(?P=ch)*[ \t]*$",
+    re.DOTALL | re.MULTILINE,
+)
 _STRING_TOKEN = re.compile(r"(\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*')")
 _TRAILING_COMMA = re.compile(r",\s*([}\]])")
 _PY_LITERALS = {"True": "true", "False": "false", "None": "null"}
@@ -96,7 +102,7 @@ def _loads(candidate: str) -> Any:
 
 def _find_candidate(text: str) -> str | None:
     for fenced in _FENCE.finditer(text):
-        candidate = _first_object(fenced.group(2))
+        candidate = _first_object(fenced.group("body"))
         if candidate is not None:
             return candidate
     return _first_object(text)
