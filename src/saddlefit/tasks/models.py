@@ -19,6 +19,11 @@ TASK_ID_PATTERN = r"^[a-z0-9][a-z0-9._-]{0,127}$"
 CONTROL_SOURCES: frozenset[str] = frozenset({"history", "user"})
 
 
+def _check_control_source(task_id: str, source: str, split: str) -> None:
+    if split == "control" and source not in CONTROL_SOURCES:
+        raise ValueError(f"{source} tasks never control: {task_id}")
+
+
 class _Strict(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
 
@@ -42,6 +47,11 @@ class TaskMeta(_Strict):
     visible_check: str | None = None
     created: date
 
+    @model_validator(mode="after")
+    def _control_needs_a_trusted_source(self) -> Self:
+        _check_control_source(self.id, self.source, self.split)
+        return self
+
 
 class LockedTask(_Strict):
     """One task's entry in the lock: its split never changes once recorded."""
@@ -53,8 +63,7 @@ class LockedTask(_Strict):
 
     @model_validator(mode="after")
     def _control_needs_a_trusted_source(self) -> Self:
-        if self.split == "control" and self.source not in CONTROL_SOURCES:
-            raise ValueError(f"{self.source} tasks never control: {self.id}")
+        _check_control_source(self.id, self.source, self.split)
         return self
 
 
@@ -81,6 +90,12 @@ class SuiteLock(_Strict):
     salt_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
     fractions: SplitFractions
     tasks: tuple[LockedTask, ...] = ()
+
+    @model_validator(mode="after")
+    def _salt_matches_digest(self) -> Self:
+        if f"sha256:{hashlib.sha256(bytes.fromhex(self.salt)).hexdigest()}" != self.salt_digest:
+            raise ValueError("suite.lock salt does not match its digest")
+        return self
 
     @model_validator(mode="after")
     def _unique_ids(self) -> Self:

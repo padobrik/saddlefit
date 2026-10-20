@@ -9,7 +9,7 @@ from pydantic import ValidationError
 
 from saddlefit.config import SplitsConfig
 from saddlefit.tasks import splits as splits_module
-from saddlefit.tasks.models import LockedTask, Source, SplitFractions, SuiteLock
+from saddlefit.tasks.models import LockedTask, Source, SplitFractions, SuiteLock, TaskMeta
 from saddlefit.tasks.splits import (
     SplitError,
     add_task,
@@ -149,3 +149,25 @@ def test_replacement_hash_is_validated() -> None:
     lock = add_task(new_lock(SplitsConfig()), "a", "history", HASH)
     with pytest.raises(ValidationError):
         add_task(lock, "a", "history", "not-a-hash")
+
+
+def test_task_meta_rejects_control_for_generated_tasks() -> None:
+    meta = {
+        "schema_version": 1,
+        "id": "t",
+        "source": "generated",
+        "type": "bugfix",
+        "split": "control",
+        "repo": {"base_commit": "3f2a9c1"},
+        "created": "2026-10-21",
+    }
+    with pytest.raises(ValidationError, match="never control"):
+        TaskMeta.model_validate(meta)
+    TaskMeta.model_validate({**meta, "source": "history"})
+
+
+def test_lock_rejects_a_salt_that_does_not_match_its_digest() -> None:
+    data = new_lock(SplitsConfig()).model_dump()
+    data["salt"] = "33" * 32
+    with pytest.raises(ValidationError, match="digest"):
+        SuiteLock.model_validate(data)
