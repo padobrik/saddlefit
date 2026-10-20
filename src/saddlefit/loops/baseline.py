@@ -38,6 +38,8 @@ from saddlefit.tools.builtin import TOOL_NAMES, Toolbox
 
 BASELINE_SPLITS: frozenset[str] = frozenset({"train", "held_out"})  # never control (B10)
 ENV_ERROR_RETRIES = 1
+# One reply, reasoning included; bounds the latency of a single model call.
+MAX_REPLY_TOKENS = 4096
 
 
 @dataclass(frozen=True)
@@ -213,6 +215,7 @@ class BaselineRunner:
                             temperature=self.config.student.temperature,
                             seed=seed,
                             tool_mode=self.tool_mode,
+                            max_tokens=MAX_REPLY_TOKENS,
                         ),
                         recorder=_Recorder(writer),
                         visible_check=meta.visible_check,

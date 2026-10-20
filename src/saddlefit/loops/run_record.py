@@ -24,7 +24,8 @@ def run_signals(
         return RunSignals(check_passed=False, env_error=True)
     return RunSignals(
         check_passed=verdict.passed,
-        env_error=verdict.env_error is not None,
+        # the model runner failing is an environment failure: excluded and rerun (B9)
+        env_error=verdict.env_error is not None or result.stop_reason == "provider_error",
         tampered=bool(verdict.tampered),
         hit_step_limit=result.stop_reason == "step_limit",
         hit_time_limit=result.stop_reason == "time_limit",
