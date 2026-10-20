@@ -168,6 +168,7 @@ def test_task_meta_rejects_control_for_generated_tasks() -> None:
 
 def test_lock_rejects_a_salt_that_does_not_match_its_digest() -> None:
     data = new_lock(SplitsConfig()).model_dump()
-    data["salt"] = "33" * 32
+    salt = data["salt"]
+    data["salt"] = ("0" if salt[0] != "0" else "1") + salt[1:]  # always differs by one digit
     with pytest.raises(ValidationError, match="digest"):
         SuiteLock.model_validate(data)

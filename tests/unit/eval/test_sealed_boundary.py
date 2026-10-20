@@ -33,6 +33,15 @@ def imports_accessor(tree: ast.AST, package: str = "saddlefit") -> list[int]:
             hit = _names_accessor(module) or (
                 module == "saddlefit.eval" and any(a.name == "sealed" for a in node.names)
             )
+        elif isinstance(node, ast.Attribute):
+            # e.g. ev.sealed.SealedStore after `from .. import eval as ev`
+            hit = node.attr == "sealed"
+        elif isinstance(node, ast.Call):
+            # getattr(ev, "sealed") or importlib.import_module(".sealed", "saddlefit.eval")
+            hit = any(
+                isinstance(arg, ast.Constant) and arg.value in {"sealed", ".sealed"}
+                for arg in node.args
+            )
         elif isinstance(node, ast.Constant) and isinstance(node.value, str):
             hit = ACCESSOR in node.value  # e.g. importlib.import_module("saddlefit.eval.sealed")
         else:
@@ -85,6 +94,11 @@ def test_detector_catches_every_import_form(tmp_path: Path) -> None:
         "student/f.py": "from ..eval.sealed import SealedStore\n",
         "student/g.py": "from ..eval import sealed\n",
         "student/h.py": "from .. import eval as ev\nfrom ..eval import taxonomy\n",
+        "student/i.py": "from .. import eval as ev\nstore = ev.sealed.SealedStore\n",
+        "student/j.py": "import saddlefit.eval as ev\nmod = getattr(ev, 'sealed')\n",
+        "student/k.py": (
+            "import importlib\nm = importlib.import_module('.sealed', 'saddlefit.eval')\n"
+        ),
     }
     for name, text in samples.items():
         (tmp_path / name).parent.mkdir(parents=True, exist_ok=True)
@@ -96,4 +110,7 @@ def test_detector_catches_every_import_form(tmp_path: Path) -> None:
         "d.py",
         "student/f.py",
         "student/g.py",
+        "student/i.py",
+        "student/j.py",
+        "student/k.py",
     }
