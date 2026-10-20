@@ -7,8 +7,11 @@ limits, with an allowlisted environment and wall-clock timeouts per command and 
 
 from __future__ import annotations
 
+import contextlib
 import os
+import re
 import shlex
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -28,10 +31,79 @@ SANDBOX_ENV: dict[str, str] = {
 }
 TMP_SIZE = "512m"
 KILL_GRACE_S = 5
+HOST_MARGIN_S = 5
+OUTPUT_LIMIT_BYTES = 1_000_000
+MIN_NANO_CPUS = 10_000_000  # 0.01 CPU; Docker treats 0 as unlimited
+MIN_MEMORY_BYTES = 6 * 1024 * 1024  # Docker's minimum; 0 would mean unlimited
+_MEMORY = re.compile(r"^(?P<n>[0-9]+)(?P<unit>[bkmg]?)$")
+_UNITS = {"": 1, "b": 1, "k": 1024, "m": 1024**2, "g": 1024**3}
 
 
 class SandboxError(Exception):
     """The sandbox could not be created or used (an environment error)."""
+
+
+class _CappedOutput:
+    """Keeps the head and tail of a byte stream, counting what was dropped in between."""
+
+    def __init__(self, limit: int) -> None:
+        self._half = limit // 2
+        self._head = bytearray()
+        self._tail = bytearray()
+        self._dropped = 0
+        self.error: Exception | None = None
+
+    def add(self, chunk: bytes) -> None:
+        room = self._half - len(self._head)
+        if room > 0:
+            self._head += chunk[:room]
+            chunk = chunk[room:]
+        if not chunk:
+            return
+        self._tail += chunk
+        overflow = len(self._tail) - self._half
+        if overflow > 0:
+            del self._tail[:overflow]
+            self._dropped += overflow
+
+    def text(self) -> str:
+        head = self._head.decode("utf-8", errors="replace")
+        tail = self._tail.decode("utf-8", errors="replace")
+        if self._dropped:
+            return f"{head}\n[... {self._dropped} bytes of output truncated ...]\n{tail}"
+        return head + tail
+
+
+def _close(stream: Any) -> None:
+    """Close an exec stream and its HTTP response.
+
+    ``CancellableStream.close`` is a no-op once the stream is exhausted, and only closing
+    the response (the SDK keeps it on ``_response``) releases the upgraded socket.
+    """
+    for close in (
+        getattr(stream, "close", None),
+        getattr(getattr(stream, "_response", None), "close", None),
+    ):
+        if close is not None:
+            with contextlib.suppress(Exception):  # best effort: it may already be gone
+                close()
+
+
+def _drain(stream: Any, buffer: _CappedOutput) -> None:
+    try:
+        for chunk in stream:
+            buffer.add(chunk if isinstance(chunk, bytes) else str(chunk).encode())
+    except Exception as exc:  # reported by the caller as a SandboxError
+        buffer.error = exc
+    finally:
+        _close(stream)  # the SDK's stream holds an HTTP response open until closed
+
+
+def memory_bytes(value: str) -> int:
+    match = _MEMORY.match(value.lower())
+    if match is None:
+        raise SandboxError(f"invalid memory limit: {value!r}")
+    return int(match["n"]) * _UNITS[match["unit"]]
 
 
 @dataclass(frozen=True)
@@ -59,6 +131,13 @@ def container_options(
         raise SandboxError(f"workspace must be an absolute path: {workspace}")
     if not workspace.is_dir():
         raise SandboxError(f"workspace is not a directory: {workspace}")
+    nano_cpus = int(limits.cpus * 1_000_000_000)
+    if nano_cpus < MIN_NANO_CPUS:
+        raise SandboxError(
+            f"cpu limit too small, Docker would treat it as unlimited: {limits.cpus}"
+        )
+    if memory_bytes(limits.memory) < MIN_MEMORY_BYTES:
+        raise SandboxError(f"memory limit below Docker's 6m minimum: {limits.memory!r}")
     return {
         "command": ["sleep", "infinity"],
         "detach": True,
@@ -69,7 +148,7 @@ def container_options(
         "volumes": {str(workspace): {"bind": WORKDIR, "mode": "rw"}},
         "working_dir": WORKDIR,
         "environment": dict(SANDBOX_ENV),
-        "nano_cpus": int(limits.cpus * 1_000_000_000),
+        "nano_cpus": nano_cpus,
         "mem_limit": limits.memory,
         "memswap_limit": limits.memory,
         "pids_limit": limits.pids_limit,
@@ -137,7 +216,12 @@ class Sandbox:
         return max(0.0, self._deadline - self._clock())
 
     def exec(self, command: str, timeout_s: float) -> ExecResult:
-        """Run a shell command in ``/work``, bounded by its own and the run's time limit."""
+        """Run a shell command in ``/work``, bounded by its own and the run's time limit.
+
+        The in-container ``timeout`` is backed by a host-side deadline: a process that
+        escapes its group and holds the output pipe gets the whole container killed. Only
+        the first and last ``OUTPUT_LIMIT_BYTES / 2`` bytes of output are kept.
+        """
         if self._container is None:
             raise SandboxError("sandbox is not running")
         budget = min(timeout_s, self.remaining_s)
@@ -145,23 +229,53 @@ class Sandbox:
             return ExecResult(
                 exit_code=124, output="run time limit reached", timed_out=True, duration_s=0.0
             )
+        api = self._client.api
         started = self._clock()
         try:
-            code, raw = self._container.exec_run(
+            exec_id = api.exec_create(
+                self._container.id,
                 _timed_command(command, budget),
                 user=self._options["user"],
                 workdir=WORKDIR,
                 environment=dict(SANDBOX_ENV),
-            )
+            )["Id"]
+            stream = api.exec_start(exec_id, stream=True)
         except Exception as exc:
             raise SandboxError(f"exec failed: {shlex.quote(command)}: {exc}") from exc
-        output = raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else str(raw)
+
+        buffer = _CappedOutput(OUTPUT_LIMIT_BYTES)
+        reader = threading.Thread(target=_drain, args=(stream, buffer), daemon=True)
+        reader.start()
+        reader.join(budget + KILL_GRACE_S + HOST_MARGIN_S)
+        if reader.is_alive():
+            _close(stream)
+            self._kill_runaway()
+            reader.join(HOST_MARGIN_S)
+            return ExecResult(
+                exit_code=137,
+                output=buffer.text() + "\n[sandbox killed: command outlived its time limit]",
+                timed_out=True,
+                duration_s=self._clock() - started,
+            )
+        if buffer.error is not None:
+            raise SandboxError(f"exec failed: {shlex.quote(command)}: {buffer.error}")
+        try:
+            code = int(api.exec_inspect(exec_id)["ExitCode"])
+        except Exception as exc:
+            raise SandboxError(f"exec failed: {shlex.quote(command)}: {exc}") from exc
         duration = self._clock() - started
         # coreutils ``timeout`` exits 124, or 137 when it had to kill; 137 alone may be OOM.
         timed_out = code == 124 or (code == 137 and duration >= budget)
         return ExecResult(
-            exit_code=int(code), output=output, timed_out=timed_out, duration_s=duration
+            exit_code=code, output=buffer.text(), timed_out=timed_out, duration_s=duration
         )
+
+    def _kill_runaway(self) -> None:
+        container, self._container = self._container, None
+        try:
+            container.remove(force=True)
+        except Exception as exc:
+            raise SandboxError(f"cannot remove runaway sandbox container: {exc}") from exc
 
     def close(self) -> None:
         container, self._container = self._container, None
