@@ -5,9 +5,9 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Final, Literal
+from typing import Any, Final, Literal, Self, cast
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from ulid import ULID
 
 from saddlefit.storage.migrations import upgrade
@@ -23,13 +23,85 @@ class _Strict(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
 
 
+class ModelCallData(_Strict):
+    """One model call: token usage and what came back."""
+
+    step: int = Field(ge=1)
+    prompt_tokens: int = Field(ge=0)
+    completion_tokens: int = Field(ge=0)
+    tool_calls: tuple[str, ...] = ()
+    malformed: int = Field(default=0, ge=0)
+    repaired: bool = False
+
+
+class ToolCallData(_Strict):
+    """One tool execution; its output is not stored, only its size."""
+
+    name: str
+    ok: bool
+    output_chars: int = Field(ge=0)
+
+
+class CompactionData(_Strict):
+    dropped_outputs: int = Field(ge=0)
+
+
+class LoopWarningData(_Strict):
+    signature: str
+    stop: bool
+
+
+class FinishGateData(_Strict):
+    """The finish gate runs the task's VISIBLE check; its output is what the student saw."""
+
+    passed: bool
+    output: str
+
+
+class ErrorData(_Strict):
+    kind: str
+    message: str
+
+
+EventData = (
+    ModelCallData | ToolCallData | CompactionData | LoopWarningData | FinishGateData | ErrorData
+)
+
+# Each event type has exactly one payload shape; unknown keys are rejected, so nothing else
+# (hidden-check output in particular) can be written into a run record.
+EVENT_DATA: dict[str, type[_Strict]] = {
+    "model_call": ModelCallData,
+    "tool_call": ToolCallData,
+    "compaction": CompactionData,
+    "loop_warning": LoopWarningData,
+    "finish_gate": FinishGateData,
+    "error": ErrorData,
+}
+
+
 class RunEvent(_Strict):
-    """One step of a run."""
+    """One step of a run, with a payload typed by its event type."""
 
     schema_version: Literal[1]
     type: EventType
     time: datetime
-    data: dict[str, Any] = Field(default_factory=dict)
+    data: EventData
+
+    @model_validator(mode="before")
+    @classmethod
+    def _typed_payload(cls, value: Any) -> Any:
+        if isinstance(value, dict) and value.get("type") in EVENT_DATA:
+            payload = value.get("data", {})
+            if not isinstance(payload, _Strict):
+                payload = EVENT_DATA[value["type"]].model_validate(payload)
+            value = {**value, "data": payload}
+        return value
+
+    @model_validator(mode="after")
+    def _payload_matches_type(self) -> Self:
+        if not isinstance(self.data, EVENT_DATA[self.type]):
+            raise ValueError(f"{self.type} event needs a {EVENT_DATA[self.type].__name__} payload")
+        return self
 
 
 class ModelRef(_Strict):
@@ -80,6 +152,7 @@ class RunSummary(_Strict):
 
 
 def new_run_id() -> str:
+    """A new ULID: unique, and sortable by creation time."""
     return str(ULID())
 
 
@@ -87,6 +160,7 @@ class RunWriter:
     """Appends events to one run's JSONL file and closes it with a summary."""
 
     def __init__(self, runs_root: Path, run_id: str, *, now: datetime | None = None) -> None:
+        """Create ``runs/<date>/<run_id>.jsonl`` exclusively; refuse if it exists."""
         when = now or datetime.now(UTC)
         self.run_id = run_id
         self.path = runs_root / when.strftime("%Y-%m-%d") / f"{run_id}.jsonl"
@@ -99,30 +173,41 @@ class RunWriter:
         self._closed = False
 
     def _append(self, model: BaseModel) -> None:
+        """Write one JSON line; nothing may follow the summary."""
         if self._closed:
             raise RuntimeError(f"run {self.run_id} already has a summary")
         with self.path.open("a", encoding="utf-8") as fh:
             fh.write(model.model_dump_json() + "\n")
 
     def event(self, type: EventType, data: dict[str, Any] | None = None) -> None:
+        """Append an event; ``data`` must match the payload model for ``type``."""
         self._append(
             RunEvent(
                 schema_version=RUN_SCHEMA_VERSION,
                 type=type,
                 time=datetime.now(UTC),
-                data=data or {},
+                data=cast("EventData", EVENT_DATA[type].model_validate(data or {})),
             )
         )
 
     def finish(self, summary: RunSummary) -> None:
+        """Close the record with its summary line."""
         if summary.run_id != self.run_id:
             raise ValueError(f"summary is for run {summary.run_id}, not {self.run_id}")
         self._append(summary)
         self._closed = True
 
 
-def read_run(path: Path) -> tuple[list[RunEvent], RunSummary]:
-    """Read a run record, upgrading the previous schema version; the summary must be last."""
+class RestrictedRunError(PermissionError):
+    """A held-out or control run record was read outside ``saddlefit.eval`` (B10)."""
+
+
+# Only training runs may reach the tutor, the fast loop or reports in detail (B10).
+PUBLIC_SPLITS: Final = frozenset({"train"})
+
+
+def _read_run_any(path: Path) -> tuple[list[RunEvent], RunSummary]:
+    """Read any run record. Evaluator only: import it solely from ``saddlefit.eval``."""
     lines = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
     if not lines:
         raise ValueError(f"empty run record: {path}")
@@ -131,6 +216,20 @@ def read_run(path: Path) -> tuple[list[RunEvent], RunSummary]:
     if last.get("type") != "summary":
         raise ValueError(f"run record has no summary line: {path}")
     return [RunEvent.model_validate(e) for e in events], RunSummary.model_validate(last)
+
+
+def read_run(path: Path) -> tuple[list[RunEvent], RunSummary]:
+    """Read a training run record; held-out and control records are refused.
+
+    Their traces and per-task outcomes are visible only to the evaluator, which reads them
+    through ``saddlefit.eval.records`` and reports aggregates.
+    """
+    events, summary = _read_run_any(path)
+    if summary.split not in PUBLIC_SPLITS:
+        raise RestrictedRunError(
+            f"{summary.split} run records are read only by saddlefit.eval: {path.name}"
+        )
+    return events, summary
 
 
 def find_runs(runs_root: Path) -> list[Path]:
