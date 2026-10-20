@@ -54,6 +54,9 @@ _MIN_SECRET_LEN = 8
 # A field is a credential when one segment of its name is a credential term, or when it
 # is a "key" qualified by one of _KEY_QUALIFIERS. Names are split on non-alphanumerics and
 # camelCase, so "aws_secret_access_key" and "clientSecret" match but "max_tokens" does not.
+# Matching is deliberately conservative: harmless names with such a segment, for example
+# "token_count", "auth_method", "secret_santa" or "cookie_policy", are masked too. Losing a
+# harmless value in a log is preferred over leaking a credential.
 _CREDENTIAL_TERMS = frozenset(
     {
         "auth",
