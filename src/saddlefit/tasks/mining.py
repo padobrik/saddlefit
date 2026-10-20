@@ -177,7 +177,23 @@ def _overlay(repo: Path, ref: str, files: Sequence[str], dest: Path) -> None:
         if target.is_symlink():
             target.unlink()
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(content)
+        if _is_symlink_entry(repo, ref, rel):
+            # recreate the link (its blob is the target path), but only inside the snapshot
+            link_target = content.decode("utf-8", errors="surrogateescape")
+            resolved = (target.parent / link_target).resolve()
+            if PurePosixPath(link_target).is_absolute() or not resolved.is_relative_to(
+                dest.resolve()
+            ):
+                raise SnapshotError(f"{rel} links outside the snapshot")
+            target.symlink_to(link_target)
+        else:
+            target.write_bytes(content)
+
+
+def _is_symlink_entry(repo: Path, ref: str, rel: str) -> bool:
+    """Whether ``rel`` is committed as a symlink (git mode 120000) at ``ref``."""
+    entry = _git_bytes(repo, "ls-tree", ref, "--", rel).decode("utf-8", errors="replace")
+    return entry.startswith("120000 ")
 
 
 class SnapshotError(Exception):

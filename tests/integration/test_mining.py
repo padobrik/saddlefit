@@ -273,3 +273,45 @@ def test_deleted_test_data_rejects_the_commit(tmp_path: Path) -> None:
     (repo / "src" / "toykit" / "dates.py").write_text("X = 1\n")
     commit_all(repo, "fix: drop data")
     assert [r for _, r in iter_commits(repo, limit=1)] == ["test_deleted"]
+
+
+class Snapshots:
+    """Records each snapshot it is asked to test, for inspection after the check."""
+
+    def __init__(self) -> None:
+        self.seen: list[Path] = []
+
+    def run_tests(self, snapshot: Path, test_files: Sequence[str]) -> int:
+        link = snapshot / "tests" / "data" / "current.json"
+        self.seen.append(link)
+        assert link.is_symlink(), "test data symlink was flattened"
+        assert link.resolve().read_text(encoding="utf-8") == "2\n"
+        return 0 if len(self.seen) == 1 else 1
+
+
+def test_test_data_symlinks_stay_symlinks(tmp_path: Path) -> None:
+    repo = build(tmp_path / "repo")
+    data = repo / "tests" / "data"
+    data.mkdir()
+    (data / "v1.json").write_text("1\n", encoding="utf-8")
+    (data / "v2.json").write_text("2\n", encoding="utf-8")
+    (data / "current.json").symlink_to("v1.json")
+    commit_all(repo, "test: data v1")
+    (data / "current.json").unlink()
+    (data / "current.json").symlink_to("v2.json")
+    (repo / "tests" / "test_x.py").write_text("def test_x() -> None:\n    pass\n")
+    (repo / "src" / "toykit" / "x.py").write_text("X = 1\n")
+    commit_all(repo, "fix: point at v2")
+    candidate = next(c for c, _ in iter_commits(repo, limit=1) if c is not None)
+    assert "tests/data/current.json" in candidate.test_data
+    assert check_candidate(repo, candidate, Snapshots()) is None
+
+
+def test_test_data_symlinks_leaving_the_snapshot_are_rejected(tmp_path: Path) -> None:
+    repo = build(tmp_path / "repo")
+    (repo / "tests" / "data.json").symlink_to("/etc/hosts")
+    (repo / "tests" / "test_x.py").write_text("def test_x() -> None:\n    pass\n")
+    (repo / "src" / "toykit" / "x.py").write_text("X = 1\n")
+    commit_all(repo, "fix: link out")
+    candidate = next(c for c, _ in iter_commits(repo, limit=1) if c is not None)
+    assert check_candidate(repo, candidate, Scripted(0, 1)) == "snapshot_error"
