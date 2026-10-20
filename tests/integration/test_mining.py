@@ -20,6 +20,8 @@ from saddlefit.tasks.mining import (
 )
 
 pytestmark = pytest.mark.integration
+# Windows needs special rights to create symlinks, and git checks them out as plain files.
+POSIX_ONLY = pytest.mark.skipif(os.name == "nt", reason="symlinks need POSIX semantics")
 RUNNER = LocalRunner(python=sys.executable)
 
 
@@ -196,6 +198,7 @@ def test_inherited_git_dir_is_ignored(tmp_path: Path, monkeypatch: pytest.Monkey
     assert report.summary()["viable"] == 2
 
 
+@POSIX_ONLY
 def test_overlay_never_writes_through_a_symlink(tmp_path: Path) -> None:
     repo = build(tmp_path / "repo")
     source = repo / "src" / "toykit" / "numbers.py"
@@ -289,6 +292,7 @@ class Snapshots:
         return 0 if len(self.seen) == 1 else 1
 
 
+@POSIX_ONLY
 def test_test_data_symlinks_stay_symlinks(tmp_path: Path) -> None:
     repo = build(tmp_path / "repo")
     data = repo / "tests" / "data"
@@ -307,6 +311,7 @@ def test_test_data_symlinks_stay_symlinks(tmp_path: Path) -> None:
     assert check_candidate(repo, candidate, Snapshots()) is None
 
 
+@POSIX_ONLY
 def test_test_data_symlinks_leaving_the_snapshot_are_rejected(tmp_path: Path) -> None:
     repo = build(tmp_path / "repo")
     (repo / "tests" / "data.json").symlink_to("/etc/hosts")
@@ -317,6 +322,7 @@ def test_test_data_symlinks_leaving_the_snapshot_are_rejected(tmp_path: Path) ->
     assert check_candidate(repo, candidate, Scripted(0, 1)) == "snapshot_error"
 
 
+@POSIX_ONLY
 def test_a_symlink_loop_is_a_snapshot_error_not_a_crash(tmp_path: Path) -> None:
     repo = build(tmp_path / "repo")
     data = repo / "tests" / "data"
