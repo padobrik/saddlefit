@@ -1,5 +1,6 @@
 import contextlib
 import sys
+import time
 
 import pytest
 from hypothesis import given
@@ -167,3 +168,25 @@ def test_closing_fence_must_use_the_same_character() -> None:
     text = '{not_json}\n```\n~~~\n{"tool": "write_file", "args": {"content": "ok"}}\n```\n'
     _, args, _ = parse_json_tool_call(text, [WRITE])
     assert args["content"] == "ok"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        '{placeholder} then {"tool": "write_file", "args": {"content": "ok"}}',
+        '```\n{not: json}\n```\n{"tool": "write_file", "args": {"content": "ok"}}',
+        '{ it\'s here: {"tool": "write_file", "args": {"content": "ok"}}',
+    ],
+    ids=["prose-placeholder", "invalid-fence-first", "apostrophe-in-prose"],
+)
+def test_later_valid_object_is_found(text: str) -> None:
+    _, args, _ = parse_json_tool_call(text, [WRITE])
+    assert args["content"] == "ok"
+
+
+def test_many_unmatched_braces_stay_linear() -> None:
+    text = "{" * 50_000 + ' {"tool": "write_file", "args": {"content": "ok"}}'
+    started = time.perf_counter()
+    _, args, _ = parse_json_tool_call(text, [WRITE])
+    assert args["content"] == "ok"
+    assert time.perf_counter() - started < 2.0
