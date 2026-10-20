@@ -1,3 +1,4 @@
+import os
 import stat
 from pathlib import Path
 
@@ -43,6 +44,7 @@ def test_canaries_are_unique_and_listed(tmp_path: Path) -> None:
     assert SealedStore(tmp_path / "absent").all_canaries() == frozenset()
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits do not exist on Windows")
 def test_files_are_private(tmp_path: Path) -> None:
     store = seal(tmp_path)
     assert stat.S_IMODE((tmp_path / "fix-0001").stat().st_mode) == 0o700
