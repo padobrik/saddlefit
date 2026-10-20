@@ -10,7 +10,6 @@ from __future__ import annotations
 import os
 import re
 import subprocess
-import tarfile
 import tempfile
 from pathlib import Path
 from typing import Final
@@ -21,7 +20,13 @@ from saddlefit.harness.loop_config import default_loop_config, dump_loop_config
 
 MAIN: Final = "main"
 _AUTHOR = ("saddlefit", "saddlefit@localhost.invalid")
-_PROPOSAL_ID = re.compile(r"^[0-9A-Za-z][0-9A-Za-z._-]{0,63}$")
+# Every name that reaches git's argv starts with a letter or digit, so none reads as an option.
+_PROPOSAL_ID = re.compile(r"[0-9A-Za-z][0-9A-Za-z._-]{0,63}")
+_REF = re.compile(r"[0-9A-Za-z][0-9A-Za-z._/^~-]{0,127}")  # names and revisions like main~1
+_COMMIT = re.compile(r"[0-9a-f]{7,64}")
+# Regular files only: a symlink could point a skill at anything on the host.
+_MODE_LINE = re.compile(r"^(?:new file mode|new mode) (\d+)$", re.MULTILINE)
+_FILE_MODES: Final = frozenset({"100644", "100755"})
 
 DEFAULT_FILES: dict[str, str] = {
     "systemprompt.md": "You are a careful software engineer. Solve the task, then run its check.\n",
@@ -36,11 +41,19 @@ class HarnessStoreError(Exception):
     """A git operation on the harness store failed or was refused."""
 
 
+def _checked(pattern: re.Pattern[str], value: str, what: str) -> str:
+    if not pattern.fullmatch(value):
+        raise HarnessStoreError(f"invalid {what}: {value!r}")
+    return value
+
+
 class HarnessStore:
+    """A git repository of harness files; every change is a commit (B3)."""
+
     def __init__(self, path: Path) -> None:
         self.path = path
 
-    def _git(self, *args: str, stdin: str | None = None) -> str:
+    def _git(self, *args: str, stdin: str | None = None, index: Path | None = None) -> str:
         env = {
             "PATH": os.environ.get("PATH", ""),
             "HOME": str(self.path),
@@ -52,6 +65,8 @@ class HarnessStore:
             "GIT_COMMITTER_NAME": _AUTHOR[0],
             "GIT_COMMITTER_EMAIL": _AUTHOR[1],
         }
+        if index is not None:
+            env["GIT_INDEX_FILE"] = str(index)
         result = subprocess.run(  # noqa: S603 - fixed git argv, no shell
             ["git", "-c", "core.hooksPath=/dev/null", *args],  # noqa: S607
             cwd=self.path,
@@ -81,12 +96,15 @@ class HarnessStore:
         return self.head()
 
     def head(self, ref: str = MAIN) -> str:
-        return self._git("rev-parse", ref)
+        """The commit SHA that ``ref`` points to."""
+        return self._git("rev-parse", "--verify", "--quiet", _checked(_REF, ref, "ref"))
 
     def propose(self, proposal_id: str, patch: str, message: str) -> str:
         """Commit ``patch`` on ``candidate/<id>`` from ``main``; return the candidate SHA."""
-        if not _PROPOSAL_ID.match(proposal_id):
-            raise HarnessStoreError(f"invalid proposal id: {proposal_id!r}")
+        _checked(_PROPOSAL_ID, proposal_id, "proposal id")
+        modes = set(_MODE_LINE.findall(patch)) - _FILE_MODES
+        if modes:
+            raise HarnessStoreError(f"patch adds a symlink or other special file (modes {modes})")
         paths = diff_paths(patch)
         if not paths:
             raise HarnessStoreError("patch changes no files")
@@ -110,28 +128,35 @@ class HarnessStore:
 
     def accept(self, proposal_id: str) -> str:
         """Merge the candidate into ``main``; return the new ``main`` SHA."""
-        branch = f"candidate/{proposal_id}"
+        branch = f"candidate/{_checked(_PROPOSAL_ID, proposal_id, 'proposal id')}"
         self._git("merge", "--quiet", "--no-ff", "-m", f"accept {proposal_id}", branch)
         self._git("branch", "-d", branch)
         return self.head()
 
     def reject(self, proposal_id: str) -> None:
-        self._git("branch", "-D", f"candidate/{proposal_id}")
+        """Drop the candidate branch; ``main`` is untouched."""
+        self._git("branch", "-D", f"candidate/{_checked(_PROPOSAL_ID, proposal_id, 'proposal id')}")
 
     def prune(self, commit: str, reason: str) -> str:
         """Revert an accepted change on ``main``, recording why; return the new SHA."""
+        _checked(_COMMIT, commit, "commit")
         self._git("revert", "--no-edit", "-m", "1", commit)
         self._git("commit", "--quiet", "--amend", "-m", f"prune {commit[:12]}\n\nreason: {reason}")
         return self.head()
 
     def tag(self, name: str, ref: str = MAIN) -> None:
-        self._git("tag", name, ref)
+        """Tag ``ref``, for example the harness a release was measured with."""
+        self._git("tag", _checked(_REF, name, "tag name"), _checked(_REF, ref, "ref"))
 
     def export(self, ref: str, dest: Path) -> None:
-        """Write the harness files at ``ref`` into ``dest`` (no .git)."""
+        """Write the harness files at ``ref`` into ``dest`` (no .git).
+
+        A temporary index is checked out instead of ``git archive``, which would honour
+        ``export-ignore`` and let a committed ``.gitattributes`` hide files.
+        """
+        _checked(_REF, ref, "ref")
         dest.mkdir(parents=True, exist_ok=True)
-        with tempfile.TemporaryDirectory() as tmp:
-            archive = Path(tmp) / "harness.tar"
-            self._git("archive", "--format=tar", f"--output={archive}", ref)
-            with tarfile.open(archive) as tar:
-                tar.extractall(dest, filter="data")
+        with tempfile.TemporaryDirectory(prefix="saddlefit-harness-index-") as tmp:
+            index = Path(tmp) / "index"
+            self._git("read-tree", ref, index=index)
+            self._git("checkout-index", "--all", f"--prefix={dest}{os.sep}", index=index)

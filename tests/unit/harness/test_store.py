@@ -111,3 +111,48 @@ def test_tag_and_export(store: HarnessStore, tmp_path: Path) -> None:
     store.export("fit-2026-10-21-1", out)
     assert (out / "EXPERIENCE.md").read_text() == "# Lessons (fitted)\n"
     assert not (out / ".git").exists()
+
+
+@pytest.mark.parametrize("bad", ["-x", "--upload-pack=evil", "a b", "x\n", ""])
+def test_ids_names_and_commits_that_could_be_git_options_are_refused(
+    store: HarnessStore, bad: str
+) -> None:
+    with pytest.raises(HarnessStoreError, match="invalid"):
+        store.propose(bad, LESSON, "x")
+    with pytest.raises(HarnessStoreError, match="invalid"):
+        store.accept(bad)
+    with pytest.raises(HarnessStoreError, match="invalid"):
+        store.reject(bad)
+    with pytest.raises(HarnessStoreError, match="invalid"):
+        store.tag(bad)
+    with pytest.raises(HarnessStoreError, match="invalid"):
+        store.prune(bad, "reason")
+
+
+def test_symlinks_are_refused(store: HarnessStore) -> None:
+    link = (
+        "diff --git a/skills/leak b/skills/leak\nnew file mode 120000\n"
+        "--- /dev/null\n+++ b/skills/leak\n@@ -0,0 +1 @@\n+/etc/passwd\n"
+        "\\ No newline at end of file\n"
+    )
+    with pytest.raises(HarnessStoreError, match="symlink"):
+        store.propose("p-link", link, "link")
+    assert (
+        "candidate/p-link"
+        not in subprocess.run(
+            ["git", "branch", "--list"], cwd=store.path, capture_output=True, text=True, check=True
+        ).stdout
+    )
+
+
+def test_export_ignores_export_ignore_attributes(store: HarnessStore, tmp_path: Path) -> None:
+    hide = (
+        "diff --git a/skills/.gitattributes b/skills/.gitattributes\nnew file mode 100644\n"
+        "--- /dev/null\n+++ b/skills/.gitattributes\n@@ -0,0 +1 @@\n+* export-ignore\n"
+    )
+    store.propose("p-hide", hide + NEW_SKILL, "hide")
+    store.accept("p-hide")
+    dest = tmp_path / "out"
+    store.export("main", dest)
+    assert (dest / "skills" / "pydantic" / "SKILL.md").is_file()
+    assert (dest / "skills" / ".gitattributes").is_file()
