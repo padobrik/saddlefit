@@ -1,4 +1,5 @@
 import contextlib
+import json
 import os
 import stat
 import threading
@@ -284,3 +285,75 @@ def test_recording_output_resolves_the_task_under_the_lock(
     store.record_check_output("fix-0001", RUN_ID, "ok")
     with pytest.raises(SealedStoreError, match="invalid task id"):
         store.record_check_output("../x", RUN_ID, "x")
+
+
+def test_replace_never_lists_or_copies_check_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = seal(tmp_path)
+    store.record_check_output("fix-0001", RUN_ID, "first run")
+    real_iterdir = Path.iterdir
+
+    def no_listing_of_output(self: Path) -> Iterator[Path]:
+        assert self.name != "check_output", "the writer listed sealed check output"
+        return real_iterdir(self)
+
+    monkeypatch.setattr(Path, "iterdir", no_listing_of_output)
+    monkeypatch.setattr(sealing.shutil, "copy2", None)
+    seal(tmp_path, replace=True)
+    monkeypatch.undo()
+    path = tmp_path / "fix-0001" / "check_output" / f"{RUN_ID}.txt"
+    assert path.read_text(encoding="utf-8") == "first run"
+
+
+def test_replace_interrupted_before_moving_output_recovers_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = seal(tmp_path)
+    store.record_check_output("fix-0001", RUN_ID, "first run")
+    real_rename = Path.rename
+
+    def dies_before_moving_output(self: Path, target: str | os.PathLike[str]) -> Path:
+        if self.name == "check_output":
+            raise KeyboardInterrupt  # the new task is installed; its output is still retired
+        return real_rename(self, target)
+
+    monkeypatch.setattr(Path, "rename", dies_before_moving_output)
+    with pytest.raises(KeyboardInterrupt):
+        seal(tmp_path, replace=True)
+    monkeypatch.undo()
+    seal(tmp_path, replace=True)
+    path = tmp_path / "fix-0001" / "check_output" / f"{RUN_ID}.txt"
+    assert path.read_text(encoding="utf-8") == "first run"
+    assert sorted(p.name for p in tmp_path.iterdir()) == [".fix-0001~lock", "fix-0001"]
+
+
+def test_sealed_task_records_its_schema_version(tmp_path: Path) -> None:
+    store = seal(tmp_path)
+    info = json.loads((tmp_path / "fix-0001" / "sealed.json").read_text(encoding="utf-8"))
+    assert info == {"schema_version": 1}
+    assert store.check_script("fix-0001").name == "check.sh"
+
+
+@pytest.mark.parametrize(
+    ("content", "message"),
+    [
+        (None, "missing or non-integer schema_version"),
+        ("{}", "missing or non-integer schema_version"),
+        ('{"schema_version": "1"}', "missing or non-integer schema_version"),
+        ('{"schema_version": true}', "missing or non-integer schema_version"),
+        ('{"schema_version": 2}', "schema_version 2 is not supported"),
+        ("not json", "unreadable sealed.json"),
+    ],
+)
+def test_reader_rejects_bad_schema_versions(
+    tmp_path: Path, content: str | None, message: str
+) -> None:
+    store = seal(tmp_path)
+    info = tmp_path / "fix-0001" / "sealed.json"
+    if content is None:
+        info.unlink()
+    else:
+        info.write_text(content, encoding="utf-8")
+    with pytest.raises(SealedStoreError, match=message):
+        store.check_script("fix-0001")

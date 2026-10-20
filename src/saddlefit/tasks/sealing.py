@@ -3,6 +3,10 @@
 Code outside ``saddlefit.eval`` may put sealed data in place but never read it back, so
 this module has no read operations. Each task gets a random canary, written to
 ``canary.txt`` and embedded as a comment in ``check.sh`` and in the hidden tests.
+
+Each task directory holds ``sealed.json`` with the layout's integer ``schema_version``
+(model ``SealedTaskInfo``, schema ``schemas/sealed-task.schema.json``); the reader in
+``saddlefit.eval.sealed`` refuses a missing or unsupported version.
 """
 
 from __future__ import annotations
@@ -17,7 +21,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
 
-from saddlefit.tasks.models import TASK_ID_PATTERN
+from saddlefit.tasks.models import SEALED_SCHEMA_VERSION, TASK_ID_PATTERN, SealedTaskInfo
 
 if sys.platform == "win32":
     import msvcrt
@@ -157,6 +161,8 @@ class SealedWriter:
         try:
             os.chmod(staging, 0o700)
             canary = new_canary()
+            info = SealedTaskInfo(schema_version=SEALED_SCHEMA_VERSION)
+            _write(staging / "sealed.json", info.model_dump_json() + "\n")
             _write(staging / "canary.txt", canary + "\n")
             _write(staging / "check.sh", _embed(check_sh, ".sh", canary), executable=True)
             for path, content in hidden_tests.items():
@@ -166,7 +172,6 @@ class SealedWriter:
                 _write(staging / "target_commit", target_commit.strip() + "\n")
             if reference_patch is not None:
                 _write(staging / "reference.patch", reference_patch)
-            _carry_check_output(task_dir, staging)
             _swap_into_place(staging, task_dir, retired)
         finally:
             if staging.exists():
@@ -188,16 +193,15 @@ def _checked_paths(hidden_tests: dict[str, str]) -> dict[str, PurePosixPath]:
     return rels
 
 
-def _carry_check_output(task_dir: Path, staging: Path) -> None:
-    """Copy the output of earlier hidden-check runs into the replacement task."""
-    source = task_dir / CHECK_OUTPUT_DIR
-    if source.is_symlink() or not source.is_dir():
-        return
-    target = staging / CHECK_OUTPUT_DIR
-    target.mkdir(mode=0o700)
-    for path in sorted(source.iterdir()):
-        if path.is_file() and not path.is_symlink():
-            shutil.copy2(path, target / path.name)
+def _move_check_output(retired: Path, task_dir: Path) -> None:
+    """Move earlier hidden-check output into the new task as one directory.
+
+    The writer stays write-only: it renames the directory, never lists or opens its files.
+    """
+    source = retired / CHECK_OUTPUT_DIR
+    target = task_dir / CHECK_OUTPUT_DIR
+    if source.is_dir() and not source.is_symlink() and not target.exists():
+        source.rename(target)
 
 
 def _recover(task_dir: Path, retired: Path) -> None:
@@ -205,7 +209,9 @@ def _recover(task_dir: Path, retired: Path) -> None:
     if not retired.exists():
         return
     if task_dir.exists():
-        shutil.rmtree(retired)  # the new task was installed; only cleanup was missed
+        # the new task was installed; its output move or the cleanup was missed
+        _move_check_output(retired, task_dir)
+        shutil.rmtree(retired)
     else:
         retired.rename(task_dir)  # the old task was never replaced
 
@@ -222,6 +228,9 @@ def _swap_into_place(staging: Path, task_dir: Path, retired: Path) -> None:
     except OSError:
         retired.rename(task_dir)
         raise
+    # a stop from here on leaves the new task in place and the output under the retired
+    # name; the next write moves it over (see _recover)
+    _move_check_output(retired, task_dir)
     shutil.rmtree(retired)
 
 

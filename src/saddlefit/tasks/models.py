@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 TASK_SCHEMA_VERSION: Final = 1
 SUITE_SCHEMA_VERSION: Final = 1
+SEALED_SCHEMA_VERSION: Final = 1
 
 Split = Literal["train", "held_out", "control"]
 Source = Literal["history", "mutation", "generated", "user"]
@@ -26,6 +27,12 @@ def _check_control_source(task_id: str, source: str, split: str) -> None:
 
 class _Strict(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
+
+
+class SealedTaskInfo(_Strict):
+    """``tasks/sealed/<id>/sealed.json``: the version of the sealed-task layout."""
+
+    schema_version: Literal[1]
 
 
 class RepoRef(_Strict):

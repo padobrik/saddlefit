@@ -7,11 +7,12 @@ and nowhere else.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 from pathlib import Path
 
-from saddlefit.tasks.models import TASK_ID_PATTERN
+from saddlefit.tasks.models import SEALED_SCHEMA_VERSION, TASK_ID_PATTERN
 from saddlefit.tasks.sealing import (
     CANARY_PREFIX,
     CHECK_OUTPUT_DIR,
@@ -26,6 +27,25 @@ _RUN_ID = re.compile(r"^[0-9A-HJKMNP-TV-Z]{26}$")  # a ULID
 
 class SealedStoreError(Exception):
     """A sealed task is missing or malformed."""
+
+
+def _check_format(task_dir: Path, task_id: str) -> None:
+    """Accept only a sealed-task layout this version can read (``sealed.json``)."""
+    try:
+        info = json.loads((task_dir / "sealed.json").read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        info = {}
+    except (OSError, ValueError) as exc:
+        raise SealedStoreError(f"unreadable sealed.json for task {task_id!r}") from exc
+    version = info.get("schema_version") if isinstance(info, dict) else None
+    # bool is an int subclass, so test the exact type
+    if type(version) is not int:
+        raise SealedStoreError(f"task {task_id!r}: missing or non-integer schema_version")
+    if version != SEALED_SCHEMA_VERSION:
+        raise SealedStoreError(
+            f"task {task_id!r}: schema_version {version} is not supported "
+            f"(current {SEALED_SCHEMA_VERSION})"
+        )
 
 
 class SealedStore:
@@ -46,6 +66,7 @@ class SealedStore:
         # is_dir() follows symlinks, and a linked task could point anywhere
         if path.is_symlink() or not path.is_dir():
             raise SealedStoreError(f"no sealed data for task {task_id!r}")
+        _check_format(path, task_id)
         return path
 
     def check_script(self, task_id: str) -> Path:
