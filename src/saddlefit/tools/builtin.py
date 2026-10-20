@@ -123,7 +123,7 @@ class Toolbox:
         try:
             result = self.sandbox.exec(command, timeout_s)
         except SandboxError as exc:  # a dead container is a failed call, not a crash
-            return ToolResult(ok=False, output=f"sandbox error: {exc}")
+            return ToolResult(ok=False, output=truncate(f"sandbox error: {exc}", self.max_chars))
         note = "\n[timed out]" if result.timed_out else ""
         output = truncate(result.output + note, self.max_chars)
         return ToolResult(ok=result.exit_code in ok_codes and not result.timed_out, output=output)

@@ -189,3 +189,14 @@ def test_staged_chunks_are_removed_when_staging_fails() -> None:
     result = Toolbox(sandbox).write_file("big.txt", "x" * 200_000)
     assert not result.ok
     assert sandbox.calls[-1].startswith("rm -f /tmp/saddlefit-")
+
+
+def test_long_sandbox_errors_are_capped() -> None:
+    class Noisy:
+        def exec(self, command: str, timeout_s: float) -> ExecResult:
+            raise SandboxError("x" * 10_000)
+
+    result = Toolbox(Noisy(), max_chars=200).call("list_dir", {})
+    assert not result.ok
+    assert len(result.output) < 300
+    assert "characters cut" in result.output
