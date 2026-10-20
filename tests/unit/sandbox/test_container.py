@@ -143,13 +143,18 @@ def test_user_is_never_root(monkeypatch: pytest.MonkeyPatch) -> None:
     assert sandbox_user() == "1000:1000"
 
 
+MARKER = b"timeout: sending signal TERM to command \xe2\x80\x98bash\xe2\x80\x99\n"
+
+
 def test_exec_streams_output_and_reads_the_exit_code(tmp_path: Path) -> None:
     client = FakeClient(
         [
             done(0, b"o", b"k\n"),
-            {"chunks": [], "code": 143, "elapsed": 5.2},  # TERM sent at the deadline
+            {"chunks": [b"partial\n", MARKER], "code": 143, "elapsed": 5.2},  # killed by TERM
+            {"chunks": [MARKER], "code": 0, "elapsed": 5.1},  # TERM handler exited 0
             {"chunks": [], "code": 124, "elapsed": 0.1},  # the command itself exited 124
             {"chunks": [b"Killed"], "code": 137, "elapsed": 0.1},  # OOM before the deadline
+            {"chunks": [MARKER], "code": 1, "elapsed": 0.1},  # a forged marker, early
         ]
     )
     clock = Clock()
@@ -162,6 +167,7 @@ def test_exec_streams_output_and_reads_the_exit_code(tmp_path: Path) -> None:
         assert call["cmd"] == [
             "timeout",
             "--preserve-status",
+            "--verbose",
             "--kill-after=5",
             "30",
             "bash",
@@ -170,10 +176,14 @@ def test_exec_streams_output_and_reads_the_exit_code(tmp_path: Path) -> None:
         ]
         assert call["environment"] == SANDBOX_ENV
         assert call["workdir"] == "/work"
-        assert sb.exec("sleep 99", timeout_s=5).timed_out
+        killed = sb.exec("sleep 99", timeout_s=5)
+        assert (killed.timed_out, killed.output) == (True, "partial\n")
+        handled = sb.exec("trap 'exit 0' TERM; sleep 99", timeout_s=5)
+        assert (handled.exit_code, handled.timed_out) == (0, True)
         early = sb.exec("exit 124", timeout_s=5)
         assert (early.exit_code, early.timed_out) == (124, False)
         assert not sb.exec("big", timeout_s=5).timed_out
+        assert not sb.exec("echo forged", timeout_s=5).timed_out
 
 
 def test_run_deadline_caps_each_command(tmp_path: Path) -> None:
@@ -182,7 +192,7 @@ def test_run_deadline_caps_each_command(tmp_path: Path) -> None:
     with Sandbox(client, "img", tmp_path, LIMITS, run_timeout_s=10, clock=clock) as sb:
         clock.now = 7.5
         sb.exec("x", timeout_s=60)
-        assert client.api.created[0]["cmd"][3] == "2"
+        assert client.api.created[0]["cmd"][4] == "2"
         clock.now = 10
         late = sb.exec("y", timeout_s=60)
     assert late.timed_out

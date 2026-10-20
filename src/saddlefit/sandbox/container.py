@@ -158,12 +158,22 @@ def container_options(
     }
 
 
+_TIMEOUT_NOTICE = re.compile(r"^timeout: sending signal \w+ to command .*(?:\n|$)", re.MULTILINE)
+
+
+def _strip_timeout_notice(output: str) -> tuple[str, bool]:
+    """Remove ``timeout --verbose`` notices; report whether any was present."""
+    stripped, count = _TIMEOUT_NOTICE.subn("", output)
+    return stripped, count > 0
+
+
 def _timed_command(command: str, timeout_s: float) -> list[str]:
     seconds = max(1, int(timeout_s))
     # --preserve-status: the command's own exit code survives, so "exit 124" is not a timeout
     return [
         "timeout",
         "--preserve-status",
+        "--verbose",  # announces the signal it sends: the timeout event itself
         f"--kill-after={KILL_GRACE_S}",
         str(seconds),
         "bash",
@@ -266,13 +276,12 @@ class Sandbox:
         except Exception as exc:
             raise SandboxError(f"exec failed: {shlex.quote(command)}: {exc}") from exc
         duration = self._clock() - started
-        # With --preserve-status a timed-out command dies by TERM (143) or KILL (137), or exits
-        # however it handles TERM; only a failure at or after the deadline is a timeout, so an
-        # early 137 stays an OOM kill and an early 124 stays the command's own exit code.
-        timed_out = code != 0 and duration >= budget
-        return ExecResult(
-            exit_code=code, output=buffer.text(), timed_out=timed_out, duration_s=duration
-        )
+        output, signalled = _strip_timeout_notice(buffer.text())
+        # Only the supervisor knows a deadline fired: it announces the signal it sends. The
+        # exit code is the command's own (--preserve-status), so a TERM handler exiting 0
+        # still timed out and an early 124 or 137 did not; an early forged notice is ignored.
+        timed_out = signalled and duration >= budget
+        return ExecResult(exit_code=code, output=output, timed_out=timed_out, duration_s=duration)
 
     def _kill_runaway(self) -> None:
         container, self._container = self._container, None

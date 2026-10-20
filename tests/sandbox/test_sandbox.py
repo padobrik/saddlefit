@@ -116,3 +116,10 @@ def test_process_escaping_its_group_does_not_block_the_host(sandbox: Sandbox) ->
     result = sandbox.exec("setsid sleep 120", timeout_s=2)
     assert result.timed_out
     assert result.duration_s < 2 + 5 + 5 + 5
+
+
+def test_a_term_handler_exiting_zero_still_counts_as_timeout(sandbox: Sandbox) -> None:
+    result = sandbox.exec("trap 'exit 0' TERM; sleep 30 & wait", timeout_s=2)
+    assert result.exit_code == 0
+    assert result.timed_out
+    assert "sending signal" not in result.output
