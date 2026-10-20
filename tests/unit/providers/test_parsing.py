@@ -30,7 +30,7 @@ READ = ToolSpec(
     [
         ('{"tool": "read_file", "args": {"path": "a.py"}}', False),
         ('```json\n{"tool": "read_file", "args": {"path": "a.py"}}\n```', False),
-        ('Sure! {"tool": "read_file", "args": {"path": "a.py",},} done', False),
+        ('Sure! {"tool": "read_file", "args": {"path": "a.py",},} done', True),
         ("{'tool': 'read_file', 'args': {'path': 'a.py'}}", True),
         ('{"tool": "read_file", "args": {"path": "it\'s {here}.py"}}', False),
     ],
@@ -87,3 +87,56 @@ def test_json_mode_schema_lists_each_tool() -> None:
 def test_parser_never_raises_unexpected_errors(text: str) -> None:
     with contextlib.suppress(MalformedToolCall):
         parse_json_tool_call(text, [READ])
+
+
+WRITE = ToolSpec(
+    name="write_file",
+    description="Write a file",
+    parameters={"type": "object", "properties": {"content": {"type": "string"}}},
+)
+
+
+def test_commas_inside_strings_are_preserved() -> None:
+    text = '{"tool": "write_file", "args": {"content": "x = {a: 1, }; y = [1, ]"}}'
+    _, args, repaired = parse_json_tool_call(text, [WRITE])
+    assert args["content"] == "x = {a: 1, }; y = [1, ]"
+    assert repaired is False
+
+
+def test_trailing_comma_removal_counts_as_repair() -> None:
+    _, args, repaired = parse_json_tool_call(
+        '{"tool": "write_file", "args": {"content": "a, }",},}', [WRITE]
+    )
+    assert args["content"] == "a, }"
+    assert repaired is True
+
+
+def test_backticks_inside_a_fenced_string() -> None:
+    text = '```json\n{"tool": "write_file", "args": {"content": "use ``` fences"}}\n````\n'
+    _, args, _ = parse_json_tool_call(text, [WRITE])
+    assert args["content"] == "use ``` fences"
+
+
+def test_falls_back_to_full_text_when_fence_has_no_object() -> None:
+    text = '```\nls -la\n```\n{"tool": "write_file", "args": {"content": "ok"}}'
+    _, args, _ = parse_json_tool_call(text, [WRITE])
+    assert args["content"] == "ok"
+
+
+def test_python_escapes_are_decoded_on_repair() -> None:
+    value, repaired = extract_json_object(r"{'content': 'line1\nline2\ttab'}")
+    assert value == {"content": "line1\nline2\ttab"}
+    assert repaired
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        '{"tool": "write_file", "args": {"n": ' + "9" * 5000 + "}}",
+        '{"tool": "write_file", "args": ' + "[" * 100_000 + "]" * 100_000 + "}",
+    ],
+    ids=["huge-integer", "deep-nesting"],
+)
+def test_pathological_numbers_and_nesting_are_malformed(text: str) -> None:
+    with pytest.raises(MalformedToolCall):
+        parse_json_tool_call(text, [WRITE])
