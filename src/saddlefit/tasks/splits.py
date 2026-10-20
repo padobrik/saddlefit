@@ -12,6 +12,7 @@ import hmac
 import secrets
 
 from saddlefit.config import SplitsConfig
+from saddlefit.errors import UserError
 from saddlefit.tasks.models import (
     CONTROL_SOURCES,
     SUITE_SCHEMA_VERSION,
@@ -25,7 +26,7 @@ from saddlefit.tasks.models import (
 _SCALE = float(2**64)
 
 
-class SplitError(Exception):
+class SplitError(UserError):
     """A split would change, or the lock and the configuration disagree."""
 
 
