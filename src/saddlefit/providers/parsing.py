@@ -15,8 +15,14 @@ from typing import Any
 
 from saddlefit.providers.base import ToolSpec
 
-# A fence opens and closes at line starts; the closer may be longer than the opener.
-_FENCE = re.compile(r"^(`{3,})[^\n]*\n(.*?)^\1`*[ \t]*$", re.DOTALL | re.MULTILINE)
+# CommonMark fences: ``` or ~~~, indented up to three spaces. The closer uses the same
+# character and is at least as long as the opener.
+_FENCE = re.compile(
+    r"^ {0,3}(?P<fence>(?P<ch>[`~])(?P=ch){2,})[^\n]*\n"
+    r"(?P<body>.*?)"
+    r"^ {0,3}(?P=fence)(?P=ch)*[ \t]*$",
+    re.DOTALL | re.MULTILINE,
+)
 _STRING_TOKEN = re.compile(r"(\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*')")
 _TRAILING_COMMA = re.compile(r",\s*([}\]])")
 _PY_LITERALS = {"True": "true", "False": "false", "None": "null"}
@@ -26,30 +32,56 @@ class MalformedToolCall(ValueError):
     """The reply holds no valid tool call, even after repair."""
 
 
-def _first_object(text: str) -> str | None:
-    """Return the first balanced ``{...}`` span, respecting strings."""
-    start = text.find("{")
-    while start != -1:
-        depth, in_str, quote, escaped = 0, False, "", False
-        for i in range(start, len(text)):
-            ch = text[i]
-            if in_str:
-                if escaped:
-                    escaped = False
-                elif ch == "\\":
-                    escaped = True
-                elif ch == quote:
-                    in_str = False
-            elif ch in "\"'":
-                in_str, quote = True, ch
-            elif ch == "{":
-                depth += 1
-            elif ch == "}":
-                depth -= 1
-                if depth == 0:
-                    return text[start : i + 1]
-        start = text.find("{", start + 1)
-    return None
+_VALUE_START = frozenset("{[,:")
+
+
+def _object_spans(text: str) -> list[tuple[int, int]]:
+    """Top-level balanced ``{...}`` spans, in order, found in one linear pass.
+
+    Strings are tracked only inside braces. A single quote opens a string only in a value
+    position (after ``{[,:``), so an apostrophe in prose does not swallow braces. Spans
+    nested in a balanced span are not returned, which keeps total work linear.
+    """
+    pairs: list[tuple[int, int]] = []
+    stack: list[int] = []
+    quote, escaped, last = "", False, ""
+    for i, ch in enumerate(text):
+        if quote:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == quote:
+                quote, last = "", ch
+            continue
+        if stack and (ch == '"' or (ch == "'" and last in _VALUE_START)):
+            quote = ch
+        elif ch == "{":
+            stack.append(i)
+        elif ch == "}" and stack:
+            pairs.append((stack.pop(), i + 1))
+        if not ch.isspace():
+            last = ch
+    pairs.sort()
+    spans: list[tuple[int, int]] = []
+    for begin, finish in pairs:
+        if not spans or begin >= spans[-1][1]:
+            spans.append((begin, finish))
+    return spans
+
+
+def _candidates(text: str) -> list[str]:
+    """Balanced objects from fenced bodies first, then from the whole text, deduplicated."""
+    seen: set[str] = set()
+    found: list[str] = []
+    bodies = [m.group("body") for m in _FENCE.finditer(text)] + [text]
+    for body in bodies:
+        for begin, finish in _object_spans(body):
+            span = body[begin:finish]
+            if span not in seen:
+                seen.add(span)
+                found.append(span)
+    return found
 
 
 def _outside_strings(candidate: str, fix: Callable[[str], str]) -> str:
@@ -94,38 +126,40 @@ def _loads(candidate: str) -> Any:
         raise MalformedToolCall(f"invalid JSON: {type(exc).__name__}") from exc
 
 
-def _find_candidate(text: str) -> str | None:
-    for fenced in _FENCE.finditer(text):
-        candidate = _first_object(fenced.group(2))
-        if candidate is not None:
-            return candidate
-    return _first_object(text)
+def _parse_candidate(candidate: str) -> tuple[Any, bool]:
+    errors: list[MalformedToolCall] = []
+    for attempt, repaired in (
+        (candidate, False),
+        (_strip_trailing_commas(candidate), True),
+        (_strip_trailing_commas(_repair(candidate)), True),
+    ):
+        try:
+            return _loads(attempt), repaired
+        except MalformedToolCall as exc:
+            errors.append(exc)
+    raise errors[0]
 
 
 def extract_json_object(text: str) -> tuple[dict[str, Any], bool]:
     """Extract one JSON object from model text; return it and whether repair was needed.
 
-    Valid JSON is parsed unchanged. Otherwise trailing commas outside strings are dropped,
-    and then Python-style literals are rewritten; either step counts as a repair.
+    Candidates come from fenced blocks first, then from the whole reply; the first that
+    parses wins. Valid JSON is parsed unchanged. Otherwise trailing commas outside strings
+    are dropped, and then Python-style literals are rewritten; either step is a repair.
     """
-    candidate = _find_candidate(text)
-    if candidate is None:
+    candidates = _candidates(text)
+    if not candidates:
         raise MalformedToolCall("no JSON object found")
-    attempts = (
-        (candidate, False),
-        (_strip_trailing_commas(candidate), True),
-        (_strip_trailing_commas(_repair(candidate)), True),
-    )
     errors: list[MalformedToolCall] = []
-    for attempt, repaired in attempts:
+    for candidate in candidates:
         try:
-            value = _loads(attempt)
+            value, repaired = _parse_candidate(candidate)
         except MalformedToolCall as exc:
             errors.append(exc)
             continue
-        if not isinstance(value, dict):
-            raise MalformedToolCall("top-level JSON value is not an object")
-        return value, repaired
+        if isinstance(value, dict):
+            return value, repaired
+        errors.append(MalformedToolCall("top-level JSON value is not an object"))
     raise errors[0]
 
 
