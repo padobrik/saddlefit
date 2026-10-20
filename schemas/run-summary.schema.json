@@ -1,0 +1,256 @@
+{
+  "$defs": {
+    "CheckResult": {
+      "additionalProperties": false,
+      "description": "The hidden check's exit code and duration only; its output stays sealed.",
+      "properties": {
+        "duration_s": {
+          "minimum": 0,
+          "title": "Duration S",
+          "type": "number"
+        },
+        "exit_code": {
+          "title": "Exit Code",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "exit_code",
+        "duration_s"
+      ],
+      "title": "CheckResult",
+      "type": "object"
+    },
+    "DiffStats": {
+      "additionalProperties": false,
+      "properties": {
+        "deletions": {
+          "minimum": 0,
+          "title": "Deletions",
+          "type": "integer"
+        },
+        "files": {
+          "minimum": 0,
+          "title": "Files",
+          "type": "integer"
+        },
+        "insertions": {
+          "minimum": 0,
+          "title": "Insertions",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "files",
+        "insertions",
+        "deletions"
+      ],
+      "title": "DiffStats",
+      "type": "object"
+    },
+    "ModelRef": {
+      "additionalProperties": false,
+      "properties": {
+        "digest": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Digest"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "runner": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Runner"
+        },
+        "tool_mode": {
+          "anyOf": [
+            {
+              "enum": [
+                "native",
+                "json"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tool Mode"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "title": "ModelRef",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "The last line of a run record.",
+  "properties": {
+    "attempt": {
+      "minimum": 1,
+      "title": "Attempt",
+      "type": "integer"
+    },
+    "check": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CheckResult"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "completion_tokens": {
+      "minimum": 0,
+      "title": "Completion Tokens",
+      "type": "integer"
+    },
+    "diff_stats": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/DiffStats"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "harness_commit": {
+      "title": "Harness Commit",
+      "type": "string"
+    },
+    "harness_tokens": {
+      "minimum": 0,
+      "title": "Harness Tokens",
+      "type": "integer"
+    },
+    "model": {
+      "$ref": "#/$defs/ModelRef"
+    },
+    "outcome": {
+      "enum": [
+        "pass",
+        "fail"
+      ],
+      "title": "Outcome",
+      "type": "string"
+    },
+    "primary_tag": {
+      "title": "Primary Tag",
+      "type": "string"
+    },
+    "prompt_tokens": {
+      "minimum": 0,
+      "title": "Prompt Tokens",
+      "type": "integer"
+    },
+    "run_id": {
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "title": "Run Id",
+      "type": "string"
+    },
+    "saddlefit_version": {
+      "title": "Saddlefit Version",
+      "type": "string"
+    },
+    "sandbox_image": {
+      "title": "Sandbox Image",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "seed": {
+      "title": "Seed",
+      "type": "integer"
+    },
+    "split": {
+      "enum": [
+        "train",
+        "held_out",
+        "control"
+      ],
+      "title": "Split",
+      "type": "string"
+    },
+    "steps": {
+      "minimum": 0,
+      "title": "Steps",
+      "type": "integer"
+    },
+    "suite_hash": {
+      "title": "Suite Hash",
+      "type": "string"
+    },
+    "tags": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Tags",
+      "type": "array"
+    },
+    "task_id": {
+      "title": "Task Id",
+      "type": "string"
+    },
+    "type": {
+      "const": "summary",
+      "title": "Type",
+      "type": "string"
+    },
+    "wall_seconds": {
+      "minimum": 0,
+      "title": "Wall Seconds",
+      "type": "number"
+    }
+  },
+  "required": [
+    "schema_version",
+    "type",
+    "run_id",
+    "task_id",
+    "split",
+    "attempt",
+    "model",
+    "harness_commit",
+    "saddlefit_version",
+    "suite_hash",
+    "sandbox_image",
+    "seed",
+    "steps",
+    "prompt_tokens",
+    "completion_tokens",
+    "harness_tokens",
+    "wall_seconds",
+    "outcome",
+    "primary_tag",
+    "tags"
+  ],
+  "title": "RunSummary",
+  "type": "object"
+}
