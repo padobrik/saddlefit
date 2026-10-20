@@ -10,8 +10,10 @@ import pytest
 from saddlefit import cli
 from saddlefit.cli import ExitCode
 from saddlefit.errors import IntegrityViolation
-from saddlefit.eval.leak_guard import GuardedClient, LeakDetected, LeakGuard
+from saddlefit.eval.leak_guard import GuardedClient, LeakDetected, LeakGuard, guard_for_suite
+from saddlefit.eval.sealed import SealedStore
 from saddlefit.providers.base import GenParams, Message, ModelInfo, ModelReply, ToolCall, ToolSpec
+from saddlefit.tasks.sealing import SealedWriter
 
 CANARY = "SADDLEFIT-CANARY-" + "ab" * 16
 OTHER = "SADDLEFIT-CANARY-" + "cd" * 16
@@ -196,3 +198,20 @@ def test_tool_call_ids_are_scanned() -> None:
     with pytest.raises(LeakDetected) as exc:
         LeakGuard(CANARIES).check([message])
     assert exc.value.locations == ("messages[0].tool_call_id",)
+
+
+def test_a_suite_guard_knows_every_sealed_canary(tmp_path: Path) -> None:
+    sealed = tmp_path / "sealed"
+    writer = SealedWriter(sealed)
+    for task_id in ("fix-0001", "fix-0002"):
+        writer.write_task(task_id, check_sh="true\n", hidden_tests={}, target_commit="abc1234")
+    (sealed / ".fix-0003.leftover").mkdir()  # a staging leftover is skipped, not fatal
+    store = SealedStore(sealed)
+    guard = guard_for_suite(sealed, tmp_path / "incidents.jsonl")
+    for task_id in ("fix-0001", "fix-0002"):
+        leaked = [Message(role="user", content=f"hint: {store.canary(task_id)}")]
+        with pytest.raises(LeakDetected) as exc:
+            guard.check(leaked, None)
+        assert exc.value.task_ids == (task_id,)
+    guard.check(CLEAN, None)
+    assert guard_for_suite(tmp_path / "missing").check(CLEAN, None) is None

@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from saddlefit.errors import IntegrityViolation
+from saddlefit.eval.sealed import SealedStore, SealedStoreError
 from saddlefit.providers.base import (
     GenParams,
     Message,
@@ -148,3 +149,16 @@ class GuardedClient:
         """Check the prompt, then forward it; a leak raises before anything is sent."""
         self._guard.check(messages, tools)
         return self._inner.chat(messages, tools, params)
+
+
+def guard_for_suite(sealed_root: Path, incident_log: Path | None = None) -> LeakGuard:
+    """A leak guard over every canary in ``tasks/sealed``, built inside ``saddlefit.eval``."""
+    store = SealedStore(sealed_root)
+    names = [p.name for p in sorted(sealed_root.iterdir())] if sealed_root.is_dir() else []
+    canaries = {}
+    for task_id in names:
+        try:
+            canaries[store.canary(task_id)] = task_id
+        except (SealedStoreError, OSError):  # staging leftovers, lock files, non-task entries
+            continue
+    return LeakGuard(canaries, incident_log=incident_log)
