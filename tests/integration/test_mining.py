@@ -235,3 +235,41 @@ def test_snapshot_errors_are_a_rejection_not_a_crash(toyrepo: Path) -> None:
         source_files=good.source_files,
     )
     assert check_candidate(toyrepo, broken, Scripted(0, 1)) == "snapshot_error"
+
+
+def test_changed_test_data_is_copied_into_the_parent(tmp_path: Path) -> None:
+    repo = build(tmp_path / "repo")
+    data = repo / "tests" / "data" / "expected.json"
+    data.parent.mkdir(parents=True)
+    data.write_text('{"answer": 1}\n', encoding="utf-8")
+    (repo / "tests" / "test_golden.py").write_text(
+        "import json, pathlib\n\n\ndef test_golden() -> None:\n"
+        "    raw = (pathlib.Path(__file__).parent / 'data' / 'expected.json').read_text()\n"
+        "    assert json.loads(raw)['answer'] == 1\n",
+        encoding="utf-8",
+    )
+    commit_all(repo, "test: golden data")
+    # the golden file and its test change together; the source change is cosmetic
+    data.write_text('{"answer": 2}\n', encoding="utf-8")
+    test = repo / "tests" / "test_golden.py"
+    test.write_text(test.read_text(encoding="utf-8").replace("== 1", "== 2"), encoding="utf-8")
+    src = repo / "src" / "toykit" / "numbers.py"
+    src.write_text(src.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+    commit_all(repo, "chore: update golden data")
+    candidate = next(c for c, _ in iter_commits(repo, limit=1) if c is not None)
+    assert candidate.test_data == ("tests/data/expected.json",)
+    assert candidate.test_files == ("tests/test_golden.py",)
+    # the parent's source passes the new test once the new data is there too
+    assert check_candidate(repo, candidate, RUNNER) == "passes_on_parent"
+
+
+def test_deleted_test_data_rejects_the_commit(tmp_path: Path) -> None:
+    repo = build(tmp_path / "repo")
+    data = repo / "tests" / "data.txt"
+    data.write_text("x\n", encoding="utf-8")
+    commit_all(repo, "test: add data")
+    data.unlink()
+    (repo / "tests" / "test_parse_iso.py").write_text("def test_x() -> None:\n    pass\n")
+    (repo / "src" / "toykit" / "dates.py").write_text("X = 1\n")
+    commit_all(repo, "fix: drop data")
+    assert [r for _, r in iter_commits(repo, limit=1)] == ["test_deleted"]

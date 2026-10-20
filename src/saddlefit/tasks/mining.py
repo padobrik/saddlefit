@@ -54,6 +54,8 @@ class Candidate:
     body: str
     test_files: tuple[str, ...]
     source_files: tuple[str, ...]
+    # non-Python files under the test patterns (golden files, fixtures, snapshots)
+    test_data: tuple[str, ...] = ()
 
 
 @dataclass
@@ -118,12 +120,16 @@ def iter_commits(
         sha, parents, stamp, subject, body, changes = record.split(_FIELD, 5)
         tests: list[str] = []
         sources: list[str] = []
+        data: list[str] = []
         deleted_test = False
         for line in changes.strip().splitlines():
             status, _, path = line.partition("\t")
             if is_test_path(path):
                 deleted_test = deleted_test or status.startswith("D")
                 tests.append(path)
+            elif matches_any(path, DEFAULT_TEST_PATTERNS):
+                deleted_test = deleted_test or status.startswith("D")
+                data.append(path)
             elif path.endswith(".py"):
                 sources.append(path)
         reason: Rejection | None = None
@@ -145,6 +151,7 @@ def iter_commits(
                 body=body.strip(),
                 test_files=tuple(sorted(tests)),
                 source_files=tuple(sorted(sources)),
+                test_data=tuple(sorted(data)),
             )
         out.append((candidate, reason))
     return out
@@ -184,7 +191,8 @@ def check_candidate(repo: Path, candidate: Candidate, runner: Runner) -> Rejecti
         after = Path(tmp) / "commit"
         try:
             _export(repo, candidate.parent, before)
-            _overlay(repo, candidate.sha, candidate.test_files, before)
+            # the commit's tests need the commit's test data, not the parent's
+            _overlay(repo, candidate.sha, candidate.test_files + candidate.test_data, before)
             _export(repo, candidate.sha, after)
         except (SnapshotError, OSError, subprocess.SubprocessError):
             return "snapshot_error"
