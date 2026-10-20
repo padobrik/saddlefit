@@ -10,6 +10,8 @@ from saddlefit.storage import migrations
 from saddlefit.storage.migrations import MigrationError, register, upgrade
 from saddlefit.storage.runs import (
     RUN_KIND,
+    ErrorData,
+    RunEvent,
     RunSummary,
     RunWriter,
     find_runs,
@@ -62,8 +64,8 @@ def isolated_registry(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_write_and_read_round_trip(tmp_path: Path) -> None:
     run_id = new_run_id()
     writer = RunWriter(tmp_path, run_id, now=NOW)
-    writer.event("model_call", {"prompt_tokens": 100})
-    writer.event("tool_call", {"name": "read_file"})
+    writer.event("model_call", {"step": 1, "prompt_tokens": 100, "completion_tokens": 9})
+    writer.event("tool_call", {"name": "read_file", "ok": True, "output_chars": 12})
     writer.finish(summary(run_id))
     assert writer.path == tmp_path / "2026-10-21" / f"{run_id}.jsonl"
     events, result = read_run(writer.path)
@@ -79,7 +81,7 @@ def test_nothing_after_the_summary(tmp_path: Path) -> None:
         writer.finish(summary(new_run_id()))
     writer.finish(summary(run_id))
     with pytest.raises(RuntimeError, match="already has a summary"):
-        writer.event("error")
+        writer.event("error", {"kind": "x", "message": "y"})
     with pytest.raises(FileExistsError):
         RunWriter(tmp_path, run_id, now=NOW)
 
@@ -95,7 +97,15 @@ def test_hidden_check_output_cannot_enter_a_run_record() -> None:
 def test_reader_requires_a_summary_last(tmp_path: Path) -> None:
     path = tmp_path / "r.jsonl"
     path.write_text(
-        json.dumps({"schema_version": 1, "type": "error", "time": NOW.isoformat()}) + "\n",
+        json.dumps(
+            {
+                "schema_version": 1,
+                "type": "error",
+                "time": NOW.isoformat(),
+                "data": {"kind": "x", "message": "y"},
+            }
+        )
+        + "\n",
         encoding="utf-8",
     )
     with pytest.raises(ValueError, match="no summary"):
@@ -155,3 +165,58 @@ def test_second_writer_for_the_same_run_is_refused_before_any_event(tmp_path: Pa
     assert first.path.exists()
     with pytest.raises(FileExistsError, match="already exists"):
         RunWriter(tmp_path, run_id, now=NOW)
+
+
+@pytest.mark.parametrize(
+    ("event_type", "data", "message"),
+    [
+        (
+            "finish_gate",
+            {"passed": False, "output": "1 failed", "hidden_output": "x"},
+            "hidden_output",
+        ),
+        (
+            "tool_call",
+            {"name": "bash", "ok": True, "output_chars": 3, "output": "secret"},
+            "output",
+        ),
+        ("model_call", {"step": 1}, "prompt_tokens"),
+    ],
+    ids=["extra-key-on-gate", "tool-output-not-stored", "missing-fields"],
+)
+def test_event_payloads_are_typed(
+    tmp_path: Path, event_type: str, data: dict[str, Any], message: str
+) -> None:
+    writer = RunWriter(tmp_path, new_run_id(), now=NOW)
+    with pytest.raises(ValidationError, match=message):
+        writer.event(event_type, data)  # type: ignore[arg-type]
+
+
+def test_payload_must_match_the_event_type() -> None:
+    record = {
+        "schema_version": 1,
+        "type": "compaction",
+        "time": NOW.isoformat(),
+        "data": {"kind": "x", "message": "y"},
+    }
+    with pytest.raises(ValidationError):
+        RunEvent.model_validate(record)
+    with pytest.raises(ValidationError, match="needs a CompactionData"):
+        RunEvent(
+            schema_version=1, type="compaction", time=NOW, data=ErrorData(kind="x", message="y")
+        )
+
+
+def test_typed_events_round_trip(tmp_path: Path) -> None:
+    run_id = new_run_id()
+    writer = RunWriter(tmp_path, run_id, now=NOW)
+    writer.event("finish_gate", {"passed": False, "output": "1 failed"})
+    writer.event("loop_warning", {"signature": "read_file:abc", "stop": True})
+    writer.event("compaction", {"dropped_outputs": 2})
+    writer.finish(summary(run_id))
+    events, _ = read_run(writer.path)
+    assert [type(e.data).__name__ for e in events] == [
+        "FinishGateData",
+        "LoopWarningData",
+        "CompactionData",
+    ]

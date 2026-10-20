@@ -24,6 +24,7 @@ def register(kind: str, from_version: int) -> Callable[[Migration], Migration]:
     """Register ``fn`` as the upgrade of ``kind`` from ``from_version`` to the next one."""
 
     def decorate(fn: Migration) -> Migration:
+        """Record ``fn`` for this kind and version; each step can be registered once."""
         steps = _REGISTRY.setdefault(kind, {})
         if from_version in steps:
             raise MigrationError(f"duplicate migration for {kind} v{from_version}")
