@@ -8,11 +8,9 @@ the host for trusted repositories or inside an evaluation container.
 
 from __future__ import annotations
 
-import io
 import os
 import re
 import subprocess
-import tarfile
 import tempfile
 from collections import Counter
 from collections.abc import Iterable, Sequence
@@ -36,6 +34,7 @@ Rejection = Literal[
     "test_deleted",
     "passes_on_parent",
     "fails_on_commit",
+    "snapshot_error",
     "runner_error",
 ]
 
@@ -73,17 +72,26 @@ class MiningReport:
         }
 
 
-def _git(repo: Path, *args: str) -> str:
+def _git_env(**extra: str) -> dict[str, str]:
+    """The environment for git: no inherited GIT_* variables, so ``cwd`` picks the repo."""
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    return {**env, **extra}
+
+
+def _git_bytes(repo: Path, *args: str, env: dict[str, str] | None = None) -> bytes:
+    # core.quotePath=false: non-ASCII paths come out as UTF-8, not C-quoted
     result = subprocess.run(  # noqa: S603 - fixed git argv
-        ["git", *args],  # noqa: S607
+        ["git", "-c", "core.quotePath=false", *args],  # noqa: S607
         cwd=repo,
-        env=env,
+        env=env or _git_env(),
         capture_output=True,
-        text=True,
         check=True,
     )
     return result.stdout
+
+
+def _git(repo: Path, *args: str) -> str:
+    return _git_bytes(repo, *args).decode("utf-8", errors="surrogateescape")
 
 
 def is_test_path(path: str, patterns: Iterable[str] = DEFAULT_TEST_PATTERNS) -> bool:
@@ -143,27 +151,30 @@ def iter_commits(
 
 
 def _export(repo: Path, ref: str, dest: Path) -> None:
-    archive = subprocess.run(  # noqa: S603
-        ["git", "archive", "--format=tar", ref],  # noqa: S607
-        cwd=repo,
-        capture_output=True,
-        check=True,
-    ).stdout
-    with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
-        tar.extractall(dest, filter="data")
+    """Materialize ``ref`` exactly as committed (``git archive`` would honour export-ignore)."""
+    dest.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="saddlefit-index-") as tmp:
+        env = _git_env(GIT_INDEX_FILE=str(Path(tmp) / "index"))
+        _git_bytes(repo, "read-tree", ref, env=env)
+        _git_bytes(repo, "checkout-index", "--all", f"--prefix={dest}{os.sep}", env=env)
 
 
 def _overlay(repo: Path, ref: str, files: Sequence[str], dest: Path) -> None:
     for rel in files:
-        content = subprocess.run(  # noqa: S603
-            ["git", "show", f"{ref}:{rel}"],  # noqa: S607
-            cwd=repo,
-            capture_output=True,
-            check=True,
-        ).stdout
+        content = _git_bytes(repo, "show", f"{ref}:{rel}")
         target = dest / PurePosixPath(rel)
+        # never write through a symlink: not the file itself, nor a directory above it
+        for ancestor in target.relative_to(dest).parents:
+            if ancestor != Path(".") and (dest / ancestor).is_symlink():
+                raise SnapshotError(f"{rel} lies under a symlinked directory")
+        if target.is_symlink():
+            target.unlink()
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(content)
+
+
+class SnapshotError(Exception):
+    """A snapshot of the parent or the commit could not be built safely."""
 
 
 def check_candidate(repo: Path, candidate: Candidate, runner: Runner) -> Rejection | None:
@@ -171,9 +182,12 @@ def check_candidate(repo: Path, candidate: Candidate, runner: Runner) -> Rejecti
     with tempfile.TemporaryDirectory(prefix="saddlefit-mine-") as tmp:
         before = Path(tmp) / "parent"
         after = Path(tmp) / "commit"
-        _export(repo, candidate.parent, before)
-        _overlay(repo, candidate.sha, candidate.test_files, before)
-        _export(repo, candidate.sha, after)
+        try:
+            _export(repo, candidate.parent, before)
+            _overlay(repo, candidate.sha, candidate.test_files, before)
+            _export(repo, candidate.sha, after)
+        except (SnapshotError, OSError, subprocess.SubprocessError):
+            return "snapshot_error"
         try:
             on_commit = runner.run_tests(after, candidate.test_files)
             if on_commit != 0:
@@ -219,7 +233,7 @@ def task_id_for(candidate: Candidate) -> str:
 
 def task_type_for(candidate: Candidate) -> str:
     """bugfix, feature or change, from a Conventional Commit prefix when there is one."""
-    prefix = candidate.subject.split(":", 1)[0].split("(", 1)[0].strip().lower()
+    prefix = candidate.subject.split(":", 1)[0].split("(", 1)[0].strip().rstrip("!").lower()
     return {"fix": "bugfix", "feat": "feature"}.get(prefix, "change")
 
 
