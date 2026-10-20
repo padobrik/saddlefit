@@ -84,7 +84,7 @@ def test_secrets_never_reach_log_output(log_stream: io.StringIO) -> None:
     lines = [json.loads(line) for line in output.splitlines()]
     assert [line["level"] for line in lines] == ["info", "warning", "error", "error"]
     assert lines[0]["message"] == f"calling tutor with key {REDACTED}"
-    assert lines[1]["headers"] == {"x-api-key": REDACTED, "auth": [REDACTED]}
+    assert lines[1]["headers"] == {"x-api-key": REDACTED, "auth": REDACTED}
     assert "401 for key [REDACTED]" in lines[3]["exception"]
 
 
@@ -106,7 +106,8 @@ def test_mapping_keys_and_objects_are_redacted(log_stream: io.StringIO) -> None:
     for secret in (ANTHROPIC, CUSTOM):
         assert secret not in output
     line = json.loads(output)
-    assert line["headers"] == {REDACTED: "present", "nested": {REDACTED: [1, 2.5, True, None]}}
+    # the secret key also names a credential ("...-secret-..."), so its value is masked too
+    assert line["headers"] == {REDACTED: REDACTED, "nested": {REDACTED: [1, 2.5, True, None]}}
     assert line["error"] == f"failed with {REDACTED}"
     assert line["count"] == 3
 
@@ -128,3 +129,30 @@ def test_values_under_sensitive_keys_are_masked(log_stream: io.StringIO) -> None
         "Authorization": REDACTED,
         "model": "qwen3:8b",
     }
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "api_token",
+        "auth_token",
+        "private_key",
+        "aws_secret_access_key",
+        "auth",
+        "credentials",
+        "clientSecret",
+        "X-Auth-Token",
+        "session.cookie",
+    ],
+)
+def test_composite_credential_names_are_masked(log_stream: io.StringIO, key: str) -> None:
+    logging.getLogger("saddlefit").info("call", extra={"fields": {key: "short1"}})
+    assert json.loads(log_stream.getvalue())["fields"] == {key: REDACTED}
+
+
+@pytest.mark.parametrize(
+    "key", ["max_tokens", "prompt_tokens", "author", "keyboard", "monkey", "tokenizer"]
+)
+def test_ordinary_names_are_not_masked(log_stream: io.StringIO, key: str) -> None:
+    logging.getLogger("saddlefit").info("call", extra={"fields": {key: 40}})
+    assert json.loads(log_stream.getvalue())["fields"] == {key: 40}

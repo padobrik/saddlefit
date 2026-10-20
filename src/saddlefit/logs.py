@@ -51,30 +51,36 @@ def _redact_quoted(match: re.Match[str]) -> str:
 
 _MIN_SECRET_LEN = 8
 
-# Field names whose values are masked whatever they look like (compared lowercased,
-# trimmed, with "-" read as "_").
-_SENSITIVE_FIELD_NAMES = frozenset(
+# A field is a credential when one segment of its name is a credential term, or when it
+# is a "key" qualified by one of _KEY_QUALIFIERS. Names are split on non-alphanumerics and
+# camelCase, so "aws_secret_access_key" and "clientSecret" match but "max_tokens" does not.
+_CREDENTIAL_TERMS = frozenset(
     {
-        "api_key",
-        "apikey",
-        "x_api_key",
+        "auth",
         "authorization",
-        "proxy_authorization",
+        "apikey",
+        "token",
+        "secret",
         "password",
         "passwd",
-        "secret",
-        "client_secret",
-        "token",
-        "access_token",
-        "refresh_token",
+        "pwd",
+        "credential",
+        "credentials",
         "cookie",
-        "set_cookie",
     }
 )
+_KEY_QUALIFIERS = frozenset({"api", "private", "secret", "access", "signing", "encryption"})
+_CAMEL_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
 
 
 def _is_sensitive_field(key: object) -> bool:
-    return isinstance(key, str) and key.strip().lower().replace("-", "_") in _SENSITIVE_FIELD_NAMES
+    if not isinstance(key, str):
+        return False
+    words = _CAMEL_BOUNDARY.sub("_", key.strip())
+    segments = [seg for seg in re.split(r"[^a-z0-9]+", words.lower()) if seg]
+    if any(seg in _CREDENTIAL_TERMS for seg in segments):
+        return True
+    return "key" in segments and any(seg in _KEY_QUALIFIERS for seg in segments)
 
 
 def _secret_values(env: Mapping[str, str]) -> list[str]:
