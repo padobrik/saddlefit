@@ -62,9 +62,17 @@ with the workflow token. Close and reopen the release PR once to start the check
 
 ## Persisted formats
 
-Every persisted format carries an integer `schema_version`. A change to a persisted model
-bumps it and ships a migration in `src/saddlefit/storage/migrations/` with tests. Readers
-accept the current and the previous version.
+Every persisted format carries an integer `schema_version`, starting at 1. A change to a
+**released** format (one that a `vX.Y.Z` tag contains) bumps it and ships a migration in
+`src/saddlefit/storage/migrations/` with tests; readers accept the current and the previous
+version. A format no release has shipped yet keeps its version and needs no migration
+([ADR 0002](docs/adr/0002-schema-versions-before-release.md)).
+
+## Diagrams
+
+The README diagrams are generated. Edit the sources in `docs/diagrams/src/*.jsx`, then run
+`node docs/diagrams/render.mjs` (Node 18+; it fetches a pinned esbuild through `npx`) and
+commit both the source and the regenerated `*-light.svg` and `*-dark.svg` files.
 
 ## Architecture decisions
 

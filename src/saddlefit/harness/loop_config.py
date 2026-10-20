@@ -77,10 +77,12 @@ class LoopConfigError(Exception):
 
 
 def default_loop_config() -> LoopConfig:
+    """The B6 example values: what a fresh harness store starts with."""
     return LoopConfig(schema_version=LOOP_SCHEMA_VERSION)
 
 
 def load_loop_config(path: Path) -> LoopConfig:
+    """Read and validate ``loop.yaml``; strict types, no duplicate or unknown keys."""
     try:
         raw = safe_load_unique(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
@@ -94,6 +96,7 @@ def load_loop_config(path: Path) -> LoopConfig:
 
 
 def dump_loop_config(loop: LoopConfig) -> str:
+    """Serialize ``loop.yaml`` in field order."""
     return yaml.safe_dump(loop.model_dump(mode="json"), sort_keys=False)
 
 
@@ -102,6 +105,7 @@ def clamp(loop: LoopConfig, config: Config) -> tuple[LoopConfig, list[str]]:
     notes: list[str] = []
 
     def limit(name: str, value: int, ceiling: int) -> int:
+        """Cap ``value`` at ``ceiling`` and note the change."""
         if value > ceiling:
             notes.append(f"{name} {value} clamped to {ceiling}")
             return ceiling
