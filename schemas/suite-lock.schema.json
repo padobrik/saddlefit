@@ -1,0 +1,116 @@
+{
+  "$defs": {
+    "LockedTask": {
+      "additionalProperties": false,
+      "description": "One task's entry in the lock: its split never changes once recorded.",
+      "properties": {
+        "content_hash": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Content Hash",
+          "type": "string"
+        },
+        "id": {
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "source": {
+          "enum": [
+            "history",
+            "mutation",
+            "generated",
+            "user"
+          ],
+          "title": "Source",
+          "type": "string"
+        },
+        "split": {
+          "enum": [
+            "train",
+            "held_out",
+            "control"
+          ],
+          "title": "Split",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "split",
+        "source",
+        "content_hash"
+      ],
+      "title": "LockedTask",
+      "type": "object"
+    },
+    "SplitFractions": {
+      "additionalProperties": false,
+      "description": "Fractions recorded at init; later configs may not change them.",
+      "properties": {
+        "control": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Control",
+          "type": "number"
+        },
+        "held_out": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Held Out",
+          "type": "number"
+        },
+        "train": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Train",
+          "type": "number"
+        }
+      },
+      "required": [
+        "train",
+        "held_out",
+        "control"
+      ],
+      "title": "SplitFractions",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "``tasks/suite.lock``: task IDs, content hashes, splits and the split salt.",
+  "properties": {
+    "fractions": {
+      "$ref": "#/$defs/SplitFractions"
+    },
+    "salt": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Salt",
+      "type": "string"
+    },
+    "salt_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Salt Digest",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "tasks": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/LockedTask"
+      },
+      "title": "Tasks",
+      "type": "array"
+    }
+  },
+  "required": [
+    "schema_version",
+    "salt",
+    "salt_digest",
+    "fractions"
+  ],
+  "title": "SuiteLock",
+  "type": "object"
+}
