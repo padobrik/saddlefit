@@ -13,6 +13,8 @@ from typing import Final, Literal, Self
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
+from saddlefit.errors import UserError
+
 CONFIG_SCHEMA_VERSION: Final = 1
 CONFIG_FILENAME = "saddlefit.yaml"
 
@@ -126,7 +128,7 @@ class Config(_Strict):
     fast_loop: FastLoopConfig = FastLoopConfig()
 
 
-class ConfigError(Exception):
+class ConfigError(UserError):
     """The configuration file is missing, unreadable or invalid (a user error)."""
 
 
