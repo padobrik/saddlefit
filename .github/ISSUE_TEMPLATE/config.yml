@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/padobrik/saddlefit/security/advisories/new
+    about: Sandbox escapes and evaluation-integrity bypasses go here, privately. Do not open a public issue.
