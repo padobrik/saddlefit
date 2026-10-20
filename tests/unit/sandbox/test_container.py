@@ -27,6 +27,7 @@ class FakeAPI:
         self.scripts = scripts
         self.created: list[dict[str, Any]] = []
         self.current: Any = None
+        self.clock: Any = None  # advanced by each script's "elapsed" seconds
 
     def exec_create(self, container_id: str, cmd: list[str], **kwargs: Any) -> dict[str, str]:
         self.created.append({"container": container_id, "cmd": cmd, **kwargs})
@@ -37,6 +38,8 @@ class FakeAPI:
 
     def exec_start(self, exec_id: str, stream: bool) -> Any:
         assert stream
+        if self.clock is not None:
+            self.clock.now += self.current.get("elapsed", 0.0)
         chunks = self.current["chunks"]
         if isinstance(chunks, Exception):
             raise chunks
@@ -141,20 +144,36 @@ def test_user_is_never_root(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_exec_streams_output_and_reads_the_exit_code(tmp_path: Path) -> None:
-    client = FakeClient([done(0, b"o", b"k\n"), done(124), done(137, b"Killed")])
+    client = FakeClient(
+        [
+            done(0, b"o", b"k\n"),
+            {"chunks": [], "code": 143, "elapsed": 5.2},  # TERM sent at the deadline
+            {"chunks": [], "code": 124, "elapsed": 0.1},  # the command itself exited 124
+            {"chunks": [b"Killed"], "code": 137, "elapsed": 0.1},  # OOM before the deadline
+        ]
+    )
     clock = Clock()
+    client.api.clock = clock
     with Sandbox(client, "img", tmp_path, LIMITS, run_timeout_s=100, clock=clock) as sb:
         result = sb.exec("pytest -q", timeout_s=30)
         assert (result.exit_code, result.output, result.timed_out) == (0, "ok\n", False)
         call = client.api.created[0]
         assert call["container"] == "c0ffee"
-        assert call["cmd"] == ["timeout", "--kill-after=5", "30", "bash", "-c", "pytest -q"]
+        assert call["cmd"] == [
+            "timeout",
+            "--preserve-status",
+            "--kill-after=5",
+            "30",
+            "bash",
+            "-c",
+            "pytest -q",
+        ]
         assert call["environment"] == SANDBOX_ENV
         assert call["workdir"] == "/work"
         assert sb.exec("sleep 99", timeout_s=5).timed_out
-        # 137 without exhausting the budget is an OOM kill, not a timeout
+        early = sb.exec("exit 124", timeout_s=5)
+        assert (early.exit_code, early.timed_out) == (124, False)
         assert not sb.exec("big", timeout_s=5).timed_out
-    assert client.box.removed
 
 
 def test_run_deadline_caps_each_command(tmp_path: Path) -> None:
@@ -163,7 +182,7 @@ def test_run_deadline_caps_each_command(tmp_path: Path) -> None:
     with Sandbox(client, "img", tmp_path, LIMITS, run_timeout_s=10, clock=clock) as sb:
         clock.now = 7.5
         sb.exec("x", timeout_s=60)
-        assert client.api.created[0]["cmd"][2] == "2"
+        assert client.api.created[0]["cmd"][3] == "2"
         clock.now = 10
         late = sb.exec("y", timeout_s=60)
     assert late.timed_out

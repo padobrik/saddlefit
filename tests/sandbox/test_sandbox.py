@@ -88,6 +88,12 @@ def test_command_timeout(sandbox: Sandbox) -> None:
     assert result.duration_s < 15
 
 
+def test_a_command_exiting_124_is_not_a_timeout(sandbox: Sandbox) -> None:
+    result = sandbox.exec("exit 124", timeout_s=30)
+    assert result.exit_code == 124
+    assert not result.timed_out
+
+
 def test_capabilities_are_dropped(sandbox: Sandbox) -> None:
     # CapEff is empty for any non-root user; the bounding set is empty only with cap_drop ALL.
     status = sandbox.exec("grep CapBnd /proc/self/status", timeout_s=10).output

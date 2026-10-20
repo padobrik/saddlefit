@@ -160,8 +160,10 @@ def container_options(
 
 def _timed_command(command: str, timeout_s: float) -> list[str]:
     seconds = max(1, int(timeout_s))
+    # --preserve-status: the command's own exit code survives, so "exit 124" is not a timeout
     return [
         "timeout",
+        "--preserve-status",
         f"--kill-after={KILL_GRACE_S}",
         str(seconds),
         "bash",
@@ -264,8 +266,10 @@ class Sandbox:
         except Exception as exc:
             raise SandboxError(f"exec failed: {shlex.quote(command)}: {exc}") from exc
         duration = self._clock() - started
-        # coreutils ``timeout`` exits 124, or 137 when it had to kill; 137 alone may be OOM.
-        timed_out = code == 124 or (code == 137 and duration >= budget)
+        # With --preserve-status a timed-out command dies by TERM (143) or KILL (137), or exits
+        # however it handles TERM; only a failure at or after the deadline is a timeout, so an
+        # early 137 stays an OOM kill and an early 124 stays the command's own exit code.
+        timed_out = code != 0 and duration >= budget
         return ExecResult(
             exit_code=code, output=buffer.text(), timed_out=timed_out, duration_s=duration
         )
