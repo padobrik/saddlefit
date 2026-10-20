@@ -113,10 +113,10 @@ class StudentLoop:
         )
         reason: StopReason = "step_limit"
         for step in range(1, self.loop.max_steps + 1):
-            state.result.steps = step
             if self.clock() - started >= self.time_limit_s:
                 reason = "time_limit"
                 break
+            state.result.steps = step  # counted only once the step actually runs
             stopped = self._step(state, step)
             if stopped is not None:
                 reason = stopped
@@ -155,20 +155,21 @@ class StudentLoop:
         state.messages.append(
             Message(role="assistant", content=reply.text, tool_calls=reply.tool_calls)
         )
-        for raw in reply.malformed:
-            result.malformed_tool_calls += 1
-            state.messages.append(
-                Message(
-                    role="user",
-                    content=f"Your tool call could not be parsed and was ignored:\n{raw[:500]}",
-                )
-            )
+        result.malformed_tool_calls += len(reply.malformed)
         if not reply.tool_calls and not reply.malformed:
             state.messages.append(Message(role="user", content=NUDGE))
         for call in reply.tool_calls:
             stopped = self._handle(state, call)
             if stopped is not None:
                 return stopped
+        # after the tool results: native tool APIs expect each tool call's answer next
+        for raw in reply.malformed:
+            state.messages.append(
+                Message(
+                    role="user",
+                    content=f"Your tool call could not be parsed and was ignored:\n{raw[:500]}",
+                )
+            )
         return None
 
     def _handle(self, state: _RunState, call: ToolCall) -> StopReason | None:
@@ -251,7 +252,12 @@ class StudentLoop:
         budget = self.loop.context.budget_tokens * COMPACTION_RATIO
 
         def size(msgs: list[Message]) -> int:
-            return sum(estimate_tokens(m.content) for m in msgs)
+            # tool-call arguments (a whole new file for write_file) are part of the prompt too
+            return sum(
+                estimate_tokens(m.content)
+                + sum(estimate_tokens(json.dumps(c.arguments)) for c in m.tool_calls)
+                for m in msgs
+            )
 
         if size(messages) <= budget:
             return messages

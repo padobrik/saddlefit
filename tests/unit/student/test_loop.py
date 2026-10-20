@@ -157,6 +157,7 @@ def test_step_and_time_limits() -> None:
     student, _, _ = make([call("list_dir", 1)], time_limit=1, clock=Clock(step=0.7))
     result = student.run(CONTEXT)
     assert result.stop_reason == "time_limit"
+    assert result.steps == 1  # the second step never called the model
 
 
 def test_loop_detection_warns_then_stops() -> None:
@@ -276,3 +277,32 @@ def test_provider_failures_end_the_run_without_raising() -> None:
     assert recorder.events == [
         ("error", {"kind": "provider", "message": "APITimeoutError: Request timed out."})
     ]
+
+
+def test_malformed_feedback_follows_the_tool_results() -> None:
+    mixed = ModelReply(
+        tool_calls=(ToolCall(id="c1", name="list_dir", arguments={}),),
+        malformed=('{"tool": "read_file", "args": {',),
+        usage=Usage(prompt_tokens=10, completion_tokens=5),
+    )
+    student, _, _ = make([mixed, call("finish", 2)], check=None)
+    result = student.run(CONTEXT)
+    roles = [m.role for m in result.transcript]
+    first = roles.index("assistant")
+    assert roles[first : first + 3] == ["assistant", "tool", "user"]
+    assert result.malformed_tool_calls == 1
+
+
+def test_compaction_counts_tool_call_arguments() -> None:
+    loop = default_loop_config().model_copy(
+        update={
+            "context": ContextConfig(budget_tokens=200, harness_budget_tokens=100),
+            "max_steps": 4,
+        }
+    )
+    # the outputs are tiny; the prompt is large only because of the calls' own arguments
+    tools = FakeTools({"write_file": [ToolResult(ok=True, output="ok")] * 3})
+    replies = [call("write_file", i, path=f"f{i}.py", content="y" * 600) for i in range(3)]
+    student, _, recorder = make([*replies, call("finish", 9)], loop=loop, tools=tools, check=None)
+    student.run(CONTEXT)
+    assert "compaction" in recorder.types()
