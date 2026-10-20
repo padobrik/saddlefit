@@ -1,0 +1,16 @@
+{
+  "additionalProperties": false,
+  "description": "``tasks/sealed/<id>/sealed.json``: the version of the sealed-task layout.",
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "schema_version"
+  ],
+  "title": "SealedTaskInfo",
+  "type": "object"
+}

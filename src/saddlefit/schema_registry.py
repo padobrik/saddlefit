@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from saddlefit.config import Config
 from saddlefit.harness.loop_config import LoopConfig
 from saddlefit.storage.runs import RunEvent, RunSummary
-from saddlefit.tasks.models import SuiteLock, TaskMeta
+from saddlefit.tasks.models import SealedTaskInfo, SuiteLock, TaskMeta
 
 # name -> model; the file is written as schemas/<name>.schema.json
 SCHEMA_MODELS: dict[str, type[BaseModel]] = {
@@ -15,6 +15,7 @@ SCHEMA_MODELS: dict[str, type[BaseModel]] = {
     "loop-config": LoopConfig,
     "run-event": RunEvent,
     "run-summary": RunSummary,
+    "sealed-task": SealedTaskInfo,
     "suite-lock": SuiteLock,
     "task-meta": TaskMeta,
 }
