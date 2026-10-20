@@ -6,6 +6,7 @@ import pytest
 
 from saddlefit.sandbox.container import ExecResult
 from saddlefit.tools.builtin import (
+    MAX_COMMAND_TIMEOUT_S,
     TOOL_NAMES,
     TOOL_SPECS,
     Toolbox,
@@ -121,3 +122,32 @@ def test_specs_cover_every_tool() -> None:
     } == TOOL_NAMES
     for spec in TOOL_SPECS:
         assert spec.parameters["additionalProperties"] is False
+
+
+@pytest.mark.parametrize(
+    ("name", "args", "message"),
+    [
+        ("read_file", {"path": "a.py", "end": "1p;id;#"}, "args.end: expected integer"),
+        ("read_file", {"path": "a.py", "start": True}, "args.start: expected integer"),
+        ("read_file", {"path": "a.py", "start": 5, "end": 2}, "end must not be before start"),
+        ("read_file", {"path": 5}, "args.path: expected string"),
+        ("write_file", {"path": "a.py", "content": 5}, "args.content: expected string"),
+        ("bash", {"command": 5}, "args.command: expected string"),
+        ("bash", {"command": "ls", "timeout": "soon"}, "args.timeout: expected integer"),
+        ("bash", {"command": "ls", "timeout": -3}, "timeout must be positive"),
+    ],
+)
+def test_arguments_are_validated_against_the_schemas(
+    name: str, args: dict[str, object], message: str
+) -> None:
+    sandbox = FakeSandbox()
+    result = Toolbox(sandbox).call(name, args)
+    assert result.ok is False
+    assert message in result.output
+    assert sandbox.commands == []  # nothing reached the sandbox
+
+
+def test_long_timeouts_are_capped() -> None:
+    sandbox = FakeSandbox()
+    Toolbox(sandbox).call("bash", {"command": "ls", "timeout": 99_999})
+    assert sandbox.commands[0][1] == MAX_COMMAND_TIMEOUT_S

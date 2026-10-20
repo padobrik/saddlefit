@@ -9,7 +9,6 @@ content is ever interpolated into a shell command.
 from __future__ import annotations
 
 import base64
-import inspect
 import posixpath
 import shlex
 from collections.abc import Callable, Mapping
@@ -17,9 +16,11 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from saddlefit.providers.base import ToolSpec
+from saddlefit.providers.parsing import MalformedToolCall, validate_tool_call
 
 WORKDIR = "/work"
 DEFAULT_COMMAND_TIMEOUT_S = 120
+MAX_COMMAND_TIMEOUT_S = 1800  # the run's own deadline still applies on top
 MAX_WRITE_BYTES = 512_000
 
 
@@ -109,7 +110,10 @@ class Toolbox:
         target = shlex.quote(confine(path))
         if start is None and end is None:
             return self._run(f"cat -n -- {target}")
-        first, last = max(1, start or 1), end if end is not None else "$"
+        first = max(1, start or 1)
+        if end is not None and end < first:
+            raise ToolError("end must not be before start")
+        last = str(end) if end is not None else "$"
         return self._run(f"cat -n -- {target} | sed -n '{first},{last}p'")
 
     def list_dir(self, path: str = ".") -> ToolResult:
@@ -129,10 +133,13 @@ class Toolbox:
             raise ToolError(f"content is larger than {MAX_WRITE_BYTES} bytes")
         return self._run(_python("write", confine(path), content))
 
-    def bash(self, command: str, timeout: float | None = None) -> ToolResult:
+    def bash(self, command: str, timeout: int | None = None) -> ToolResult:
         if not command.strip():
             raise ToolError("command must not be empty")
-        return self._run(command, timeout_s=timeout or DEFAULT_COMMAND_TIMEOUT_S)
+        if timeout is not None and timeout <= 0:
+            raise ToolError("timeout must be positive")
+        limit = min(timeout or DEFAULT_COMMAND_TIMEOUT_S, MAX_COMMAND_TIMEOUT_S)
+        return self._run(command, timeout_s=limit)
 
     def finish(self, summary: str) -> ToolResult:
         return ToolResult(ok=True, output=summary, finished=True)
@@ -143,8 +150,9 @@ class Toolbox:
         if name not in TOOL_NAMES or handler is None:
             return ToolResult(ok=False, output=f"unknown tool: {name}")
         try:
-            inspect.signature(handler).bind(**arguments)
-        except TypeError as exc:
+            # types and required arguments from TOOL_SPECS; this also rejects bools for integers
+            validate_tool_call(name, dict(arguments), TOOL_SPECS)
+        except MalformedToolCall as exc:
             return ToolResult(ok=False, output=f"error: bad arguments for {name}: {exc}")
         try:
             return handler(**arguments)
