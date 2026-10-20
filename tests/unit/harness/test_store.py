@@ -1,3 +1,5 @@
+import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -209,3 +211,53 @@ def test_export_to_a_relative_directory(
     store.export("main", Path("out"))
     assert (tmp_path / "out" / "EXPERIENCE.md").is_file()
     assert not (store.path / "out").exists()
+
+
+def commit_raw(store: HarnessStore, rel: str, content: str | None) -> None:
+    """Change the store behind its back, as a corrupted or foreign store would look."""
+    path = store.path / rel
+    if content is None:
+        path.unlink()
+    else:
+        path.write_text(content, encoding="utf-8")
+    env = {
+        "PATH": os.environ.get("PATH", ""),
+        "HOME": str(store.path),
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_GLOBAL": os.devnull,
+    }
+    for args in (
+        ["add", "--all"],
+        ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "raw"],
+    ):
+        subprocess.run(["git", *args], cwd=store.path, env=env, check=True, capture_output=True)
+
+
+def test_init_records_the_store_schema_version(store: HarnessStore) -> None:
+    info = json.loads((store.path / "harness.json").read_text(encoding="utf-8"))
+    assert info == {"schema_version": 1}
+
+
+def test_proposals_cannot_touch_the_version_marker(store: HarnessStore) -> None:
+    with pytest.raises(HarnessStoreError, match="outside the allowlist"):
+        store.propose("p-ver", patch_for("harness.json", '{"schema_version":1}', "{}"), "x")
+
+
+@pytest.mark.parametrize(
+    ("content", "message"),
+    [
+        (None, "missing or non-integer schema_version"),
+        ('{"schema_version": "1"}', "missing or non-integer schema_version"),
+        ('{"schema_version": true}', "missing or non-integer schema_version"),
+        ('{"schema_version": 2}', "schema_version 2 is not supported"),
+        ("not json", "unreadable harness.json"),
+    ],
+)
+def test_a_store_with_a_bad_version_is_refused(
+    store: HarnessStore, tmp_path: Path, content: str | None, message: str
+) -> None:
+    commit_raw(store, "harness.json", content)
+    with pytest.raises(HarnessStoreError, match=message):
+        store.propose("p-after", LESSON, "x")
+    with pytest.raises(HarnessStoreError, match=message):
+        store.export("main", tmp_path / "out")

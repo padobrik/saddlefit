@@ -3,23 +3,32 @@
 Every candidate change is a commit on ``candidate/<proposal-id>``; accepted changes are
 merged into ``main``; pruned changes are reverted with the reason in the commit message.
 Runs record the commit SHA they used.
+
+``harness.json`` at the store root records the layout's integer ``schema_version`` (model
+``HarnessStoreInfo``, schema ``schemas/harness-store.schema.json``). It is outside the
+proposal allowlist, and every operation refuses a store whose version it cannot read.
 """
 
 from __future__ import annotations
 
 import contextlib
+import json
 import os
 import re
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import Final
+from typing import Final, Literal
+
+from pydantic import BaseModel, ConfigDict
 
 from saddlefit.eval.tamper import diff_paths
 from saddlefit.harness.allowlist import disallowed
 from saddlefit.harness.loop_config import default_loop_config, dump_loop_config
 
 MAIN: Final = "main"
+HARNESS_SCHEMA_VERSION: Final = 1
+INFO_FILE: Final = "harness.json"
 _AUTHOR = ("saddlefit", "saddlefit@localhost.invalid")
 # Every name that reaches git's argv starts with a letter or digit, so none reads as an option.
 _PROPOSAL_ID = re.compile(r"[0-9A-Za-z][0-9A-Za-z._-]{0,63}")
@@ -40,6 +49,14 @@ DEFAULT_FILES: dict[str, str] = {
 
 class HarnessStoreError(Exception):
     """A git operation on the harness store failed or was refused."""
+
+
+class HarnessStoreInfo(BaseModel):
+    """``harness.json``: the version of the harness-store layout."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    schema_version: Literal[1]
 
 
 def _checked(pattern: re.Pattern[str], value: str, what: str) -> str:
@@ -88,7 +105,12 @@ class HarnessStore:
             raise HarnessStoreError(f"harness store already exists: {self.path}")
         self.path.mkdir(parents=True, exist_ok=True)
         self._git("init", "--quiet", f"--initial-branch={MAIN}")
-        files = {**DEFAULT_FILES, "loop.yaml": dump_loop_config(default_loop_config())}
+        info = HarnessStoreInfo(schema_version=HARNESS_SCHEMA_VERSION)
+        files = {
+            **DEFAULT_FILES,
+            "loop.yaml": dump_loop_config(default_loop_config()),
+            INFO_FILE: info.model_dump_json() + "\n",
+        }
         for rel, content in files.items():
             target = self.path / rel
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -96,6 +118,26 @@ class HarnessStore:
         self._git("add", "--all")
         self._git("commit", "--quiet", "-m", "harness: initial defaults")
         return self.head()
+
+    def _check_format(self, ref: str = MAIN) -> None:
+        """Refuse a store whose ``harness.json`` at ``ref`` this version cannot read."""
+        try:
+            raw = self._git("show", f"{ref}:{INFO_FILE}")
+        except HarnessStoreError:
+            raw = "{}"  # missing: reported as a missing version below
+        try:
+            info = json.loads(raw)
+        except ValueError as exc:
+            raise HarnessStoreError(f"unreadable {INFO_FILE} at {ref}") from exc
+        version = info.get("schema_version") if isinstance(info, dict) else None
+        # bool is an int subclass, so test the exact type
+        if type(version) is not int:
+            raise HarnessStoreError(f"{INFO_FILE} at {ref}: missing or non-integer schema_version")
+        if version != HARNESS_SCHEMA_VERSION:
+            raise HarnessStoreError(
+                f"{INFO_FILE} at {ref}: schema_version {version} is not supported "
+                f"(current {HARNESS_SCHEMA_VERSION})"
+            )
 
     def head(self, ref: str = MAIN) -> str:
         """The commit SHA that ``ref`` points to."""
@@ -113,6 +155,7 @@ class HarnessStore:
         refused = disallowed(paths)
         if refused:
             raise HarnessStoreError(f"patch touches paths outside the allowlist: {refused}")
+        self._check_format()
         branch = f"candidate/{proposal_id}"
         self._git("switch", "--quiet", "-c", branch, MAIN)
         try:
@@ -133,6 +176,7 @@ class HarnessStore:
     def accept(self, proposal_id: str) -> str:
         """Merge the candidate into ``main``; return the new ``main`` SHA."""
         branch = f"candidate/{_checked(_PROPOSAL_ID, proposal_id, 'proposal id')}"
+        self._check_format()
         self._git("merge", "--quiet", "--no-ff", "-m", f"accept {proposal_id}", branch)
         self._git("branch", "-d", branch)
         return self.head()
@@ -144,6 +188,7 @@ class HarnessStore:
     def prune(self, commit: str, reason: str) -> str:
         """Revert an accepted change on ``main``, recording why; return the new SHA."""
         _checked(_COMMIT, commit, "commit")
+        self._check_format()
         try:
             self._git("revert", "--no-commit", "-m", "1", commit)
         except HarnessStoreError:
@@ -165,6 +210,7 @@ class HarnessStore:
         ``export-ignore`` and let a committed ``.gitattributes`` hide files.
         """
         _checked(_REF, ref, "ref")
+        self._check_format(ref)
         # git runs in the store, so a relative prefix would land inside it
         dest = dest.resolve()
         dest.mkdir(parents=True, exist_ok=True)
