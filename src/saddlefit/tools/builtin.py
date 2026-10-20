@@ -212,10 +212,22 @@ class Toolbox:
             validate_tool_call(name, dict(arguments), TOOL_SPECS)
         except MalformedToolCall as exc:
             return ToolResult(ok=False, output=f"error: bad arguments for {name}: {exc}")
+        # JSON can carry lone surrogates; nothing downstream can encode them
+        for key, value in arguments.items():
+            if isinstance(value, str) and not _is_utf8(value):
+                return ToolResult(ok=False, output=f"error: {key} for {name} is not valid UTF-8")
         try:
             return handler(**arguments)
         except ToolError as exc:
             return ToolResult(ok=False, output=f"error: {exc}")
+
+
+def _is_utf8(value: str) -> bool:
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
 
 
 def _spec(name: str, description: str, props: dict[str, Any], required: list[str]) -> ToolSpec:

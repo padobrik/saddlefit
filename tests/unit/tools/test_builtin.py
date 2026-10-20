@@ -217,3 +217,22 @@ def test_long_sandbox_errors_are_capped() -> None:
     assert not result.ok
     assert len(result.output) < 300
     assert "characters cut" in result.output
+
+
+@pytest.mark.parametrize(
+    ("name", "arguments"),
+    [
+        ("write_file", {"path": "a.py", "content": "x\ud800"}),
+        ("edit_file", {"path": "a.py", "old": "\udfff", "new": "y"}),
+        ("bash", {"command": "echo \ud800"}),
+        ("read_file", {"path": "\ud800.py"}),
+    ],
+)
+def test_strings_that_are_not_utf8_come_back_as_a_failed_result(
+    name: str, arguments: dict[str, object]
+) -> None:
+    box = Toolbox(FakeSandbox())
+    result = box.call(name, arguments)
+    assert not result.ok
+    assert "UTF-8" in result.output
+    assert box.sandbox.commands == []  # type: ignore[attr-defined]
