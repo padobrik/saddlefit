@@ -13,6 +13,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from saddlefit.config import Config
+from saddlefit.errors import UserError
 from saddlefit.yamlio import safe_load_unique
 
 LOOP_SCHEMA_VERSION: Final = 1
@@ -72,7 +73,7 @@ class LoopConfig(_Strict):
     reasoning: ReasoningConfig = ReasoningConfig()
 
 
-class LoopConfigError(Exception):
+class LoopConfigError(UserError):
     """``loop.yaml`` is missing or invalid."""
 
 

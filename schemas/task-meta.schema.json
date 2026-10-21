@@ -32,6 +32,19 @@
   "additionalProperties": false,
   "description": "``tasks/public/<id>/meta.yaml``: what the student may know about a task.",
   "properties": {
+    "committed": {
+      "anyOf": [
+        {
+          "format": "date",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Committed"
+    },
     "created": {
       "format": "date",
       "title": "Created",

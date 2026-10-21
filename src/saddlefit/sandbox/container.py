@@ -20,6 +20,7 @@ from types import TracebackType
 from typing import Any
 
 from saddlefit.config import SandboxConfig
+from saddlefit.errors import EnvironmentFailure
 
 WORKDIR = "/work"
 FALLBACK_USER = "1000:1000"
@@ -39,7 +40,7 @@ _MEMORY = re.compile(r"^(?P<n>[0-9]+)(?P<unit>[bkmg]?)$")
 _UNITS = {"": 1, "b": 1, "k": 1024, "m": 1024**2, "g": 1024**3}
 
 
-class SandboxError(Exception):
+class SandboxError(EnvironmentFailure):
     """The sandbox could not be created or used (an environment error)."""
 
 
