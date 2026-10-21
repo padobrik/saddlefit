@@ -119,6 +119,8 @@ def digest_run(events: Sequence[RunEvent], summary: RunSummary, task_text: str) 
     """Compress a training run; the record must come from ``read_run`` (train split only)."""
     if summary.split != "train":
         raise ValueError(f"the tutor sees training runs only, not {summary.split}")
+    if summary.outcome != "fail":
+        raise ValueError(f"the tutor diagnoses failed runs only; {summary.run_id} passed")
     gates = [e.data.output for e in events if isinstance(e.data, FinishGateData)]
     diff = summary.diff_stats
     return RunDigest(
@@ -203,18 +205,13 @@ def diagnose(
         Message(role="user", content=render_runs(request)),
     ]
     reply = client.chat(messages, [PROPOSE_TOOL], GenParams(max_tokens=max_tokens))
-    calls = [c for c in reply.tool_calls if c.name == TOOL_NAME]
-    if len(calls) != 1:
-        raise TutorError(f"expected one {TOOL_NAME} call, got {len(calls)}", reply.usage)
-    arguments = calls[0].arguments
-    cited = set(arguments.get("evidence_run_ids", ()))
-    unknown = sorted(cited - {d.run_id for d in request.runs})
-    if unknown:
-        raise TutorError(f"the proposal cites runs it was not shown: {unknown}", reply.usage)
+    names = [c.name for c in reply.tool_calls]
+    if names != [TOOL_NAME]:
+        raise TutorError(f"expected exactly one {TOOL_NAME} call, got {names}", reply.usage)
     try:
         proposal = Proposal.model_validate(
             {
-                **arguments,
+                **reply.tool_calls[0].arguments,
                 "schema_version": PROPOSAL_SCHEMA_VERSION,
                 "proposal_id": str(ULID()),
                 "source": "tutor",
@@ -222,5 +219,9 @@ def diagnose(
         )
     except ValidationError as exc:
         raise TutorError(f"the proposal is malformed: {exc}", reply.usage) from exc
+    # validated first, so the IDs are well-formed strings before they are compared
+    unknown = sorted(set(proposal.evidence_run_ids) - {d.run_id for d in request.runs})
+    if unknown:
+        raise TutorError(f"the proposal cites runs it was not shown: {unknown}", reply.usage)
     served = getattr(reply.raw, "model", None) or client.info().model
     return TutorResult(proposal=proposal, usage=reply.usage, model=served)

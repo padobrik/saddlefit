@@ -138,6 +138,11 @@ def test_a_run_without_a_visible_check_says_so() -> None:
     assert digest_run(EVENTS[:2], summary(RUN_A), "t").check_output == "(the student never ran it)"
 
 
+def test_passing_runs_are_not_diagnosed() -> None:
+    with pytest.raises(ValueError, match="failed runs only"):
+        digest_run(EVENTS, summary(RUN_A, outcome="pass", primary_tag="solved"), "t")
+
+
 @pytest.mark.parametrize("split", ["held_out", "control"])
 def test_only_training_runs_reach_the_tutor(split: str) -> None:
     with pytest.raises(ValueError, match="training runs only"):
@@ -200,11 +205,23 @@ def test_proposal_ids_are_unique() -> None:
 @pytest.mark.parametrize(
     ("reply", "match"),
     [
-        (ModelReply(text="I would add a finish gate.", usage=Usage(completion_tokens=9)), "got 0"),
+        (
+            ModelReply(text="I would add a finish gate.", usage=Usage(completion_tokens=9)),
+            r"got \[\]",
+        ),
         (
             ModelReply(tool_calls=proposing().tool_calls * 2, usage=Usage(completion_tokens=9)),
-            "got 2",
+            "got",
         ),
+        (
+            ModelReply(
+                tool_calls=(*proposing().tool_calls, ToolCall(id="t2", name="read", arguments={})),
+                usage=Usage(completion_tokens=9),
+            ),
+            "'read'",
+        ),
+        (proposing(evidence_run_ids="not-a-list"), "malformed"),
+        (proposing(evidence_run_ids=[{"id": 1}]), "malformed"),
         (proposing(evidence_run_ids=[RUN_A, "01JB2Y8Q4V9N1K3D7M5R6T0W30"]), "not shown"),
         (proposing(evidence_run_ids=[]), "malformed"),
         (proposing(level="budget"), "malformed"),
