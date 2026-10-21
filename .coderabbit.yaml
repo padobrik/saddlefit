@@ -21,9 +21,14 @@ reviews:
   path_instructions:
     - path: "src/saddlefit/eval/**"
       instructions: |
-        Evaluation-integrity boundary. Flag any path that lets the student, the tutor,
-        the generator or the fast loop read sealed data (hidden tests, check.sh, reference
-        solutions) or held-out and control outcomes. Control results must never feed a decision.
+        Evaluation-integrity boundary. Flag any path that lets the student model (its
+        prompts, tool results, run records or reports), the tutor, the generator or the fast
+        loop read sealed data (hidden tests, check.sh, reference solutions, hidden-check
+        output) or held-out and control outcomes. Control results must never feed a decision.
+        Code under test reading the hidden tests inside the evaluation container is the B10
+        design, not a leak, as long as check output goes only to the sealed store and only
+        the verdict's exit code, duration and timeout flag leave evaluation. Reports may carry
+        held-out aggregates, and control outcomes only after report --final (ADR 0003).
     - path: "src/saddlefit/sandbox/**"
       instructions: |
         Flag anything that enables network access, mounts host paths beyond the run workspace,

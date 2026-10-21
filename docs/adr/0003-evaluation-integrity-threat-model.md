@@ -29,8 +29,10 @@ What the evaluator does guarantee:
   their way is `tampered` and never runs;
 - every sealed file carries a canary, and a canary in any prompt aborts the run (required test 2).
 
-So code under test can at most read the test that is running it, with no channel back to the
-model, the tutor or a report. B10 defends against code that games the tests blindly with held-out
+So code under test can at most read the test that is running it. Neither the hidden tests' content
+nor the check's output can travel back to the model, the tutor or a report; the only channel out
+is the verdict's exit code, duration and timeout flag, plus the aggregates B10 allows in reports.
+B10 defends against code that games the tests blindly with held-out
 and control sets and repeated runs (B10 known traps, B12).
 
 ## Decision
