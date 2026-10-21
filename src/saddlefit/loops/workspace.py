@@ -26,6 +26,10 @@ class WorkspaceTracker:
         self._git("commit", "--quiet", "--allow-empty", "-m", "base")
 
     def _git(self, *args: str) -> str:
+        """Git's output as text; bytes that are not UTF-8 survive as surrogate escapes."""
+        return self._git_bytes(*args).decode("utf-8", errors="surrogateescape")
+
+    def _git_bytes(self, *args: str) -> bytes:
         env = {
             "PATH": os.environ.get("PATH", ""),
             "HOME": str(self.git_dir),
@@ -43,15 +47,15 @@ class WorkspaceTracker:
             cwd=self.work,
             env=env,
             capture_output=True,
-            text=True,
             check=True,
         )
+        # bytes, not text mode: text mode would fail on non-UTF-8 bytes and turn CRLF into LF
         return result.stdout
 
     def digest(self) -> str:
         """Changes as of now: tracked edits and new files, for loop detection."""
         self._git("add", "-A")
-        return hashlib.sha256(self._git("diff", "--cached", "--binary").encode()).hexdigest()
+        return hashlib.sha256(self._git_bytes("diff", "--cached", "--binary")).hexdigest()
 
     def diff(self) -> str:
         self._git("add", "-A")
