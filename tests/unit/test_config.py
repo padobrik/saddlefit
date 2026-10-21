@@ -63,7 +63,7 @@ def test_spec_example_loads(tmp_path: Path) -> None:
 
 def test_minimal_config_uses_defaults(tmp_path: Path) -> None:
     config = load_config(write(tmp_path, "schema_version: 1\nproject: p\n"))
-    assert config == Config(schema_version=1, project="p")
+    assert config == Config(schema_version=2, project="p")
 
 
 def test_round_trip(tmp_path: Path) -> None:
@@ -76,8 +76,8 @@ def test_round_trip(tmp_path: Path) -> None:
     [
         ("schema_version: 1\nproject: p\nbogus: 1\n", "bogus: unknown key"),
         ("schema_version: 1\nproject: p\nstudent:\n  modle: x\n", "student.modle: unknown key"),
-        ("schema_version: 2\nproject: p\n", "schema_version"),
-        ("project: p\n", "schema_version: Field required"),
+        ("schema_version: 0\nproject: p\n", "schema_version 0 is not supported"),
+        ("project: p\n", "missing or non-integer schema_version"),
         (
             "schema_version: 1\nproject: p\nsplits: {train: 0.5, held_out: 0.5, control: 0.5}\n",
             "sum to 1.0",
@@ -103,7 +103,7 @@ def test_missing_file_points_to_init(tmp_path: Path) -> None:
 
 
 def test_dump_is_safe_yaml() -> None:
-    assert yaml.safe_load(dump_config(Config(schema_version=1, project="p")))["project"] == "p"
+    assert yaml.safe_load(dump_config(Config(schema_version=2, project="p")))["project"] == "p"
 
 
 @pytest.mark.parametrize(
@@ -141,7 +141,7 @@ def test_unreadable_path_is_a_config_error(tmp_path: Path) -> None:
 
 
 def test_the_default_sandbox_image_is_the_one_released_with_this_version() -> None:
-    config = Config(schema_version=1, project="p")
+    config = Config(schema_version=2, project="p")
     assert config.sandbox.image == f"ghcr.io/padobrik/saddlefit-sandbox:{__version__}"
     schema = Path(__file__).parents[2] / "schemas" / "saddlefit-config.schema.json"
     assert "saddlefit-sandbox:" not in schema.read_text(encoding="utf-8")  # no pin to go stale
@@ -149,10 +149,29 @@ def test_the_default_sandbox_image_is_the_one_released_with_this_version() -> No
 
 def test_a_written_config_keeps_its_image_across_releases(tmp_path: Path) -> None:
     # init writes the image out, so a project keeps its image when the default moves on
-    written = yaml.safe_load(dump_config(Config(schema_version=1, project="p")))
+    written = yaml.safe_load(dump_config(Config(schema_version=2, project="p")))
     assert written["sandbox"]["image"] == f"ghcr.io/padobrik/saddlefit-sandbox:{__version__}"
     old = (
         "schema_version: 1\nproject: p\n"
         "sandbox:\n  image: ghcr.io/padobrik/saddlefit-sandbox:0.1.0\n"
     )
     assert load_config(write(tmp_path, old)).sandbox.image.endswith(":0.1.0")
+
+
+def test_a_v1_config_is_read_as_v2_with_no_cache_prices(tmp_path: Path) -> None:
+    config = load_config(write(tmp_path, SPEC_EXAMPLE.replace("input: 0.0", "input: 4.0")))
+    assert config.schema_version == 2
+    prices = config.tutor.prices_usd_per_mtok
+    assert prices.input == 4.0
+    assert (prices.cache_write_5m, prices.cache_write_1h, prices.cache_read) == (0.0, 0.0, 0.0)
+    assert yaml.safe_load(dump_config(config))["schema_version"] == 2
+
+
+def test_cache_prices_round_trip(tmp_path: Path) -> None:
+    text = (
+        "schema_version: 2\nproject: p\ntutor:\n  prices_usd_per_mtok:\n"
+        "    {input: 4, output: 20, cache_write_5m: 5, cache_write_1h: 8, cache_read: 0.2}\n"
+    )
+    config = load_config(write(tmp_path, text))
+    assert config.tutor.prices_usd_per_mtok.cache_read == 0.2
+    assert load_config(write(tmp_path, dump_config(config))) == config

@@ -37,7 +37,7 @@ reasoning:
 """
 
 CONFIG = Config(
-    schema_version=1,
+    schema_version=2,
     project="p",
     student=StudentConfig(context_length=16000),
     evaluation=EvaluationConfig(timeout_seconds=300),
