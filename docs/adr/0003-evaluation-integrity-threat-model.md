@@ -47,11 +47,16 @@ The pre-merge check is reworded to say this explicitly, keeping every other cond
 > or lets control results influence any decision. Code under test reading the hidden tests inside
 > the evaluation container, as B10 mechanism 2 prescribes, is not such a read, provided the
 > check's output goes only to the sealed store and nothing but the verdict's exit code, duration
-> and timeout flag reaches the student model, the tutor, the generator, the fast loop or a
-> report. Pass otherwise.
+> and timeout flag reaches the student model, the tutor, the generator or the fast loop. Reports
+> may carry what B10 allows them: held-out aggregates, and control outcomes only after
+> `report --final`. Pass otherwise.
 
 ## Consequences
 
-The check keeps its purpose: any path from sealed data to the model, the tutor, the generator, the
-fast loop or a report still fails. The evaluator PR can merge with the B10 design. Gaming hidden
+The check keeps its purpose: any path from sealed data to the model, the tutor, the generator or
+the fast loop still fails, and reports stay limited to what B10's table allows them.
+
+The verdict fields that do leave evaluation, exit code, duration and timeout flag, are what the
+run record keeps for the hidden check. The duration is a timing side channel: it can tell how long
+the hidden tests ran, nothing about what they contain. That risk is accepted. The evaluator PR can merge with the B10 design. Gaming hidden
 tests blindly stays a known risk, and the held-out and control sets measure it.
