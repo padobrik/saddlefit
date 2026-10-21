@@ -8,12 +8,14 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from collections.abc import Iterator, Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from saddlefit.errors import IntegrityViolation
+from saddlefit.eval.sealed import SealedStore
 from saddlefit.providers.base import (
     GenParams,
     Message,
@@ -22,6 +24,8 @@ from saddlefit.providers.base import (
     ModelReply,
     ToolSpec,
 )
+from saddlefit.tasks.models import TASK_ID_PATTERN
+from saddlefit.tasks.sealing import RETIRED_SUFFIX
 
 log = logging.getLogger(__name__)
 
@@ -74,6 +78,9 @@ def _texts(
             yield from _strings(call.model_dump(), (f"messages[{i}]", f".tool_calls[{j}]"))
     for k, tool in enumerate(tools or ()):
         yield from _strings(tool.model_dump(), (f"tools[{k}]",))
+
+
+_TASK_ID = re.compile(TASK_ID_PATTERN)
 
 
 class LeakGuard:
@@ -148,3 +155,22 @@ class GuardedClient:
         """Check the prompt, then forward it; a leak raises before anything is sent."""
         self._guard.check(messages, tools)
         return self._inner.chat(messages, tools, params)
+
+
+def guard_for_suite(sealed_root: Path, incident_log: Path | None = None) -> LeakGuard:
+    """A leak guard over every canary in ``tasks/sealed``, built inside ``saddlefit.eval``.
+
+    Retired tasks (a replace that stopped mid-way) count; staging and lock entries do not.
+    A task whose canary cannot be read makes this fail, so the guard is never built short.
+    """
+    store = SealedStore(sealed_root)
+    ids: set[str] = set()
+    if sealed_root.is_dir():
+        for entry in sealed_root.iterdir():
+            name = entry.name
+            if name.startswith(".") and name.endswith(RETIRED_SUFFIX):
+                name = name[1 : -len(RETIRED_SUFFIX)]
+            if _TASK_ID.fullmatch(name) and entry.is_dir():
+                ids.add(name)
+    canaries = {store.canary(task_id): task_id for task_id in sorted(ids)}
+    return LeakGuard(canaries, incident_log=incident_log)

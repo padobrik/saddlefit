@@ -86,6 +86,18 @@ class Evaluator:
         self._limits = limits
         self._evaluation = evaluation
 
+    @classmethod
+    def for_suite(
+        cls,
+        sealed_root: Path,
+        docker_client: Any,
+        image: str,
+        limits: SandboxConfig,
+        evaluation: EvaluationConfig,
+    ) -> Evaluator:
+        """An evaluator over ``tasks/sealed``; callers outside eval never touch the store."""
+        return cls(SealedStore(sealed_root), docker_client, image, limits, evaluation)
+
     def evaluate(self, task_id: str, base_snapshot: Path, diff: str, run_id: str) -> Verdict:
         """Judge ``diff`` against task ``task_id`` starting from ``base_snapshot``."""
         # encode once, strictly, before anything parses the diff; the same bytes then go to
