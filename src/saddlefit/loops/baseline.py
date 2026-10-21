@@ -72,13 +72,21 @@ class BaselineResult:
         return passes, counted
 
     def solved(self) -> dict[str, bool]:
-        """Decided tasks only: a task with fewer counted runs than the threshold is left out."""
+        """Decided tasks only.
+
+        Solved once the passes reach the threshold; failed only when the missing attempts
+        (lost to environment errors) could not have reached it either. Anything else is
+        inconclusive and left out.
+        """
         passes, counted = self._counted()
-        return {
-            task: passes[task] >= self.solved_threshold
-            for task in sorted(counted)
-            if counted[task] >= self.solved_threshold or passes[task] >= self.solved_threshold
-        }
+        decided: dict[str, bool] = {}
+        for task in sorted(counted):
+            missing = max(self.runs_per_task - counted[task], 0)
+            if passes[task] >= self.solved_threshold:
+                decided[task] = True
+            elif passes[task] + missing < self.solved_threshold:
+                decided[task] = False
+        return decided
 
     def inconclusive(self) -> list[str]:
         """Tasks whose environment errors left too few runs to decide them."""

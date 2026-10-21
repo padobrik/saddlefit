@@ -99,3 +99,17 @@ def test_both_report_files_carry_the_schema_version(tmp_path: Path) -> None:
         json.loads(json_path.read_text(encoding="utf-8"))["schema_version"] == REPORT_SCHEMA_VERSION
     )
     assert f"schema_version: {REPORT_SCHEMA_VERSION}" in markdown_path.read_text(encoding="utf-8")
+
+
+def test_a_task_stays_inconclusive_while_missing_runs_could_still_solve_it() -> None:
+    result = BaselineResult(runs_per_task=3, solved_threshold=2)
+    result.runs += [
+        run("a", "train", True, "solved"),
+        run("a", "train", False, "gave_up"),
+        run("a", "train", False, "env_error"),  # this attempt could have been the second pass
+        run("b", "train", False, "gave_up"),
+        run("b", "train", False, "gave_up"),
+        run("b", "train", False, "env_error"),  # even a pass here could not reach 2
+    ]
+    assert result.solved() == {"b": False}
+    assert result.inconclusive() == ["a"]
