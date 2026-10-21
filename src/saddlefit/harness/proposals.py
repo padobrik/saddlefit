@@ -10,9 +10,9 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from pathlib import PurePosixPath
-from typing import Annotated, Final, Literal, Protocol
+from typing import Annotated, Final, Literal, Protocol, Self
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 from saddlefit.eval.taxonomy import Tag
 from saddlefit.harness.store import HarnessStore, HarnessStoreError
@@ -42,6 +42,13 @@ class Proposal(BaseModel):
     patch: str = Field(min_length=1)
     expected_effect: str
     context_tokens_delta: int
+
+    @model_validator(mode="after")
+    def _tutor_cites_evidence(self) -> Self:
+        """B13: a tutor proposal MUST cite the runs it is based on."""
+        if self.source == "tutor" and not self.evidence_run_ids:
+            raise ValueError("a tutor proposal must cite at least one evidence run ID")
+        return self
 
 
 class ProposalError(Exception):

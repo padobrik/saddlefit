@@ -139,6 +139,7 @@ def test_scripts_to_lint() -> None:
         {"proposal_id": "not-a-ulid"},
         {"proposal_id": "--upload-pack=x"},
         {"evidence_run_ids": ["../x"]},
+        {"evidence_run_ids": []},
         {"evidence_run_ids": ["01JB2Y8Q4V9N1K3D7M5R6T0W2"]},
         {"source": "student"},
         {"level": "budget"},
@@ -152,6 +153,11 @@ def test_malformed_proposals_are_refused(changes: dict[str, object]) -> None:
     changes = dict(changes)
     with pytest.raises(ValidationError):
         proposal(str(changes.pop("patch", "x")), **changes)
+
+
+@pytest.mark.parametrize("source", ["fast_loop", "playbook"])
+def test_only_tutor_proposals_must_cite_evidence(source: str) -> None:
+    assert proposal("x", source=source, evidence_run_ids=[]).evidence_run_ids == ()
 
 
 def test_the_proposal_schema_is_generated() -> None:
