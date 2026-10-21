@@ -200,3 +200,14 @@ def test_native_calls_are_validated_against_declared_tools(call: Any) -> None:
     reply = client(sdk).chat(USER, [READ], GenParams())
     assert [c.arguments for c in reply.tool_calls] == [{"path": "ok.py"}]
     assert len(reply.malformed) == 1
+
+
+@pytest.mark.parametrize(
+    ("effort", "sent_value"), [("off", "none"), ("low", "low"), ("high", "high"), (None, None)]
+)
+def test_reasoning_effort_reaches_the_runner(effort: str | None, sent_value: str | None) -> None:
+    sdk = StubSDK(response(content="ok"))
+    client(sdk).chat(USER, None, GenParams(reasoning=effort))  # type: ignore[arg-type]
+    sent = sdk.requests[-1]
+    assert sent.get("reasoning_effort") == sent_value
+    assert ("reasoning_effort" in sent) is (effort is not None)
