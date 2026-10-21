@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.2](https://github.com/padobrik/saddlefit/compare/v0.1.1...v0.1.2) (2026-10-21)
+
+
+### Bug Fixes
+
+* **config:** default to the sandbox image of the installed version ([#88](https://github.com/padobrik/saddlefit/issues/88)) ([1f3980b](https://github.com/padobrik/saddlefit/commit/1f3980b611c3895560b721d2e4e2788096c876ba))
+
+
+### Documentation
+
+* **adr:** a new default for a written-out field is not a format change ([#89](https://github.com/padobrik/saddlefit/issues/89)) ([dd3ac25](https://github.com/padobrik/saddlefit/commit/dd3ac25b1d1c95ffdc3ea19790a549d1897cd548))
+
 ## [0.1.1](https://github.com/padobrik/saddlefit/compare/v0.1.0...v0.1.1) (2026-10-21)
 
 
