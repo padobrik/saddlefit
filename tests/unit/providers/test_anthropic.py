@@ -7,7 +7,6 @@ import httpx2
 import pytest
 from anthropic.types.beta import BetaMessage
 
-from saddlefit.providers import retry
 from saddlefit.providers.anthropic import AnthropicClient, classify_error, to_request
 from saddlefit.providers.base import (
     ContextLengthError,
@@ -173,10 +172,23 @@ def test_a_tool_call_reply_with_cache_usage() -> None:
 @pytest.mark.parametrize(
     ("stop_reason", "match"), [("refusal", "declined"), ("max_tokens", "cut off")]
 )
-def test_unusable_replies_are_errors(stop_reason: str, match: str) -> None:
-    client = AnthropicClient("m", client=Stub(message([], stop_reason=stop_reason)))
-    with pytest.raises(ProviderError, match=match):
+def test_unusable_replies_are_errors_that_keep_their_usage(stop_reason: str, match: str) -> None:
+    reply = message([], stop_reason=stop_reason, output_tokens=16_000)
+    client = AnthropicClient("m", client=Stub(reply))
+    with pytest.raises(ProviderError, match=match) as caught:
         client.chat([Message(role="user", content="hi")], None, GenParams())
+    assert caught.value.usage is not None
+    assert caught.value.usage.completion_tokens == 16_000  # billed, so it must be counted
+
+
+def test_cache_writes_without_a_ttl_breakdown_count_as_1h() -> None:
+    reply = message([{"type": "text", "text": "ok"}], cache_creation_input_tokens=700)
+    usage = (
+        AnthropicClient("m", client=Stub(reply))
+        .chat([Message(role="user", content="hi")], None, GenParams())
+        .usage
+    )
+    assert (usage.cache_write_5m_tokens, usage.cache_write_1h_tokens) == (0, 700)
 
 
 @pytest.mark.parametrize(
@@ -205,18 +217,19 @@ def test_errors_are_classified(error: anthropic.AnthropicError, kind: type) -> N
     assert type(classify_error(error)) is kind
 
 
-def test_transient_errors_are_retried(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(retry.time, "sleep", lambda _: None)
+def test_transient_errors_are_retried() -> None:
+    sleeps: list[float] = []
     stub = Stub(
         status_error(anthropic.RateLimitError, 429),
         status_error(anthropic.InternalServerError, 503),
         message([{"type": "text", "text": "ok"}]),
     )
-    reply = AnthropicClient("m", client=stub).chat(
+    reply = AnthropicClient("m", client=stub, sleep=sleeps.append).chat(
         [Message(role="user", content="hi")], None, GenParams()
     )
     assert reply.text == "ok"
     assert len(stub.requests) == 3
+    assert len(sleeps) == 2  # backoff went through the injected sleep, not time.sleep
 
 
 def test_final_errors_are_not_retried() -> None:

@@ -12,7 +12,7 @@ in ``Message``, so a conversation that replays assistant turns runs without them
 from __future__ import annotations
 
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Any, Final
 
 import anthropic
@@ -89,21 +89,28 @@ def to_tools(tools: Sequence[ToolSpec]) -> list[dict[str, Any]]:
 def to_usage(usage: Any) -> Usage:
     """Usage with cache writes split by TTL; ``input_tokens`` excludes cached input."""
     creation = getattr(usage, "cache_creation", None)
+    if creation is None:
+        # no TTL breakdown: every breakpoint this client sets is a 1-hour one
+        write_5m, write_1h = 0, usage.cache_creation_input_tokens or 0
+    else:
+        write_5m = creation.ephemeral_5m_input_tokens or 0
+        write_1h = creation.ephemeral_1h_input_tokens or 0
     return Usage(
         prompt_tokens=usage.input_tokens,
         completion_tokens=usage.output_tokens,
-        cache_write_5m_tokens=getattr(creation, "ephemeral_5m_input_tokens", 0) or 0,
-        cache_write_1h_tokens=getattr(creation, "ephemeral_1h_input_tokens", 0) or 0,
+        cache_write_5m_tokens=write_5m,
+        cache_write_1h_tokens=write_1h,
         cache_read_tokens=usage.cache_read_input_tokens or 0,
     )
 
 
 def to_reply(response: Any, latency_s: float) -> ModelReply:
+    usage = to_usage(response.usage)  # billed even when the reply is unusable
     if response.stop_reason == "refusal":
         category = getattr(response.stop_details, "category", None)
-        raise ProviderError(f"the model declined the request (category {category})")
+        raise ProviderError(f"the model declined the request (category {category})", usage)
     if response.stop_reason == "max_tokens":
-        raise ProviderError("the reply was cut off at max_tokens")
+        raise ProviderError("the reply was cut off at max_tokens", usage)
     text = "".join(b.text for b in response.content if b.type == "text")
     calls = tuple(
         ToolCall(id=b.id, name=b.name, arguments=dict(b.input))
@@ -114,7 +121,7 @@ def to_reply(response: Any, latency_s: float) -> ModelReply:
         text=text,
         tool_calls=calls,
         raw=response,
-        usage=to_usage(response.usage),
+        usage=usage,
         latency_s=latency_s,
     )
 
@@ -136,8 +143,15 @@ def classify_error(exc: anthropic.AnthropicError) -> ProviderError:
 class AnthropicClient:
     """A ``ModelClient`` for Claude; the key comes only from the environment."""
 
-    def __init__(self, model: str, client: Any = None, timeout_s: float = API_TIMEOUT_S) -> None:
+    def __init__(
+        self,
+        model: str,
+        client: Any = None,
+        timeout_s: float = API_TIMEOUT_S,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> None:
         self._model = model
+        self._sleep = sleep
         if client is None:
             try:
                 # retries are ours (B5), so the SDK makes exactly one attempt per call
@@ -183,4 +197,4 @@ class AnthropicClient:
                 raise ProviderError(NO_KEY_HINT) from exc
             return to_reply(response, time.monotonic() - start)
 
-        return call_with_retries(call)
+        return call_with_retries(call, sleep=self._sleep)

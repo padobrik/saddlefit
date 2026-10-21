@@ -87,7 +87,14 @@ class ModelClient(Protocol):
 
 
 class ProviderError(Exception):
-    """A model call failed and should not be retried."""
+    """A model call failed and should not be retried.
+
+    ``usage`` is set when the call was answered, and so billed, but the reply is unusable.
+    """
+
+    def __init__(self, message: str = "", usage: Usage | None = None) -> None:
+        super().__init__(message)
+        self.usage = usage
 
 
 class TransientProviderError(ProviderError):
