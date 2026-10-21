@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import shlex
 import subprocess
 from dataclasses import dataclass
 from datetime import date
@@ -17,10 +18,11 @@ from pathlib import Path
 import yaml
 
 from saddlefit.config import SplitsConfig
+from saddlefit.errors import UserError
 from saddlefit.tasks.mining import Candidate, _git_bytes, task_id_for, task_type_for
 from saddlefit.tasks.models import TASK_SCHEMA_VERSION, RepoRef, SuiteLock, TaskMeta
 from saddlefit.tasks.sealing import SealedWriter
-from saddlefit.tasks.splits import add_task, check_fractions, new_lock
+from saddlefit.tasks.splits import add_task, check_fractions
 
 PYTEST = "PYTHONPATH=src:. python -B -m pytest -q -p no:cacheprovider"
 _PR_SUFFIX = re.compile(r"\s*\(#\d+\)$")
@@ -44,9 +46,12 @@ class SuitePaths:
 
 
 def load_lock(paths: SuitePaths, splits: SplitsConfig) -> SuiteLock:
-    """Read ``suite.lock``, or start one (with a fresh salt) if the suite is new."""
+    """Read ``suite.lock``; only ``init`` creates one, so a missing lock is an error.
+
+    A fresh salt would silently move every task to a new split (B10).
+    """
     if not paths.lock.exists():
-        return new_lock(splits)
+        raise UserError(f"{paths.lock} is missing; splits cannot be recovered without it")
     lock = SuiteLock.model_validate_json(paths.lock.read_text(encoding="utf-8"))
     check_fractions(lock, splits)
     return lock
@@ -70,9 +75,19 @@ def _show(repo: Path, ref: str, rel: str) -> bytes | None:
 
 
 def materialize(
-    paths: SuitePaths, repo: Path, candidate: Candidate, lock: SuiteLock, *, created: date
+    paths: SuitePaths,
+    repo: Path,
+    candidate: Candidate,
+    lock: SuiteLock,
+    *,
+    created: date,
+    release_date: date | None = None,
 ) -> tuple[SuiteLock, TaskMeta] | None:
-    """Write one task; ``None`` when its hidden files are not UTF-8 text."""
+    """Write one task; ``None`` when its hidden files are not UTF-8 text.
+
+    With the student model's ``release_date``, a commit made before it is flagged as
+    contaminated (B10): the model may have seen it in training.
+    """
     task_id = task_id_for(candidate)
     hidden: dict[str, str] = {}
     for rel in (*candidate.test_files, *candidate.test_data):
@@ -83,11 +98,11 @@ def materialize(
             hidden[rel] = content.decode("utf-8")
         except UnicodeDecodeError:
             return None
-    tests = " ".join(candidate.test_files)
+    tests = " ".join(shlex.quote(rel) for rel in candidate.test_files)
     check_sh = f"#!/usr/bin/env bash\nset -u\ncd /work\n{PYTEST} {tests}\n"
     # The visible check runs the parent's versions of the same test files, where they exist.
     visible = [rel for rel in candidate.test_files if _show(repo, candidate.parent, rel)]
-    visible_check = f"{PYTEST} {' '.join(visible)}" if visible else None
+    visible_check = f"{PYTEST} {' '.join(shlex.quote(rel) for rel in visible)}" if visible else None
     subject = _PR_SUFFIX.sub("", candidate.subject)
     task_text = f"# {subject}\n\n{candidate.body}\n".rstrip() + "\n"
 
@@ -105,6 +120,7 @@ def materialize(
         repo=RepoRef(base_commit=candidate.parent),
         visible_check=visible_check,
         created=created,
+        contaminated=release_date is not None and candidate.committed.date() < release_date,
     )
     SealedWriter(paths.sealed_dir).write_task(
         task_id,

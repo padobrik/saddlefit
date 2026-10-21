@@ -28,6 +28,7 @@ from saddlefit.reports.baseline import build as build_report
 from saddlefit.reports.baseline import write as write_report
 from saddlefit.tasks.mining import STATE_DIR, MiningReport, Runner, mine
 from saddlefit.tasks.models import TaskMeta
+from saddlefit.tasks.splits import new_lock
 from saddlefit.tasks.suite import SuitePaths, load_lock, load_meta, materialize, save_lock
 
 
@@ -81,10 +82,12 @@ class Project:
         config = Config(
             schema_version=CONFIG_SCHEMA_VERSION, project=self.root.name, student=student
         )
-        self.config_path.write_text(dump_config(config), encoding="utf-8")
         commit = self.harness.init()
-        save_lock(self.suite, load_lock(self.suite, config.splits))
+        if not self.suite.lock.exists():  # a retried init keeps the salt it already made
+            save_lock(self.suite, new_lock(config.splits))
         self._ignore_state()
+        # written last: an existing config marks a finished init, so a failed one can be retried
+        self.config_path.write_text(dump_config(config), encoding="utf-8")
         return {
             "project": config.project,
             "model": config.student.model,
@@ -108,7 +111,14 @@ class Project:
         lock = load_lock(self.suite, config.splits)
         metas = []
         for candidate in report.viable:
-            made = materialize(self.suite, self.root, candidate, lock, created=date.today())
+            made = materialize(
+                self.suite,
+                self.root,
+                candidate,
+                lock,
+                created=date.today(),
+                release_date=config.student.release_date,
+            )
             if made is not None:
                 lock, meta = made
                 metas.append(meta)

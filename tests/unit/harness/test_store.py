@@ -344,3 +344,14 @@ def test_export_writes_the_committed_bytes(store: HarnessStore, tmp_path: Path) 
     dest = tmp_path / "out"
     store.export("main", dest)
     assert b"\r" not in (dest / "skills" / "pydantic" / "SKILL.md").read_bytes()
+
+
+def test_a_hidden_deletion_of_the_version_marker_is_refused(store: HarnessStore) -> None:
+    marker = (store.path / "harness.json").read_text(encoding="utf-8")
+    # git may pair the deletion with the new file as a rename and report only the new path
+    patch = unified("skills/moved.json", "", marker) + (
+        "--- a/harness.json\n+++ /dev/null\n@@ -1 +0,0 @@\n" + f"-{marker}"
+    )
+    with pytest.raises(HarnessStoreError, match="allowlist"):
+        store.propose("p-hide-marker", patch, "move the marker")
+    assert (store.path / "harness.json").read_text(encoding="utf-8") == marker

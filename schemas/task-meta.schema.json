@@ -32,6 +32,11 @@
   "additionalProperties": false,
   "description": "``tasks/public/<id>/meta.yaml``: what the student may know about a task.",
   "properties": {
+    "contaminated": {
+      "default": false,
+      "title": "Contaminated",
+      "type": "boolean"
+    },
     "created": {
       "format": "date",
       "title": "Created",

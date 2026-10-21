@@ -1,14 +1,19 @@
 import json
+import shutil
 import sys
 from pathlib import Path
 
+import docker
 import pytest
 from tests.fixtures.toyrepo.build import build
 from tests.integration.host_runner import HostRunner
+from tests.integration.test_mining import add_fix
 from typer.testing import CliRunner
 
 from saddlefit import cli
 from saddlefit.cli import app
+from saddlefit.errors import UserError
+from saddlefit.harness.store import HarnessStore, HarnessStoreError
 from saddlefit.project import Project
 
 pytestmark = pytest.mark.integration
@@ -42,7 +47,12 @@ def test_init_mine_list_show(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     task_id = rows[0]["id"]  # type: ignore[index]
     shown = invoke(repo, "tasks", "show", task_id, monkeypatch=monkeypatch)
     assert shown["meta"]["id"] == task_id  # type: ignore[index]
-    assert "canary" not in json.dumps(shown).lower()  # the sealed part is never shown
+    listed = invoke(repo, "tasks", "list", monkeypatch=monkeypatch)
+    for row in rows:  # type: ignore[union-attr]
+        token = (repo / ".saddlefit/tasks/sealed" / row["id"] / "canary.txt").read_text().strip()
+        assert token.startswith("SADDLEFIT-CANARY-")
+        assert token not in json.dumps(shown)  # the sealed part is never shown
+        assert token not in json.dumps(listed)
 
 
 def run_main(monkeypatch: pytest.MonkeyPatch, *args: str) -> object:
@@ -68,11 +78,91 @@ def test_user_errors_exit_1(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
     assert run_main(monkeypatch, "init") == 1
 
 
+class _DeadDocker:
+    """docker-py stand-in whose daemon does not answer; no real socket is opened."""
+
+    def __init__(self) -> None:
+        self.closed = False
+
+    def ping(self) -> bool:
+        raise docker.errors.DockerException("daemon not running")
+
+    def close(self) -> None:
+        self.closed = True
+
+
 def test_mining_without_docker_is_an_environment_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     repo = build(tmp_path / "repo")
     Project(repo).init()
     monkeypatch.chdir(repo)
-    monkeypatch.setenv("DOCKER_HOST", "unix:///nonexistent/docker.sock")
+    dead = _DeadDocker()
+    monkeypatch.setattr(docker, "from_env", lambda: dead)
     assert run_main(monkeypatch, "tasks", "mine") == 3
+    assert dead.closed
+
+
+def test_a_failed_init_can_be_retried(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    repo = build(tmp_path / "repo")
+    project = Project(repo)
+
+    def broken_harness(self: object) -> str:
+        raise HarnessStoreError("git is not available")
+
+    monkeypatch.setattr(HarnessStore, "init", broken_harness)
+    with pytest.raises(HarnessStoreError):
+        project.init()
+    assert not project.config_path.exists()
+    monkeypatch.undo()
+    shutil.rmtree(project.harness.path, ignore_errors=True)
+    assert project.init()["project"] == "repo"
+
+
+def test_a_lost_suite_lock_is_an_error_not_a_new_salt(tmp_path: Path) -> None:
+    repo = build(tmp_path / "repo")
+    project = Project(repo)
+    project.init()
+    project.mine(HostRunner(python=sys.executable), limit=2)
+    (project.suite.root / "suite.lock").unlink()
+    with pytest.raises(UserError, match=r"suite\.lock"):
+        project.mine(HostRunner(python=sys.executable), limit=2)
+
+
+def test_test_paths_are_quoted_in_the_checks(tmp_path: Path) -> None:
+    repo = build(tmp_path / "repo")
+    add_fix(repo, "tests/test $(touch pwned) x.py")
+    project = Project(repo)
+    project.init()
+    _, metas = project.mine(HostRunner(python=sys.executable), limit=1)
+    assert metas
+    quoted = "'tests/test $(touch pwned) x.py'"
+    assert metas[0].visible_check is None or quoted in metas[0].visible_check
+    check_sh = next((project.suite.sealed_dir / metas[0].id).glob("check.sh")).read_text()
+    assert quoted in check_sh
+
+
+@pytest.mark.parametrize(("release", "flagged"), [("2099-01-01", True), ("2000-01-01", False)])
+def test_tasks_older_than_the_model_are_flagged_as_contaminated(
+    tmp_path: Path, release: str, flagged: bool
+) -> None:
+    repo = build(tmp_path / "repo")
+    project = Project(repo)
+    project.init()
+    config = project.config_path.read_text(encoding="utf-8")
+    project.config_path.write_text(
+        config.replace("release_date: null", f"release_date: {release}"), encoding="utf-8"
+    )
+    _, metas = project.mine(HostRunner(python=sys.executable), limit=2)
+    assert metas
+    assert all(m.contaminated is flagged for m in metas)
+    assert all(m.contaminated is flagged for m in project.tasks())
+
+
+def test_without_a_release_date_nothing_is_flagged(tmp_path: Path) -> None:
+    repo = build(tmp_path / "repo")
+    project = Project(repo)
+    project.init()
+    _, metas = project.mine(HostRunner(python=sys.executable), limit=2)
+    assert metas
+    assert not any(m.contaminated for m in metas)
