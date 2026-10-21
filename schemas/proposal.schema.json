@@ -8,7 +8,7 @@
     },
     "evidence_run_ids": {
       "items": {
-        "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+        "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$",
         "type": "string"
       },
       "title": "Evidence Run Ids",
@@ -53,7 +53,7 @@
       "type": "string"
     },
     "proposal_id": {
-      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$",
       "title": "Proposal Id",
       "type": "string"
     },

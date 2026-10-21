@@ -138,6 +138,8 @@ def test_scripts_to_lint() -> None:
     [
         {"proposal_id": "not-a-ulid"},
         {"proposal_id": "--upload-pack=x"},
+        {"proposal_id": "ZZZZZZZZZZZZZZZZZZZZZZZZZZ"},  # over 128 bits
+        {"evidence_run_ids": ["8ZZZZZZZZZZZZZZZZZZZZZZZZZ"]},
         {"evidence_run_ids": ["../x"]},
         {"evidence_run_ids": []},
         {"evidence_run_ids": ["01JB2Y8Q4V9N1K3D7M5R6T0W2"]},

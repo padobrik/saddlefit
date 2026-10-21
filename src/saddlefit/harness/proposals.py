@@ -18,8 +18,8 @@ from saddlefit.eval.taxonomy import Tag
 from saddlefit.harness.store import HarnessStore, HarnessStoreError
 
 PROPOSAL_SCHEMA_VERSION: Final = 1
-# Crockford base32, as python-ulid writes it
-ULID_PATTERN: Final = r"^[0-9A-HJKMNP-TV-Z]{26}$"
+# Crockford base32, as python-ulid writes it; a first digit above 7 would overflow 128 bits
+ULID_PATTERN: Final = r"^[0-7][0-9A-HJKMNP-TV-Z]{25}$"
 # B8: tool scripts are Python, checked by ruff, or shell, checked by shellcheck
 SCRIPT_SUFFIXES: Final = frozenset({".py", ".sh"})
 
