@@ -191,6 +191,13 @@ def doctor(
         raise typer.Exit(ExitCode.USER_ERROR)
 
 
+def progress_line(run: RunOutcome, number: int) -> str:
+    """One line per finished run; held-out runs never show their task or outcome (B10)."""
+    if run.split == "held_out":
+        return f"run {number:3} held_out  (outcome kept for the report's aggregates)"
+    return f"run {number:3} {run.split:9} {run.classification.primary:20} {run.task_id}"
+
+
 @app.command()
 def baseline(
     ctx: typer.Context,
@@ -210,9 +217,13 @@ def baseline(
             timeout_s=timeout_s,
         )
 
+    finished = 0
+
     def progress(run: RunOutcome) -> None:
+        nonlocal finished
+        finished += 1
         if not (ctx.find_root().obj or {}).get("json"):
-            typer.echo(f"{run.split:8} {run.classification.primary:20} {run.task_id}")
+            typer.echo(progress_line(run, finished))
 
     report, markdown = project.baseline(
         docker_client=_docker(), model_client=model_client, limit=limit, on_run=progress

@@ -338,3 +338,59 @@ def test_the_student_timeout_follows_the_measured_speed(tmp_path: Path) -> None:
     other = record.model_copy(update={"model": "another:1b"})
     (project.state / "doctor.json").write_text(other.model_dump_json(), encoding="utf-8")
     assert project.student_timeout() == LOCAL_TIMEOUT_S  # measured for a different model
+
+
+@pytest.mark.parametrize(
+    ("configured", "probed", "expected"),
+    [
+        ("json", None, "json"),
+        ("native", "json", "native"),
+        ("auto", "json", "json"),
+        ("auto", None, "native"),
+    ],
+)
+def test_the_baseline_uses_the_configured_or_probed_tool_mode(
+    tmp_path: Path, configured: str, probed: str | None, expected: str
+) -> None:
+    repo = build(tmp_path / "repo")
+    project = Project(repo)
+    project.init(model="qwen3:8b")
+    config = project.config_path.read_text(encoding="utf-8")
+    project.config_path.write_text(
+        config.replace("tool_mode: auto", f"tool_mode: {configured}"), encoding="utf-8"
+    )
+    if probed is not None:
+        record = DoctorRecord(
+            schema_version=1,
+            model="qwen3:8b",
+            digest=None,
+            tool_mode=probed,  # type: ignore[arg-type]
+            native_probes=5,
+            json_probes=10,
+            tokens_per_second=20.0,
+            tier="M",
+            checked_at=datetime(2026, 10, 21, tzinfo=UTC),
+        )
+        (project.state / "doctor.json").write_text(record.model_dump_json(), encoding="utf-8")
+    assert project.tool_mode() == expected
+
+
+def test_progress_never_names_a_held_out_task() -> None:
+    from saddlefit.eval.taxonomy import Classification  # noqa: PLC0415
+    from saddlefit.loops.baseline import RunOutcome  # noqa: PLC0415
+
+    def outcome(split: str) -> RunOutcome:
+        return RunOutcome(
+            task_id="secret-task-id",
+            split=split,
+            run_id="r",
+            seed=7,
+            passed=False,
+            classification=Classification(primary="gave_up", tags=("gave_up",)),
+            harness_tokens=1,
+        )
+
+    assert "secret-task-id" in cli.progress_line(outcome("train"), 1)
+    held = cli.progress_line(outcome("held_out"), 2)
+    assert "secret-task-id" not in held
+    assert "gave_up" not in held

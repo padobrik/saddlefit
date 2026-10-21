@@ -15,7 +15,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from saddlefit import __version__
 from saddlefit.config import CONFIG_SCHEMA_VERSION, Config, StudentConfig, dump_config, load_config
@@ -166,14 +166,27 @@ class Project:
         model that writes about 24 tokens a second, so a long, careful reply would time out.
         ``saddlefit doctor`` measures the speed; without its record the default stays.
         """
-        record_path = self.state / "doctor.json"
-        try:
-            record = DoctorRecord.model_validate_json(record_path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            return LOCAL_TIMEOUT_S
-        if record.model != self.config().student.model or record.tokens_per_second <= 0:
+        record = self._doctor_record()
+        if record is None or record.tokens_per_second <= 0:
             return LOCAL_TIMEOUT_S
         return max(LOCAL_TIMEOUT_S, MAX_REPLY_TOKENS / record.tokens_per_second * 1.5)
+
+    def tool_mode(self) -> Literal["native", "json"]:
+        """The configured tool-calling mode; for ``auto``, the one ``doctor`` chose (B5)."""
+        configured = self.config().student.tool_mode
+        if configured != "auto":
+            return configured
+        record = self._doctor_record()
+        return record.tool_mode if record is not None else "native"
+
+    def _doctor_record(self) -> DoctorRecord | None:
+        """``doctor.json`` when it was measured for the configured model, else ``None``."""
+        try:
+            path = self.state / "doctor.json"
+            record = DoctorRecord.model_validate_json(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        return record if record.model == self.config().student.model else None
 
     def effective_loop(self) -> tuple[LoopConfig, list[str]]:
         """``loop.yaml`` from the harness store, clamped to ``saddlefit.yaml``."""
@@ -215,6 +228,7 @@ class Project:
                 ),
                 docker_client=docker_client,
                 image=config.sandbox.image,
+                tool_mode=self.tool_mode(),
                 on_run=on_run,
             )
             result = runner.run(metas)
