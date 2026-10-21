@@ -134,13 +134,16 @@ def tasks_mine(
 @tasks_app.command("list")
 def tasks_list(ctx: typer.Context) -> None:
     """List tasks with their type and split."""
-    metas = _project().tasks()
+    project = _project()
+    metas = project.tasks()
+    # judged against the configured model on every read, so a new release date applies at once
+    release = project.config().student.release_date
     rows = [
-        {"id": m.id, "type": m.type, "split": m.split, "contaminated": m.contaminated}
+        {"id": m.id, "type": m.type, "split": m.split, "contaminated": m.contaminated(release)}
         for m in metas
     ]
     lines = [
-        f"{m.split:8} {m.type:8} {m.id}{'  (contaminated)' if m.contaminated else ''}"
+        f"{m.split:8} {m.type:8} {m.id}{'  (contaminated)' if m.contaminated(release) else ''}"
         for m in metas
     ]
     _emit(ctx, rows, "\n".join(lines) or "no tasks")

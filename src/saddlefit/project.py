@@ -117,7 +117,6 @@ class Project:
                 candidate,
                 lock,
                 created=date.today(),
-                release_date=config.student.release_date,
             )
             if made is not None:
                 lock, meta = made

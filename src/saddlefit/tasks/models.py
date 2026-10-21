@@ -53,9 +53,16 @@ class TaskMeta(_Strict):
     repo: RepoRef
     visible_check: str | None = None
     created: date
-    # B10 mechanism 8: from public history older than the student model, so possibly seen
-    # in its training data
-    contaminated: bool = False
+    # the commit's date for history tasks; contamination is judged from it (B10 mechanism 8)
+    committed: date | None = None
+
+    def contaminated(self, release_date: date | None) -> bool:
+        """Older than the student model's release, so possibly seen in its training data."""
+        return (
+            release_date is not None
+            and self.committed is not None
+            and self.committed < release_date
+        )
 
     @model_validator(mode="after")
     def _control_needs_a_trusted_source(self) -> Self:

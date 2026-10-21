@@ -33,6 +33,17 @@ Assumptions taken where the spec leaves a detail open. Deviations from the spec 
 - **Doctor speed and exit codes.** Speed is measured after one unmeasured warm-up call, so model
   loading does not count. `doctor` exits 1 when the model is not compact or its tier is unknown,
   and 3 when Docker or the runner is unusable.
-- **Contamination flag.** B10 does not name the field: `meta.yaml` carries `contaminated: true`
-  when the task's commit is older than `student.release_date`, and `tasks list` marks such tasks.
-  Without a release date nothing is flagged.
+- **Contamination flag.** B10 does not name a field. `meta.yaml` stores the history commit's date
+  as `committed`, and a task counts as contaminated when that date is older than the configured
+  `student.release_date`. The flag is computed on every read, so `tasks list` follows a changed
+  model or release date without re-mining. Without a release date nothing is flagged.
+- **Task text for history tasks.** The spec does not say how a commit becomes `task.md`. It is
+  an instruction: the commit subject without its Conventional Commit prefix, a sentence saying
+  the change is not in the repository yet, and the commit body without pull-request template
+  sections (`Linked issue`, `Checklist`, `Evaluation-integrity impact`, `Test plan`), checkbox
+  lines, issue-closing lines and sign-off trailers. A pull request's description otherwise reads
+  as a report that the work is done.
+- **Visible check for history tasks.** Every history task gets one: the parent's versions of the
+  commit's test files, else the existing tests in the same directories, else the whole suite,
+  run with the same command as the hidden check (`PYTHONPATH=src:.`), so `finish_gate.run` is not
+  needed for mined tasks.
