@@ -59,9 +59,6 @@ def _fetch_json(url: str, payload: dict[str, Any] | None) -> Any:
         return json.load(response)
 
 
-_REASONING_EFFORT: dict[str, str] = {"off": "none", "low": "low", "high": "high"}
-
-
 def _native_root(base_url: str) -> str:
     parts = urlsplit(base_url)
     path = parts.path.rstrip("/")
@@ -146,6 +143,28 @@ class OpenAICompatibleClient:
             base_url=base_url, api_key=api_key, timeout=timeout_s, max_retries=0
         )
         self._info: ModelInfo | None = None
+        self._warned_reasoning_off = False
+
+    def _reasoning_effort(self, reasoning: str | None) -> str | None:
+        """The OpenAI-style ``reasoning_effort`` value for this runner, or ``None`` to send none.
+
+        "low" and "high" are standard. Turning reasoning off has no standard value: Ollama
+        takes "none", and other runners get nothing rather than a value they may reject.
+        """
+        if reasoning is None:
+            return None
+        if reasoning == "off":
+            if self.info().runner == "ollama":
+                return "none"
+            if not self._warned_reasoning_off:
+                self._warned_reasoning_off = True
+                log.warning(
+                    "reasoning effort 'off' was not applied: %s is not known to support it; "
+                    "the runner's default reasoning is used",
+                    self.base_url,
+                )
+            return None
+        return reasoning
 
     def info(self) -> ModelInfo:
         if self._info is None:
@@ -189,9 +208,9 @@ class OpenAICompatibleClient:
             kwargs["seed"] = params.seed
         if params.max_tokens is not None:
             kwargs["max_tokens"] = params.max_tokens
-        if params.reasoning is not None:
-            # the OpenAI-style knob; Ollama maps "none" to no thinking at all
-            kwargs["reasoning_effort"] = _REASONING_EFFORT[params.reasoning]
+        effort = self._reasoning_effort(params.reasoning)
+        if effort is not None:
+            kwargs["reasoning_effort"] = effort
         if json_mode:
             payload = [{"role": "system", "content": _json_mode_prompt(tools)}, *payload]
             if self.constrained_json:
