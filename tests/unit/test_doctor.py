@@ -3,6 +3,7 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
+import docker
 import pytest
 from tests.unit.test_compact import DENSE_70B, QWEN3_8B
 from typer.testing import CliRunner
@@ -14,6 +15,7 @@ from saddlefit.config import Config, dump_config
 from saddlefit.doctor import (
     Check,
     DoctorReport,
+    docker_checks,
     measure_speed,
     probe_tools,
     render,
@@ -154,3 +156,87 @@ def test_speed_is_measured_after_a_warm_up_call() -> None:
     client = FakeClient(script)
     assert measure_speed(client) == 50.0
     assert len(client.calls) == 2
+
+
+def test_a_runner_that_returns_garbage_is_an_environment_failure() -> None:
+    def broken(
+        messages: Sequence[Message], tools: Sequence[ToolSpec] | None, params: GenParams
+    ) -> ModelReply:
+        raise IndexError("no choices in the response")
+
+    report = run(FakeClient(broken))
+    assert not report.environment_ok
+    assert report.checks[-1].name == "runner"
+    assert "no choices" in report.checks[-1].detail
+
+
+def test_a_probe_that_raises_counts_as_a_failed_probe() -> None:
+    calls = {"n": 0}
+
+    def flaky(
+        messages: Sequence[Message], tools: Sequence[ToolSpec] | None, params: GenParams
+    ) -> ModelReply:
+        calls["n"] += 1
+        if calls["n"] % 2:
+            raise KeyError("tool_calls")
+        city = messages[-1].content.split(" in ")[1].split(" right")[0]
+        return ModelReply(
+            tool_calls=(ToolCall(id="c", name="get_weather", arguments={"city": city}),)
+        )
+
+    assert probe_tools(FakeClient(flaky), "native") == 5
+
+
+class _Docker:
+    """A stub of docker-py: ping works; version or the image lookup can fail."""
+
+    def __init__(self, fail: str) -> None:
+        self.fail = fail
+        self.images = self
+        self.closed = False
+
+    def ping(self) -> bool:
+        return True
+
+    def version(self) -> dict[str, str]:
+        if self.fail == "version":
+            raise docker.errors.APIError("version endpoint broke")
+        return {"Version": "28"}
+
+    def get(self, image: str) -> object:
+        if self.fail == "image":
+            raise docker.errors.APIError("image store broke")
+        return object()
+
+    def close(self) -> None:
+        self.closed = True
+
+
+@pytest.mark.parametrize("fail", ["version", "image"])
+def test_docker_api_errors_become_failed_checks(monkeypatch: pytest.MonkeyPatch, fail: str) -> None:
+    stub = _Docker(fail)
+    monkeypatch.setattr(docker, "from_env", lambda: stub)
+    checks = docker_checks("img")
+    assert any(c.ok is False and "broke" in c.detail for c in checks)
+    assert stub.closed
+
+
+def test_a_failed_record_write_shows_the_report_and_exits_3(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    config = tmp_path / ".saddlefit" / "saddlefit.yaml"
+    config.parent.mkdir()
+    config.write_text(dump_config(Config(schema_version=1, project="p")), encoding="utf-8")
+    monkeypatch.setattr(cli, "doctor_for", lambda student, sandbox: canned("M"))
+    real_write = Path.write_text
+
+    def read_only(self: Path, *args: object, **kwargs: object) -> int:
+        if self.name == "doctor.json":
+            raise PermissionError("read-only")
+        return real_write(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(Path, "write_text", read_only)
+    result = CliRunner().invoke(app, ["doctor", "--config", str(config)])
+    assert "tier: M (compact)" in result.output
+    assert isinstance(result.exception, cli.EnvironmentFailure)
+    assert result.exception.exit_code == ExitCode.ENVIRONMENT_ERROR

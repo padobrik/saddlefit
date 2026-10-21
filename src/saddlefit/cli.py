@@ -159,15 +159,18 @@ def doctor(
     student = loaded.student if loaded else StudentConfig()
     sandbox = loaded.sandbox if loaded else SandboxConfig()
     report = doctor_for(student, sandbox)
-    if loaded is not None and report.record is not None:
-        # B5: the probe result is stored with the model digest, for tool_mode "auto"
-        (config.parent / "doctor.json").write_text(
-            report.record.model_dump_json(indent=2) + "\n", encoding="utf-8"
-        )
+    # the report comes first, so a failed write below never hides the checks
     if ctx.obj["json"]:
         typer.echo(json.dumps(report.as_json(), indent=2))
     else:
         typer.echo(render(report))
+    if loaded is not None and report.record is not None:
+        # B5: the probe result is stored with the model digest, for tool_mode "auto"
+        record = config.parent / "doctor.json"
+        try:
+            record.write_text(report.record.model_dump_json(indent=2) + "\n", encoding="utf-8")
+        except OSError as exc:
+            raise EnvironmentFailure(f"cannot write {record}: {exc}") from exc
     if not report.environment_ok:
         raise EnvironmentFailure("Docker or the model runner is not usable; see the checks above")
     if not report.compact:
