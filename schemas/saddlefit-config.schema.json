@@ -218,6 +218,24 @@
       "additionalProperties": false,
       "description": "Tutor prices in USD per million tokens; filled in by the user, never hardcoded.",
       "properties": {
+        "cache_read": {
+          "default": 0.0,
+          "minimum": 0.0,
+          "title": "Cache Read",
+          "type": "number"
+        },
+        "cache_write_1h": {
+          "default": 0.0,
+          "minimum": 0.0,
+          "title": "Cache Write 1H",
+          "type": "number"
+        },
+        "cache_write_5m": {
+          "default": 0.0,
+          "minimum": 0.0,
+          "title": "Cache Write 5M",
+          "type": "number"
+        },
         "input": {
           "default": 0.0,
           "minimum": 0.0,
@@ -258,6 +276,9 @@
         "prices_usd_per_mtok": {
           "$ref": "#/$defs/TokenPrices",
           "default": {
+            "cache_read": 0.0,
+            "cache_write_1h": 0.0,
+            "cache_write_5m": 0.0,
             "input": 0.0,
             "output": 0.0
           }
@@ -316,7 +337,7 @@
       "$ref": "#/$defs/SandboxConfig"
     },
     "schema_version": {
-      "const": 1,
+      "const": 2,
       "title": "Schema Version",
       "type": "integer"
     },
@@ -348,6 +369,9 @@
         "max_usd_per_round": 5.0,
         "model": "claude-opus-5-5",
         "prices_usd_per_mtok": {
+          "cache_read": 0.0,
+          "cache_write_1h": 0.0,
+          "cache_write_5m": 0.0,
           "input": 0.0,
           "output": 0.0
         },

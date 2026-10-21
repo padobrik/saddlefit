@@ -15,8 +15,10 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 
 from saddlefit import __version__
 from saddlefit.errors import UserError
+from saddlefit.storage.migrations import MigrationError, upgrade
+from saddlefit.storage.migrations.config import CONFIG_KIND
 
-CONFIG_SCHEMA_VERSION: Final = 1
+CONFIG_SCHEMA_VERSION: Final = 2
 CONFIG_FILENAME = "saddlefit.yaml"
 SANDBOX_REPOSITORY: Final = "ghcr.io/padobrik/saddlefit-sandbox"
 
@@ -50,6 +52,9 @@ class TokenPrices(_Strict):
 
     input: float = Field(default=0.0, ge=0.0)
     output: float = Field(default=0.0, ge=0.0)
+    cache_write_5m: float = Field(default=0.0, ge=0.0)
+    cache_write_1h: float = Field(default=0.0, ge=0.0)
+    cache_read: float = Field(default=0.0, ge=0.0)
 
 
 class TutorConfig(_Strict):
@@ -125,7 +130,7 @@ class FastLoopConfig(_Strict):
 class Config(_Strict):
     """The whole ``saddlefit.yaml`` file."""
 
-    schema_version: Literal[1]
+    schema_version: Literal[2]
     project: str = Field(min_length=1)
     student: StudentConfig = StudentConfig()
     tutor: TutorConfig = TutorConfig()
@@ -166,6 +171,10 @@ def load_config(path: Path) -> Config:
         raise ConfigError(f"configuration is not valid YAML: {path}: {exc}") from exc
     if not isinstance(raw, dict):
         raise ConfigError(f"configuration must be a mapping: {path}")
+    try:
+        raw = upgrade(CONFIG_KIND, raw, CONFIG_SCHEMA_VERSION)
+    except MigrationError as exc:
+        raise ConfigError(f"invalid configuration in {path}: {exc}") from exc
     try:
         return Config.model_validate(raw)
     except ValidationError as exc:
