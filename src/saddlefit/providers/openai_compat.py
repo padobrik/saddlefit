@@ -158,10 +158,10 @@ class OpenAICompatibleClient:
                 return "none"
             if not self._warned_reasoning_off:
                 self._warned_reasoning_off = True
+                # no URL in the message: a base URL can carry credentials
                 log.warning(
-                    "reasoning effort 'off' was not applied: %s is not known to support it; "
-                    "the runner's default reasoning is used",
-                    self.base_url,
+                    "reasoning effort 'off' was not applied: the runner is not known to "
+                    "support it, so its default reasoning is used"
                 )
             return None
         return reasoning
