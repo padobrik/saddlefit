@@ -32,8 +32,9 @@ What the evaluator does guarantee:
 So code under test can read every hidden test copied into the container, and could change its
 behaviour at run time based on what it reads. It cannot send anything back: neither the hidden
 tests' content nor the check's output can travel to the model, the tutor or a report. The only
-channel out is the verdict's exit code, duration and timeout flag, plus the aggregates B10 allows
-in reports. Such code has to be written before its author has seen any hidden test, so it can only
+channel out is the verdict: whether the run passed, the exit code, the duration, whether it timed
+out, was tampered with, failed to apply its diff or hit an environment error. It never names a
+hidden-test path. Reports add only the aggregates B10 allows them. Such code has to be written before its author has seen any hidden test, so it can only
 be a generic attempt to game tests. B10 defends against that with held-out and control sets and
 repeated runs (B10 known traps, B12).
 
@@ -50,8 +51,10 @@ The pre-merge check is reworded to say this explicitly, keeping every other cond
 > the tutor, the generator or the fast loop read sealed task data or held-out or control outcomes,
 > or lets control results influence any decision. Code under test reading the hidden tests inside
 > the evaluation container, as B10 mechanism 2 prescribes, is not such a read, provided the
-> check's output goes only to the sealed store and nothing but the verdict's exit code, duration
-> and timeout flag reaches the student model, the tutor, the generator or the fast loop. Reports
+> check's output goes only to the sealed store and nothing but the verdict (passed, exit code,
+> duration, timed out, tampered, diff applied, environment error) reaches the student model, the
+> tutor, the generator or the fast loop; the verdict never carries hidden-test content,
+> hidden-test paths or check output. Reports
 > may carry what B10 allows them: held-out aggregates, and control outcomes only after
 > `report --final`. Pass otherwise.
 
@@ -60,8 +63,8 @@ The pre-merge check is reworded to say this explicitly, keeping every other cond
 The check keeps its purpose: any path from sealed data to the model, the tutor, the generator or
 the fast loop still fails, and reports stay limited to what B10's table allows them.
 
-The verdict fields that do leave evaluation, exit code, duration and timeout flag, are what the
-run record keeps for the hidden check. The duration is a timing side channel: it can tell how long
+The verdict fields that do leave evaluation are flags and numbers the run record and the failure
+taxonomy need; tampering is a flag, so it does not reveal which path collided with a hidden test. The duration is a timing side channel: it can tell how long
 the hidden tests ran, nothing about what they contain. That risk is accepted.
 
 The evaluator can keep the B10 design. Generic code that games tests, written without seeing them
