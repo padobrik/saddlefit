@@ -5,7 +5,14 @@ import pytest
 
 from saddlefit.eval.taxonomy import Classification
 from saddlefit.loops.baseline import BaselineResult, RunOutcome
-from saddlefit.reports.baseline import ReportContext, build, render_markdown, wilson, write
+from saddlefit.reports.baseline import (
+    REPORT_SCHEMA_VERSION,
+    ReportContext,
+    build,
+    render_markdown,
+    wilson,
+    write,
+)
 
 CTX = ReportContext(
     model="qwen3:8b",
@@ -66,3 +73,29 @@ def test_report_aggregates_and_hides_held_out_detail(tmp_path: Path) -> None:
     assert "| train | 1 | 2 | 50% |" in md.read_text(encoding="utf-8")
     assert json.loads(js.read_text(encoding="utf-8"))["kind"] == "baseline"
     assert "qwen3:8b" in render_markdown(report)
+
+
+def test_environment_errors_stay_out_of_the_rates() -> None:
+    result = BaselineResult(runs_per_task=1, solved_threshold=1)
+    result.runs += [
+        run("a", "train", True, "solved"),
+        run("b", "train", False, "gave_up"),
+        run("c", "train", False, "env_error"),  # never a model attempt
+    ]
+    assert result.solved() == {"a": True, "b": False}
+    assert result.inconclusive() == ["c"]
+    assert result.by_split() == {"train": (1, 2)}
+    report = build(result, CTX)
+    assert report["excluded_runs"] == 1
+    assert report["inconclusive_tasks"] == 1
+    assert "excluded" in render_markdown(report)
+
+
+def test_both_report_files_carry_the_schema_version(tmp_path: Path) -> None:
+    result = BaselineResult(runs_per_task=1, solved_threshold=1)
+    result.runs.append(run("a", "train", True, "solved"))
+    markdown_path, json_path = write(build(result, CTX), tmp_path, "baseline-x")
+    assert (
+        json.loads(json_path.read_text(encoding="utf-8"))["schema_version"] == REPORT_SCHEMA_VERSION
+    )
+    assert f"schema_version: {REPORT_SCHEMA_VERSION}" in markdown_path.read_text(encoding="utf-8")

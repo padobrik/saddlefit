@@ -18,6 +18,9 @@ from saddlefit.loops.baseline import BaselineResult
 Z95 = 1.959963984540054
 
 
+REPORT_SCHEMA_VERSION = 1
+
+
 def wilson(successes: int, n: int, z: float = Z95) -> tuple[float, float]:
     """The Wilson score interval for a binomial proportion (95% by default)."""
     if n == 0:
@@ -49,7 +52,9 @@ def build(result: BaselineResult, ctx: ReportContext) -> dict[str, Any]:
     train_tasks = sorted({r.task_id for r in result.runs if r.split == "train"})
     tokens = [r.harness_tokens for r in result.runs]
     return {
-        "schema_version": 1,
+        "schema_version": REPORT_SCHEMA_VERSION,
+        "excluded_runs": result.excluded_runs(),
+        "inconclusive_tasks": len(result.inconclusive()),
         "kind": "baseline",
         "created": datetime.now(UTC).isoformat(timespec="seconds"),
         "model": {"id": ctx.model, "digest": ctx.model_digest},
@@ -59,7 +64,8 @@ def build(result: BaselineResult, ctx: ReportContext) -> dict[str, Any]:
         "runs_per_task": result.runs_per_task,
         "solved_threshold": result.solved_threshold,
         "splits": splits,
-        "train_tasks": {task: solved[task] for task in train_tasks},
+        # decided tasks only; inconclusive ones are counted separately
+        "train_tasks": {task: solved[task] for task in train_tasks if task in solved},
         "failure_profile": result.failure_profile(),
         "mean_harness_tokens": round(sum(tokens) / len(tokens), 1) if tokens else 0,
         "control_evaluations": 0,
@@ -68,6 +74,7 @@ def build(result: BaselineResult, ctx: ReportContext) -> dict[str, Any]:
 
 def render_markdown(report: dict[str, Any]) -> str:
     lines = [
+        f"<!-- saddlefit baseline report, schema_version: {report['schema_version']} -->",
         "# Baseline report",
         "",
         f"- Model: `{report['model']['id']}` ({report['model']['digest'] or 'no digest'})",
@@ -76,6 +83,8 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"- Runs per task: {report['runs_per_task']}, solved at "
         f"{report['solved_threshold']}+ passing runs",
         f"- Control evaluations so far: {report['control_evaluations']}",
+        f"- Runs excluded for environment errors: {report.get('excluded_runs', 0)}; tasks "
+        f"left inconclusive: {report.get('inconclusive_tasks', 0)}",
         "",
         "| Split | Solved | Tasks | Rate | Wilson 95% |",
         "| --- | --- | --- | --- | --- |",

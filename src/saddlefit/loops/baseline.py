@@ -61,13 +61,32 @@ class BaselineResult:
     runs_per_task: int = 3
     solved_threshold: int = 2
 
-    def solved(self) -> dict[str, bool]:
+    def _counted(self) -> tuple[Counter[str], Counter[str]]:
+        """Passes and counted runs per task; env_error runs are no attempt by the model."""
         passes: Counter[str] = Counter()
-        seen: set[str] = set()
+        counted: Counter[str] = Counter()
         for run in self.runs:
-            seen.add(run.task_id)
-            passes[run.task_id] += run.passed
-        return {task: passes[task] >= self.solved_threshold for task in sorted(seen)}
+            if run.classification.counts_in_statistics:
+                counted[run.task_id] += 1
+                passes[run.task_id] += run.passed
+        return passes, counted
+
+    def solved(self) -> dict[str, bool]:
+        """Decided tasks only: a task with fewer counted runs than the threshold is left out."""
+        passes, counted = self._counted()
+        return {
+            task: passes[task] >= self.solved_threshold
+            for task in sorted(counted)
+            if counted[task] >= self.solved_threshold or passes[task] >= self.solved_threshold
+        }
+
+    def inconclusive(self) -> list[str]:
+        """Tasks whose environment errors left too few runs to decide them."""
+        decided = self.solved()
+        return sorted({run.task_id for run in self.runs} - decided.keys())
+
+    def excluded_runs(self) -> int:
+        return sum(not run.classification.counts_in_statistics for run in self.runs)
 
     def by_split(self) -> dict[str, tuple[int, int]]:
         """split -> (solved tasks, tasks)."""
