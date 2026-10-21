@@ -4,7 +4,7 @@ Date: 2026-10-21
 
 ## Status
 
-Proposed (needs the maintainer's decision)
+Accepted
 
 ## Context
 
@@ -33,14 +33,14 @@ So code under test can at most read the test that is running it, with no channel
 model, the tutor or a report. B10 defends against code that games the tests blindly with held-out
 and control sets and repeated runs (B10 known traps, B12).
 
-## Decision (proposed)
+## Decision
 
 "The student" in B10 and in the pre-merge check means the student model and everything that
 reaches it: prompts, tool results, run records and reports. Code under test may read the hidden
 test it is being judged by, inside the evaluation container. That is inherent to running tests, and
 B10 mechanism 2 prescribes it.
 
-The pre-merge check would be reworded to say this explicitly, keeping every other condition:
+The pre-merge check is reworded to say this explicitly, keeping every other condition:
 
 > Fail if the change lets the student model (its prompts, tool results, run records or reports),
 > the tutor, the generator or the fast loop read sealed task data or held-out or control outcomes,

@@ -59,9 +59,13 @@ reviews:
       - name: "Evaluation integrity"
         mode: error
         instructions: |
-          Fail if the change lets the student, the tutor, the generator or the fast loop read
-          sealed task data or held-out or control outcomes, or lets control results influence
-          any decision. Pass otherwise.
+          Fail if the change lets the student model (its prompts, tool results, run records
+          or reports), the tutor, the generator or the fast loop read sealed task data or
+          held-out or control outcomes, or lets control results influence any decision. Code
+          under test reading the hidden tests inside the evaluation container, as B10
+          mechanism 2 prescribes, is not such a read, provided nothing from that container
+          except the verdict's exit code, duration and timeout flag leaves it (ADR 0003).
+          Pass otherwise.
       - name: "Schema versioning"
         mode: error
         instructions: |
