@@ -5,13 +5,24 @@ import pytest
 
 from saddlefit.config import EvaluationConfig, SandboxConfig
 from saddlefit.eval import evaluator as evaluator_module
-from saddlefit.eval.evaluator import MAX_DIFF_BYTES, Evaluator, PlantedSymlinkError, _inside
+from saddlefit.eval.evaluator import (
+    MAX_DIFF_BYTES,
+    Evaluator,
+    PlantedSymlinkError,
+    _inside,
+    _tampered,
+)
 from saddlefit.eval.sealed import SealedStore
+from saddlefit.eval.tamper import diff_paths
 from saddlefit.tasks.sealing import SealedWriter
 
 DIFF = (
     "diff --git a/tests/test_a.py b/tests/test_a.py\n--- a/tests/test_a.py\n+++ b/tests/test_a.py\n"
 )
+
+
+def tampered_paths_of(diff: str) -> list[str]:
+    return _tampered(diff_paths(diff), EvaluationConfig().protected_paths, ["tests/test_h.py"])
 
 
 def test_tampering_is_decided_before_any_container(tmp_path: Path) -> None:
@@ -21,11 +32,7 @@ def test_tampering_is_decided_before_any_container(tmp_path: Path) -> None:
     # no docker client at all: a tampered diff must never need one
     evaluator = Evaluator(SealedStore(tmp_path), None, "img", SandboxConfig(), EvaluationConfig())
     verdict = evaluator.evaluate("t-0001", tmp_path, DIFF, "01JB2Y8Q4V9N1K3D7M5R6T0W2X")
-    assert (verdict.passed, verdict.tampered, verdict.exit_code) == (
-        False,
-        ("tests/test_a.py",),
-        None,
-    )
+    assert (verdict.passed, verdict.tampered, verdict.exit_code) == (False, True, None)
 
 
 def test_inside_guards_symlinks(tmp_path: Path) -> None:
@@ -48,7 +55,8 @@ def test_a_diff_touching_the_evaluator_files_is_tampering(tmp_path: Path, path: 
     diff = f"diff --git a/{path} b/{path}\nnew file mode 100644\n--- /dev/null\n+++ b/{path}\n"
     evaluator = Evaluator(SealedStore(tmp_path), None, "img", SandboxConfig(), EvaluationConfig())
     verdict = evaluator.evaluate("t-0001", tmp_path, diff, "01JB2Y8Q4V9N1K3D7M5R6T0W2X")
-    assert verdict.tampered == (path,)
+    assert verdict.tampered is True
+    assert tampered_paths_of(diff) == [path]  # the path stays inside the evaluator
 
 
 @pytest.mark.parametrize("path", ["tests/test_h.py/inner.py", "tests"])
@@ -59,7 +67,8 @@ def test_a_diff_in_the_way_of_a_hidden_test_is_tampering(tmp_path: Path, path: s
     diff = f"diff --git a/{path} b/{path}\nnew file mode 100644\n--- /dev/null\n+++ b/{path}\n"
     evaluator = Evaluator(SealedStore(tmp_path), None, "img", SandboxConfig(), EvaluationConfig())
     verdict = evaluator.evaluate("t-0001", tmp_path, diff, "01JB2Y8Q4V9N1K3D7M5R6T0W2X")
-    assert verdict.tampered == (path,)
+    assert verdict.tampered is True
+    assert tampered_paths_of(diff) == [path]  # the path stays inside the evaluator
 
 
 def _store(tmp_path: Path) -> SealedStore:
@@ -73,7 +82,7 @@ def test_a_headerless_diff_cannot_slip_past_the_tamper_check(tmp_path: Path) -> 
     headerless = "--- a/tests/test_a.py\n+++ b/tests/test_a.py\n@@ -1 +1 @@\n-x\n+y\n"
     evaluator = Evaluator(_store(tmp_path), None, "img", SandboxConfig(), EvaluationConfig())
     verdict = evaluator.evaluate("t-0001", tmp_path, headerless, "01JB2Y8Q4V9N1K3D7M5R6T0W2X")
-    assert verdict.tampered == ("tests/test_a.py",)
+    assert verdict.tampered is True
 
 
 def test_a_diff_git_cannot_parse_fails_before_any_container(tmp_path: Path) -> None:
@@ -149,3 +158,12 @@ def test_the_size_check_comes_before_the_python_diff_parser(
     evaluator = Evaluator(_store(tmp_path), None, "img", SandboxConfig(), EvaluationConfig())
     verdict = evaluator.evaluate("t-0001", tmp_path, diff, "01JB2Y8Q4V9N1K3D7M5R6T0W2X")
     assert verdict.diff_applied is False
+
+
+def test_a_verdict_never_names_a_path(tmp_path: Path) -> None:
+    # the hidden test's path is sealed; a verdict only says that the run was tampered with
+    diff = "--- a/tests/test_h.py\n+++ b/tests/test_h.py\n@@ -1 +1 @@\n-x\n+y\n"
+    evaluator = Evaluator(_store(tmp_path), None, "img", SandboxConfig(), EvaluationConfig())
+    verdict = evaluator.evaluate("t-0001", tmp_path, diff, "01JB2Y8Q4V9N1K3D7M5R6T0W2X")
+    assert verdict.tampered is True
+    assert "test_h" not in repr(verdict)

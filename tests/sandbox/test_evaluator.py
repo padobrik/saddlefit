@@ -73,7 +73,7 @@ def test_correct_fix_passes(setup: tuple[Evaluator, Path, Path]) -> None:
     verdict = evaluator.evaluate(TASK, base, FIX_DIFF, RUN_ID)
     assert verdict.passed
     assert verdict.exit_code == 0
-    assert verdict.tampered == ()
+    assert verdict.tampered is False
 
 
 def test_no_change_fails(setup: tuple[Evaluator, Path, Path]) -> None:
@@ -99,7 +99,7 @@ def test_editing_tests_is_tampering_and_never_runs(setup: tuple[Evaluator, Path,
     sneaky = FIX_DIFF.replace("src/toykit/dates.py", "tests/test_smoke.py")
     verdict = evaluator.evaluate(TASK, base, sneaky, RUN_ID)
     assert not verdict.passed
-    assert verdict.tampered == ("tests/test_smoke.py",)
+    assert verdict.tampered is True
     assert not (sealed / TASK / "check_output").exists()
 
 
@@ -146,5 +146,5 @@ def test_a_symlink_planted_by_the_diff_is_refused(
     )
     verdict = evaluator.evaluate("symlink-trap-0001", base, planted, RUN_ID)
     assert not verdict.passed
-    assert verdict.tampered == ("checks",)
+    assert verdict.tampered is True
     assert list(outside.iterdir()) == []

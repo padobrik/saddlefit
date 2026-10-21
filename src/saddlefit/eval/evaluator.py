@@ -40,7 +40,8 @@ class Verdict:
     exit_code: int | None
     duration_s: float
     timed_out: bool = False
-    tampered: tuple[str, ...] = ()
+    # only whether it was tampered with: which paths would reveal where hidden tests live
+    tampered: bool = False
     diff_applied: bool = True
     env_error: str | None = None
 
@@ -85,7 +86,7 @@ class Evaluator:
         hidden = self._store.hidden_test_paths(task_id)
         tampered = _tampered(touched, self._evaluation.protected_paths, hidden)
         if tampered:
-            return Verdict(passed=False, exit_code=None, duration_s=0.0, tampered=tuple(tampered))
+            return Verdict(passed=False, exit_code=None, duration_s=0.0, tampered=True)
         with tempfile.TemporaryDirectory(prefix="saddlefit-eval-") as tmp:
             work = Path(tmp) / "work"
             shutil.copytree(base_snapshot, work, symlinks=True)
@@ -114,8 +115,8 @@ class Evaluator:
                     return Verdict(passed=False, exit_code=None, duration_s=0.0, diff_applied=False)
             try:
                 self._install_sealed(task_id, work, hidden)
-            except PlantedSymlinkError as exc:
-                return Verdict(passed=False, exit_code=None, duration_s=0.0, tampered=(str(exc),))
+            except PlantedSymlinkError:
+                return Verdict(passed=False, exit_code=None, duration_s=0.0, tampered=True)
             result = box.exec(f"bash {CHECK_FILE}", timeout)
         self._store.record_check_output(task_id, run_id, result.output)
         return Verdict(
