@@ -65,5 +65,9 @@ Assumptions taken where the spec leaves a detail open. Deviations from the spec 
   `requirements*.txt` files, else `pyproject.toml` (compiled with all extras). They are installed
   as root on top of the sandbox image, and the image ends as the sandbox user. The tag is a hash
   of the base image and those files, so an unchanged repository reuses its image, and the result
-  is recorded in `.saddlefit/environment.json`. The build sends no registry credentials: the base
-  image is local and nothing is pulled.
+  is recorded in `.saddlefit/environment.json`, which is removed when the repository no longer
+  has dependency files. The build sends no registry credentials: the base image is local and
+  nothing is pulled. Installing the dependencies runs their build hooks with network access, as
+  installing the project by hand would; the files are the repository owner's, and the student
+  never takes part in this step. The build gets the sandbox's memory limit and a 30-minute HTTP
+  timeout. The Docker API has no CPU cap or daemon-side deadline for a build, so neither is set.
