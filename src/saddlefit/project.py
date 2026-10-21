@@ -5,6 +5,7 @@ The CLI is a thin layer over these operations: ``init``, mining tasks and listin
 
 from __future__ import annotations
 
+import shutil
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -12,7 +13,7 @@ from typing import Any
 
 from saddlefit.config import CONFIG_SCHEMA_VERSION, Config, StudentConfig, dump_config, load_config
 from saddlefit.errors import UserError
-from saddlefit.harness.store import HarnessStore
+from saddlefit.harness.store import HarnessStore, HarnessStoreError
 from saddlefit.tasks.mining import STATE_DIR, MiningReport, Runner, mine
 from saddlefit.tasks.models import TaskMeta
 from saddlefit.tasks.splits import new_lock
@@ -57,7 +58,7 @@ class Project:
         config = Config(
             schema_version=CONFIG_SCHEMA_VERSION, project=self.root.name, student=student
         )
-        commit = self.harness.init()
+        commit = self._harness_commit()
         if not self.suite.lock.exists():  # a retried init keeps the salt it already made
             save_lock(self.suite, new_lock(config.splits))
         self._ignore_state()
@@ -69,6 +70,18 @@ class Project:
             "harness_commit": commit,
             "state": str(self.state),
         }
+
+    def _harness_commit(self) -> str:
+        """Create the harness store, or reuse one a failed init already finished.
+
+        A store left without a first commit is incomplete, so it is built again.
+        """
+        if (self.harness.path / ".git").exists():
+            try:
+                return self.harness.head()
+            except HarnessStoreError:
+                shutil.rmtree(self.harness.path)
+        return self.harness.init()
 
     def _ignore_state(self) -> None:
         """B3: ``init`` adds ``.saddlefit/`` to ``.gitignore``."""

@@ -1,5 +1,6 @@
 import json
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -163,3 +164,95 @@ def test_contamination_follows_the_configured_release_date(
     )
     rows = invoke(repo, "tasks", "list", monkeypatch=monkeypatch)
     assert {r["contaminated"] for r in rows} == {flagged}  # type: ignore[union-attr,index]
+
+
+def test_a_corrupt_lock_or_meta_is_a_user_error(tmp_path: Path) -> None:
+    repo = build(tmp_path / "repo")
+    project = Project(repo)
+    project.init()
+    _, metas = project.mine(HostRunner(python=sys.executable), limit=1)
+    meta = project.suite.public_dir / metas[0].id / "meta.yaml"
+    meta.write_text("schema_version: [", encoding="utf-8")
+    with pytest.raises(UserError, match=r"meta\.yaml"):
+        project.tasks()
+    project.suite.lock.write_text("{not json", encoding="utf-8")
+    with pytest.raises(UserError, match=r"suite\.lock"):
+        project.tasks()
+
+
+def test_the_lock_is_replaced_atomically(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    repo = build(tmp_path / "repo")
+    project = Project(repo)
+    project.init()
+    before = project.suite.lock.read_text(encoding="utf-8")
+
+    real_write = Path.write_text
+
+    def dies_halfway_through_the_lock(self: Path, *args: object, **kwargs: object) -> int:
+        if "suite.lock" in self.name:
+            self.open("w").close()  # the write had truncated the file when the disk filled up
+            raise OSError("disk full")
+        return real_write(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(Path, "write_text", dies_halfway_through_the_lock)
+    with pytest.raises(OSError, match="disk full"):
+        project.mine(HostRunner(python=sys.executable), limit=1)
+    monkeypatch.undo()
+    assert project.suite.lock.read_text(encoding="utf-8") == before
+
+
+def test_init_recovers_from_a_half_built_harness_store(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = build(tmp_path / "repo")
+    project = Project(repo)
+    real_git = HarnessStore._git
+
+    def fails_on_commit(self: HarnessStore, *args: str, **kwargs: object) -> str:
+        if args[0] == "commit":
+            raise HarnessStoreError("git commit failed: boom")
+        return real_git(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(HarnessStore, "_git", fails_on_commit)
+    with pytest.raises(HarnessStoreError):
+        project.init()
+    assert (project.harness.path / ".git").exists()  # left half-built
+    monkeypatch.undo()
+    assert project.init()["harness_commit"]  # retried without any manual cleanup
+
+
+def test_init_reuses_a_finished_harness_store(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = build(tmp_path / "repo")
+    project = Project(repo)
+    real_write = Path.write_text
+
+    def config_write_fails(self: Path, *args: object, **kwargs: object) -> int:
+        if self.name == "saddlefit.yaml":
+            raise OSError("read-only")
+        return real_write(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(Path, "write_text", config_write_fails)
+    with pytest.raises(OSError, match="read-only"):
+        project.init()
+    first = project.harness.head()
+    monkeypatch.undo()
+    assert project.init()["harness_commit"] == first
+
+
+def test_the_visible_check_skips_a_directory_without_tests(tmp_path: Path) -> None:
+    repo = build(tmp_path / "repo")
+    add_fix(repo, "src/toykit/test_extra.py")  # src/toykit exists in the parent, but has no tests
+    project = Project(repo)
+    project.init()
+    _, metas = project.mine(HostRunner(python=sys.executable), limit=1)
+    assert metas
+    check = metas[0].visible_check or ""
+    assert "src/toykit" not in check
+    # what it does run collects tests on the parent
+    subprocess.run(["git", "checkout", "-q", metas[0].repo.base_commit], cwd=repo, check=True)
+    result = subprocess.run(
+        ["bash", "-c", check.replace("python", sys.executable, 1)], cwd=repo, check=False
+    )
+    assert result.returncode == 0
