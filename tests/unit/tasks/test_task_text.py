@@ -40,7 +40,7 @@ def test_a_pr_description_becomes_an_instruction() -> None:
     text = task_text_for(
         candidate("feat(config): add saddlefit.yaml model and loader (#55)", PR_BODY)
     )
-    assert text.startswith("# Add saddlefit.yaml model and loader\n")
+    assert text.startswith("# add saddlefit.yaml model and loader\n")
     assert "not in the repository yet" in text
     assert "`load_config` reports every problem" in text
     for leftover in (
@@ -68,5 +68,10 @@ def test_a_plain_commit_keeps_its_message() -> None:
 
 def test_an_empty_body_still_makes_a_task() -> None:
     text = task_text_for(candidate("fix: handle empty input", ""))
-    assert text.startswith("# Handle empty input\n")
+    assert text.startswith("# handle empty input\n")
     assert "not in the repository yet" in text
+
+
+def test_an_identifier_in_the_subject_stays_exact() -> None:
+    text = task_text_for(candidate("fix: parse_iso reads month before day", ""))
+    assert text.startswith("# parse_iso reads month before day\n")
