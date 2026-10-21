@@ -153,7 +153,12 @@ def test_build_and_base_failures_are_environment_errors(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    ("limits", "memory"), [(None, 4 * 1024**3), (SandboxConfig(memory="512m"), 512 * 1024**2)]
+    ("limits", "memory"),
+    [
+        (None, 4 * 1024**3),
+        (SandboxConfig(memory="512m"), 512 * 1024**2),
+        (SandboxConfig(memory="6m"), 6 * 1024**2),  # Docker's minimum is allowed
+    ],
 )
 def test_the_build_runs_under_the_sandbox_memory_limit_and_a_timeout(
     tmp_path: Path, limits: SandboxConfig | None, memory: int
