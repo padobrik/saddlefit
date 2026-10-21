@@ -1,4 +1,9 @@
-# Saddlefit
+<h1>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/logo/saddlefit-dark.svg">
+    <img alt="Saddlefit" src="docs/logo/saddlefit-light.svg" width="300">
+  </picture>
+</h1>
 
 [![CI](https://github.com/padobrik/saddlefit/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/padobrik/saddlefit/actions/workflows/ci.yml)
 [![Coverage](https://codecov.io/gh/padobrik/saddlefit/graph/badge.svg)](https://codecov.io/gh/padobrik/saddlefit)
