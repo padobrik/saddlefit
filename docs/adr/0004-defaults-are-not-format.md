@@ -15,14 +15,14 @@ Saddlefit 0.1.0 and 0.1.1 shipped with the default `sandbox.image` pinned to `gh
 Nothing about the format changes:
 
 - the keys, types, constraints and required fields are the same;
-- every file accepted before is accepted now, with the same values;
+- every file accepted before is accepted now, and every value present in a file keeps its meaning;
 - `dump_config` writes every field, so `init` puts the image into `saddlefit.yaml` and a project keeps it across releases.
 
-Only the value used for an omitted field changes. A migration that preserved the old value would keep the image the change moves away from. Every release with a new sandbox image would need another bump.
+Only a file that omits `sandbox.image`, which Saddlefit itself never writes, resolves to a different value: the new default. A migration that preserved the old value would keep the image the change moves away from. Every release with a new sandbox image would need another bump.
 
 ## Decision
 
-- A new default for an optional field is not a format change when the serializer writes that field out. The same holds for removing a JSON Schema `default` annotation, which documents and does not validate.
+- A new default for an optional field is not a format change when the serializer writes that field out: values present in files keep their meaning, and only files that omit the field resolve to the new default. The same holds for removing a JSON Schema `default` annotation, which documents and does not validate.
 - Everything else in ADR 0002 stands: a change to the keys, types, constraints, required fields, serializer or file layout of a released format needs a bump, a migration and a test.
 
 The CodeRabbit check and the copy of it in `docs/SPEC.md` (C6) are reworded to say this.

@@ -1103,8 +1103,9 @@ reviews:
           tag contains it. A change to a format no release has shipped yet needs no bump
           or migration, because no reader of an earlier version can exist. A new default
           for an optional field is not a format change when the serializer writes that
-          field out, so files already written keep their value; nor is removing a JSON
-          Schema `default` annotation. Pass otherwise.
+          field out: a value present in a file keeps its meaning, and only a file that
+          omits the field resolves to the new default. Nor is removing a JSON Schema
+          `default` annotation. Pass otherwise.
   tools:
     ruff:
       enabled: true
