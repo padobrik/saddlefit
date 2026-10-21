@@ -49,7 +49,8 @@ def task_text_for(candidate: Candidate) -> str:
     done and ends in a checklist; those parts are left out.
     """
     title = _CONVENTIONAL.sub("", _PR_SUFFIX.sub("", candidate.subject.strip()))
-    title = title[:1].upper() + title[1:] if title else "Make the change"
+    # kept verbatim: the subject often starts with an identifier, such as parse_iso
+    title = title or "Make the change"
     kept: list[str] = []
     for line in candidate.body.splitlines():
         if _TEMPLATE_SECTION.match(line):
