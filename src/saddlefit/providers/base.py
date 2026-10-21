@@ -44,8 +44,12 @@ class GenParams(_Frozen):
 
 
 class Usage(_Frozen):
+    # prompt_tokens counts uncached input only; cached input is split out below
     prompt_tokens: int = 0
     completion_tokens: int = 0
+    cache_write_5m_tokens: int = 0
+    cache_write_1h_tokens: int = 0
+    cache_read_tokens: int = 0
 
 
 class ModelInfo(_Frozen):
