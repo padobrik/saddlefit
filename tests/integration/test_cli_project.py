@@ -394,3 +394,32 @@ def test_progress_never_names_a_held_out_task() -> None:
     held = cli.progress_line(outcome("held_out"), 2)
     assert "secret-task-id" not in held
     assert "gave_up" not in held
+
+
+def test_doctor_measurements_for_another_digest_are_ignored(tmp_path: Path) -> None:
+    repo = build(tmp_path / "repo")
+    project = Project(repo)
+    project.init(model="qwen3:8b")
+    config = project.config_path.read_text(encoding="utf-8")
+    project.config_path.write_text(
+        config.replace("tool_mode: auto", "tool_mode: auto"), encoding="utf-8"
+    )
+    record = DoctorRecord(
+        schema_version=1,
+        model="qwen3:8b",
+        digest="sha256:old",
+        tool_mode="json",
+        native_probes=5,
+        json_probes=10,
+        tokens_per_second=20.0,
+        tier="M",
+        checked_at=datetime(2026, 10, 21, tzinfo=UTC),
+    )
+    (project.state / "doctor.json").write_text(record.model_dump_json(), encoding="utf-8")
+    assert project.tool_mode(digest="sha256:old") == "json"
+    assert project.student_timeout(digest="sha256:old") > LOCAL_TIMEOUT_S
+    # the same name now serves a different model: the old measurements do not apply
+    assert project.tool_mode(digest="sha256:new") == "native"
+    assert project.student_timeout(digest="sha256:new") == LOCAL_TIMEOUT_S
+    # a runner that reports no digest falls back to matching by name
+    assert project.tool_mode(digest=None) == "json"

@@ -159,34 +159,42 @@ class Project:
             raise UserError(f"no such task: {task_id}")
         return (self.suite.public_dir / task_id / "task.md").read_text(encoding="utf-8")
 
-    def student_timeout(self) -> float:
+    def student_timeout(self, digest: str | None = None) -> float:
         """Seconds one model call may take: a full reply at the measured speed, with room.
 
         The provider's local default (120 s) is too short for a 4,096-token reply from a
         model that writes about 24 tokens a second, so a long, careful reply would time out.
         ``saddlefit doctor`` measures the speed; without its record the default stays.
         """
-        record = self._doctor_record()
+        record = self._doctor_record(digest)
         if record is None or record.tokens_per_second <= 0:
             return LOCAL_TIMEOUT_S
         return max(LOCAL_TIMEOUT_S, MAX_REPLY_TOKENS / record.tokens_per_second * 1.5)
 
-    def tool_mode(self) -> Literal["native", "json"]:
+    def tool_mode(self, digest: str | None = None) -> Literal["native", "json"]:
         """The configured tool-calling mode; for ``auto``, the one ``doctor`` chose (B5)."""
         configured = self.config().student.tool_mode
         if configured != "auto":
             return configured
-        record = self._doctor_record()
+        record = self._doctor_record(digest)
         return record.tool_mode if record is not None else "native"
 
-    def _doctor_record(self) -> DoctorRecord | None:
-        """``doctor.json`` when it was measured for the configured model, else ``None``."""
+    def _doctor_record(self, digest: str | None = None) -> DoctorRecord | None:
+        """``doctor.json`` when it was measured for this model, else ``None``.
+
+        The record must name the configured model and, when both the record and the
+        running model report a digest, the same digest: a name can move to new weights.
+        """
         try:
             path = self.state / "doctor.json"
             record = DoctorRecord.model_validate_json(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return None
-        return record if record.model == self.config().student.model else None
+        if record.model != self.config().student.model:
+            return None
+        if digest is not None and record.digest is not None and record.digest != digest:
+            return None
+        return record
 
     def effective_loop(self) -> tuple[LoopConfig, list[str]]:
         """``loop.yaml`` from the harness store, clamped to ``saddlefit.yaml``."""
@@ -228,7 +236,7 @@ class Project:
                 ),
                 docker_client=docker_client,
                 image=config.sandbox.image,
-                tool_mode=self.tool_mode(),
+                tool_mode=self.tool_mode(model_client().info().digest),
                 on_run=on_run,
             )
             result = runner.run(metas)

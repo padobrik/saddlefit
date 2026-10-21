@@ -207,7 +207,9 @@ def baseline(
     project = _project()
     config = project.config()
 
-    timeout_s = project.student_timeout()
+    # the running model's digest decides whether doctor's measurements still apply
+    probe = OpenAICompatibleClient(base_url=config.student.base_url, model=config.student.model)
+    timeout_s = project.student_timeout(probe.info().digest)
 
     def model_client() -> ModelClient:
         return OpenAICompatibleClient(
