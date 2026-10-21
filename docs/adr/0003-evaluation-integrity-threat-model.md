@@ -64,8 +64,14 @@ The check keeps its purpose: any path from sealed data to the model, the tutor, 
 the fast loop still fails, and reports stay limited to what B10's table allows them.
 
 The verdict fields that do leave evaluation are flags and numbers the run record and the failure
-taxonomy need; tampering is a flag, so it does not reveal which path collided with a hidden test. The duration is a timing side channel: it can tell how long
-the hidden tests ran, nothing about what they contain. That risk is accepted.
+taxonomy need; tampering and environment errors are flags, so they reveal neither a path that
+collided with a hidden test nor an error message.
+
+The exit code and the duration remain a narrow side channel: code that read the hidden tests could
+choose its exit code or stall on purpose. Per run that is at most one byte of exit code and a
+coarse duration. For held-out and control tasks it never reaches the tutor: B10 mechanism 4 gives
+the tutor only whether each proposal was accepted and aggregate counts. For training tasks the
+tutor sees redacted traces, so a few bits per run could reach it. That residual risk is accepted.
 
 The evaluator can keep the B10 design. Generic code that games tests, written without seeing them
 but able to read them at run time, stays a known risk, and the held-out and control sets measure
