@@ -5,7 +5,10 @@ The CLI is a thin layer over these operations: ``init``, mining tasks and listin
 
 from __future__ import annotations
 
+import os
 import shutil
+import stat
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -80,7 +83,7 @@ class Project:
             try:
                 return self.harness.head()
             except HarnessStoreError:
-                shutil.rmtree(self.harness.path)
+                remove_tree(self.harness.path)
         return self.harness.init()
 
     def _ignore_state(self) -> None:
@@ -122,3 +125,15 @@ class Project:
         if task_id not in {meta.id for meta in self.tasks()}:
             raise UserError(f"no such task: {task_id}")
         return (self.suite.public_dir / task_id / "task.md").read_text(encoding="utf-8")
+
+
+def remove_tree(path: Path) -> None:
+    """Delete ``path`` even where git left read-only files, which Windows will not unlink."""
+
+    def make_writable_and_retry(
+        func: Callable[[str], object], target: str, _: BaseException
+    ) -> None:
+        os.chmod(target, stat.S_IWRITE)
+        func(target)
+
+    shutil.rmtree(path, onexc=make_writable_and_retry)

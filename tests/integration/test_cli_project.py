@@ -1,5 +1,6 @@
 import json
 import shutil
+import stat
 import subprocess
 import sys
 from pathlib import Path
@@ -15,7 +16,7 @@ from saddlefit import cli
 from saddlefit.cli import app
 from saddlefit.errors import UserError
 from saddlefit.harness.store import HarnessStore, HarnessStoreError
-from saddlefit.project import Project
+from saddlefit.project import Project, remove_tree
 
 pytestmark = pytest.mark.integration
 runner = CliRunner()
@@ -256,3 +257,14 @@ def test_the_visible_check_skips_a_directory_without_tests(tmp_path: Path) -> No
         ["bash", "-c", check.replace("python", sys.executable, 1)], cwd=repo, check=False
     )
     assert result.returncode == 0
+
+
+def test_removing_a_store_handles_read_only_git_objects(tmp_path: Path) -> None:
+    # git writes its object files read-only; Windows refuses to delete those as they are
+    store = tmp_path / "harness"
+    (store / ".git" / "objects" / "ab").mkdir(parents=True)
+    obj = store / ".git" / "objects" / "ab" / "cdef"
+    obj.write_text("x", encoding="utf-8")
+    obj.chmod(stat.S_IREAD)
+    remove_tree(store)
+    assert not store.exists()
