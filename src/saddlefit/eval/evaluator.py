@@ -9,6 +9,7 @@ exit code and duration, never the output.
 
 from __future__ import annotations
 
+import logging
 import os
 import shutil
 import subprocess
@@ -22,7 +23,25 @@ from saddlefit.eval.sealed import SealedStore
 from saddlefit.eval.tamper import diff_paths, tampered_paths
 from saddlefit.sandbox.container import Sandbox, SandboxError
 
+log = logging.getLogger(__name__)
+
 DIFF_FILE = ".saddlefit-student.diff"
+# Files that steer pytest or the interpreter running it; a diff may never touch them, whatever
+# evaluation.protected_paths says, or it could change how the hidden tests run or score.
+PYTEST_CONTROL_PATHS: tuple[str, ...] = (
+    "conftest.py",
+    "**/conftest.py",
+    "sitecustomize.py",
+    "**/sitecustomize.py",
+    "usercustomize.py",
+    "**/usercustomize.py",
+    "*.pth",
+    "**/*.pth",
+    "pytest.ini",
+    "tox.ini",
+    "setup.cfg",
+    "pyproject.toml",
+)
 CHECK_FILE = ".saddlefit-check.sh"
 APPLY_TIMEOUT_S = 60
 # a student's diff is untrusted input to a host-side git process: bound its size and time
@@ -43,7 +62,8 @@ class Verdict:
     # only whether it was tampered with: which paths would reveal where hidden tests live
     tampered: bool = False
     diff_applied: bool = True
-    env_error: str | None = None
+    # only whether the environment failed; the message goes to the log, not to the verdict
+    env_error: bool = False
 
 
 class Evaluator:
@@ -84,7 +104,8 @@ class Evaluator:
             # git apply also accepts diffs without a "diff --git" header; judge what it applies
             touched |= applied
         hidden = self._store.hidden_test_paths(task_id)
-        tampered = _tampered(touched, self._evaluation.protected_paths, hidden)
+        protected = (*self._evaluation.protected_paths, *PYTEST_CONTROL_PATHS)
+        tampered = _tampered(touched, protected, hidden)
         if tampered:
             return Verdict(passed=False, exit_code=None, duration_s=0.0, tampered=True)
         with tempfile.TemporaryDirectory(prefix="saddlefit-eval-") as tmp:
@@ -93,7 +114,8 @@ class Evaluator:
             try:
                 return self._run(task_id, work, raw, hidden, run_id)
             except SandboxError as exc:
-                return Verdict(passed=False, exit_code=None, duration_s=0.0, env_error=str(exc))
+                log.warning("evaluation of %s hit an environment error: %s", task_id, exc)
+                return Verdict(passed=False, exit_code=None, duration_s=0.0, env_error=True)
 
     def _run(
         self, task_id: str, work: Path, diff: bytes, hidden: list[str], run_id: str
@@ -108,9 +130,9 @@ class Evaluator:
             labels={"saddlefit.role": "evaluation", "saddlefit.task": task_id},
         ) as box:
             if diff.strip():
-                (work / DIFF_FILE).write_bytes(diff)
+                staged = _stage_diff(work, diff)
                 applied = box.exec(f"git apply --whitespace=nowarn {DIFF_FILE}", APPLY_TIMEOUT_S)
-                (work / DIFF_FILE).unlink(missing_ok=True)
+                staged.unlink(missing_ok=True)
                 if applied.exit_code != 0:
                     return Verdict(passed=False, exit_code=None, duration_s=0.0, diff_applied=False)
             try:
@@ -177,6 +199,13 @@ def _applied_paths(diff: bytes) -> set[str] | None:
         else:
             i += 1
     return paths
+
+
+def _stage_diff(work: Path, diff: bytes) -> Path:
+    """Write the diff for ``git apply``; this host-side write never follows a symlink."""
+    path = _inside(work, DIFF_FILE)
+    path.write_bytes(diff)
+    return path
 
 
 def _tampered(touched: set[str], protected: tuple[str, ...], hidden: list[str]) -> list[str]:
