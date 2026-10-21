@@ -76,3 +76,29 @@ def test_mining_without_docker_is_an_environment_error(
     monkeypatch.chdir(repo)
     monkeypatch.setenv("DOCKER_HOST", "unix:///nonexistent/docker.sock")
     assert run_main(monkeypatch, "tasks", "mine") == 3
+
+
+@pytest.mark.parametrize(("release", "flagged"), [("2099-01-01", True), ("2000-01-01", False)])
+def test_tasks_older_than_the_model_are_flagged_as_contaminated(
+    tmp_path: Path, release: str, flagged: bool
+) -> None:
+    repo = build(tmp_path / "repo")
+    project = Project(repo)
+    project.init()
+    config = project.config_path.read_text(encoding="utf-8")
+    project.config_path.write_text(
+        config.replace("release_date: null", f"release_date: {release}"), encoding="utf-8"
+    )
+    _, metas = project.mine(HostRunner(python=sys.executable), limit=2)
+    assert metas
+    assert all(m.contaminated is flagged for m in metas)
+    assert all(m.contaminated is flagged for m in project.tasks())
+
+
+def test_without_a_release_date_nothing_is_flagged(tmp_path: Path) -> None:
+    repo = build(tmp_path / "repo")
+    project = Project(repo)
+    project.init()
+    _, metas = project.mine(HostRunner(python=sys.executable), limit=2)
+    assert metas
+    assert not any(m.contaminated for m in metas)

@@ -70,9 +70,19 @@ def _show(repo: Path, ref: str, rel: str) -> bytes | None:
 
 
 def materialize(
-    paths: SuitePaths, repo: Path, candidate: Candidate, lock: SuiteLock, *, created: date
+    paths: SuitePaths,
+    repo: Path,
+    candidate: Candidate,
+    lock: SuiteLock,
+    *,
+    created: date,
+    release_date: date | None = None,
 ) -> tuple[SuiteLock, TaskMeta] | None:
-    """Write one task; ``None`` when its hidden files are not UTF-8 text."""
+    """Write one task; ``None`` when its hidden files are not UTF-8 text.
+
+    With the student model's ``release_date``, a commit made before it is flagged as
+    contaminated (B10): the model may have seen it in training.
+    """
     task_id = task_id_for(candidate)
     hidden: dict[str, str] = {}
     for rel in (*candidate.test_files, *candidate.test_data):
@@ -105,6 +115,7 @@ def materialize(
         repo=RepoRef(base_commit=candidate.parent),
         visible_check=visible_check,
         created=created,
+        contaminated=release_date is not None and candidate.committed.date() < release_date,
     )
     SealedWriter(paths.sealed_dir).write_task(
         task_id,

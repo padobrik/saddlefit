@@ -53,6 +53,9 @@ class TaskMeta(_Strict):
     repo: RepoRef
     visible_check: str | None = None
     created: date
+    # B10 mechanism 8: from public history older than the student model, so possibly seen
+    # in its training data
+    contaminated: bool = False
 
     @model_validator(mode="after")
     def _control_needs_a_trusted_source(self) -> Self:

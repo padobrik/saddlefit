@@ -83,7 +83,14 @@ class Project:
         lock = load_lock(self.suite, config.splits)
         metas = []
         for candidate in report.viable:
-            made = materialize(self.suite, self.root, candidate, lock, created=date.today())
+            made = materialize(
+                self.suite,
+                self.root,
+                candidate,
+                lock,
+                created=date.today(),
+                release_date=config.student.release_date,
+            )
             if made is not None:
                 lock, meta = made
                 metas.append(meta)

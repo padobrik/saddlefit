@@ -131,8 +131,15 @@ def tasks_mine(
 def tasks_list(ctx: typer.Context) -> None:
     """List tasks with their type and split."""
     metas = _project().tasks()
-    rows = [{"id": m.id, "type": m.type, "split": m.split} for m in metas]
-    _emit(ctx, rows, "\n".join(f"{m.split:8} {m.type:8} {m.id}" for m in metas) or "no tasks")
+    rows = [
+        {"id": m.id, "type": m.type, "split": m.split, "contaminated": m.contaminated}
+        for m in metas
+    ]
+    lines = [
+        f"{m.split:8} {m.type:8} {m.id}{'  (contaminated)' if m.contaminated else ''}"
+        for m in metas
+    ]
+    _emit(ctx, rows, "\n".join(lines) or "no tasks")
 
 
 @tasks_app.command("show")
