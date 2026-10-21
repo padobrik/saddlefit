@@ -8,6 +8,7 @@ canary) for the evaluator only. The base snapshot is the commit's parent.
 from __future__ import annotations
 
 import hashlib
+import posixpath
 import re
 import shlex
 import subprocess
@@ -26,6 +27,38 @@ from saddlefit.tasks.splits import add_task, check_fractions
 
 PYTEST = "PYTHONPATH=src:. python -B -m pytest -q -p no:cacheprovider"
 _PR_SUFFIX = re.compile(r"\s*\(#\d+\)$")
+_CONVENTIONAL = re.compile(r"^\w+(\([^)]*\))?!?:\s*")
+# Sections of a pull-request template that say what was done, not what to do.
+_TEMPLATE_SECTION = re.compile(
+    r"^#{1,6}\s*(linked issues?|checklist|evaluation-integrity impact|test plan)\b", re.I
+)
+_DROPPED_LINE = re.compile(
+    r"^\s*(- \[[ xX]\]|(closes|fixes|resolves|part of)\s+#\d+|signed-off-by:|co-authored-by:)",
+    re.I,
+)
+INSTRUCTION = (
+    "Make this change in the repository. It is not in the repository yet: implement it so the "
+    "project's tests for it pass."
+)
+
+
+def task_text_for(candidate: Candidate) -> str:
+    """What the student reads: an instruction built from the commit, not a report of it.
+
+    A squash commit's body is often the pull request's description, which says the work is
+    done and ends in a checklist; those parts are left out.
+    """
+    title = _CONVENTIONAL.sub("", _PR_SUFFIX.sub("", candidate.subject.strip()))
+    title = title[:1].upper() + title[1:] if title else "Make the change"
+    kept: list[str] = []
+    for line in candidate.body.splitlines():
+        if _TEMPLATE_SECTION.match(line):
+            break
+        if not _DROPPED_LINE.match(line):
+            kept.append(line)
+    body = re.sub(r"^#{1,6}\s*summary\s*$", "", "\n".join(kept), flags=re.I | re.M).strip()
+    parts = [f"# {title}", INSTRUCTION, body]
+    return "\n\n".join(part for part in parts if part) + "\n"
 
 
 @dataclass(frozen=True)
@@ -74,6 +107,21 @@ def _show(repo: Path, ref: str, rel: str) -> bytes | None:
         return None
 
 
+def _visible_check(repo: Path, candidate: Candidate) -> str:
+    """The parent's versions of the same test files, else the tests beside them, else all.
+
+    A feature usually adds new test files, which the student must not see; the existing tests
+    in the same directories still tell it whether it broke something. Every history task gets
+    a check run like the hidden one, so the finish gate never falls back to a bare command that
+    cannot import a src-layout project.
+    """
+    existing = [rel for rel in candidate.test_files if _show(repo, candidate.parent, rel)]
+    if not existing:
+        dirs = sorted({posixpath.dirname(rel) for rel in candidate.test_files} - {""})
+        existing = [d for d in dirs if _show(repo, candidate.parent, d)]
+    return " ".join([PYTEST, *(shlex.quote(rel) for rel in existing)])
+
+
 def materialize(
     paths: SuitePaths,
     repo: Path,
@@ -95,11 +143,8 @@ def materialize(
             return None
     tests = " ".join(shlex.quote(rel) for rel in candidate.test_files)
     check_sh = f"#!/usr/bin/env bash\nset -u\ncd /work\n{PYTEST} {tests}\n"
-    # The visible check runs the parent's versions of the same test files, where they exist.
-    visible = [rel for rel in candidate.test_files if _show(repo, candidate.parent, rel)]
-    visible_check = f"{PYTEST} {' '.join(shlex.quote(rel) for rel in visible)}" if visible else None
-    subject = _PR_SUFFIX.sub("", candidate.subject)
-    task_text = f"# {subject}\n\n{candidate.body}\n".rstrip() + "\n"
+    visible_check = _visible_check(repo, candidate)
+    task_text = task_text_for(candidate)
 
     digest = hashlib.sha256()
     for part in (task_text, check_sh, *(f"{k}\0{v}" for k, v in sorted(hidden.items()))):

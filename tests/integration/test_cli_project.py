@@ -137,7 +137,9 @@ def test_test_paths_are_quoted_in_the_checks(tmp_path: Path) -> None:
     _, metas = project.mine(HostRunner(python=sys.executable), limit=1)
     assert metas
     quoted = "'tests/test $(touch pwned) x.py'"
-    assert metas[0].visible_check is None or quoted in metas[0].visible_check
+    visible = metas[0].visible_check or ""
+    # the new file is not in the parent, so the visible check runs its directory instead
+    assert "$(touch pwned)" not in visible or quoted in visible
     check_sh = next((project.suite.sealed_dir / metas[0].id).glob("check.sh")).read_text()
     assert quoted in check_sh
 
