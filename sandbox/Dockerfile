@@ -10,9 +10,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 # hadolint ignore=DL3008
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends git ripgrep patch \
+    && apt-get install -y --no-install-recommends git ripgrep patch shellcheck \
     && rm -rf /var/lib/apt/lists/* \
-    && pip install --no-cache-dir "pytest==9.1.1" \
+    && pip install --no-cache-dir "pytest==9.1.1" "ruff==0.17.1" \
     && groupadd --gid 1000 student \
     && useradd --uid 1000 --gid student --home-dir /home/student --create-home --shell /bin/bash student \
     && mkdir -p /work \
