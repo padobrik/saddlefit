@@ -20,7 +20,8 @@ from saddlefit.providers.fake import FakeClient
 from saddlefit.storage.runs import find_runs, read_run
 from saddlefit.tasks import splits as splits_module
 from saddlefit.tasks.mining import mine
-from saddlefit.tasks.suite import SuitePaths, load_lock, materialize, save_lock
+from saddlefit.tasks.splits import new_lock
+from saddlefit.tasks.suite import SuitePaths, materialize, save_lock
 
 pytestmark = pytest.mark.docker
 
@@ -35,8 +36,12 @@ FIX = ToolCall(
 )
 
 
+SEEN_REASONING: list[object] = []
+
+
 def student(messages: Any, tools: Any, params: Any) -> ModelReply:
     """Fixes parse_iso when asked about it; everywhere else it gives up at once."""
+    SEEN_REASONING.append(params.reasoning)
     task = messages[1].content
     already_edited = any(m.role == "tool" for m in messages)
     if "parse_iso" in task and not already_edited:
@@ -57,7 +62,7 @@ def test_baseline_end_to_end(
         sandbox=SandboxConfig(memory="512m", image=sandbox_image),
     )
     paths = SuitePaths(tmp_path / ".saddlefit" / "tasks")
-    lock = load_lock(paths, config.splits)
+    lock = new_lock(config.splits)
     report = mine(repo, HostRunner(python=sys.executable))
     metas = []
     for candidate in report.viable:
@@ -88,7 +93,11 @@ def test_baseline_end_to_end(
         docker_client=docker_client,
         image=sandbox_image,
     )
+    SEEN_REASONING.clear()
     result = runner.run(metas)
+    # loop.yaml's reasoning effort reaches every model call (B6)
+    assert SEEN_REASONING
+    assert set(SEEN_REASONING) == {default_loop_config().reasoning.effort}
     expected = [m for m in metas if m.split in BASELINE_SPLITS]
     assert {r.task_id for r in result.runs} == {m.id for m in expected}
     solved = result.solved()

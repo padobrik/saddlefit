@@ -216,6 +216,7 @@ class BaselineRunner:
                             seed=seed,
                             tool_mode=self.tool_mode,
                             max_tokens=MAX_REPLY_TOKENS,
+                            reasoning=self.loop.reasoning.effort,
                         ),
                         recorder=_Recorder(writer),
                         visible_check=meta.visible_check,
