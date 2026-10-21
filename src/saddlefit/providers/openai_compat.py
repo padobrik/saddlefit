@@ -59,6 +59,9 @@ def _fetch_json(url: str, payload: dict[str, Any] | None) -> Any:
         return json.load(response)
 
 
+_REASONING_EFFORT: dict[str, str] = {"off": "none", "low": "low", "high": "high"}
+
+
 def _native_root(base_url: str) -> str:
     parts = urlsplit(base_url)
     path = parts.path.rstrip("/")
@@ -186,6 +189,9 @@ class OpenAICompatibleClient:
             kwargs["seed"] = params.seed
         if params.max_tokens is not None:
             kwargs["max_tokens"] = params.max_tokens
+        if params.reasoning is not None:
+            # the OpenAI-style knob; Ollama maps "none" to no thinking at all
+            kwargs["reasoning_effort"] = _REASONING_EFFORT[params.reasoning]
         if json_mode:
             payload = [{"role": "system", "content": _json_mode_prompt(tools)}, *payload]
             if self.constrained_json:

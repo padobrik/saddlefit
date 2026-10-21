@@ -39,6 +39,8 @@ class GenParams(_Frozen):
     seed: int | None = None
     max_tokens: int | None = None
     tool_mode: ToolMode = "native"
+    # loop.yaml's reasoning.effort (B6); None leaves the runner's default
+    reasoning: Literal["off", "low", "high"] | None = None
 
 
 class Usage(_Frozen):
