@@ -28,7 +28,7 @@ from typing import Any, Final, Literal
 from pydantic import BaseModel, ConfigDict
 
 from saddlefit.config import SandboxConfig
-from saddlefit.sandbox.container import SandboxError, memory_bytes
+from saddlefit.sandbox.container import MIN_MEMORY_BYTES, SandboxError, memory_bytes
 
 ENVIRONMENT_SCHEMA_VERSION: Final = 1
 REQUIREMENTS_GLOBS: Final = ("requirements*.txt", "requirements/*.txt")
@@ -129,6 +129,8 @@ def ensure_environment(
     The build runs under ``limits``' memory limit, the sandbox's by default.
     """
     memory = memory_bytes((limits or SandboxConfig()).memory)
+    if memory < MIN_MEMORY_BYTES:  # Docker reads 0 as no limit at all
+        raise SandboxError(f"memory limit below Docker's 6m minimum: {memory} bytes")
     deps = find_dependencies(repo)
     if deps is None:
         return None

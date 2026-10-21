@@ -190,3 +190,14 @@ def test_registry_credentials_are_left_out_only_during_the_build() -> None:
     with _without_registry_credentials(client):
         assert auth_headers(client.api) == {}
     assert auth_headers(client.api) == {"X-Own": "1"}
+
+
+@pytest.mark.parametrize("memory", ["0", "0g", "5m"])
+def test_a_build_memory_limit_below_dockers_minimum_is_refused(tmp_path: Path, memory: str) -> None:
+    write(tmp_path, {"requirements.txt": "pytest\n"})
+    images = FakeImages({"base"})
+    with pytest.raises(SandboxError, match="6m minimum"):
+        ensure_environment(
+            FakeDocker(images), "base", tmp_path, "toy", SandboxConfig(memory=memory)
+        )
+    assert images.builds == []
