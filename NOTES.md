@@ -15,9 +15,13 @@ Assumptions taken where the spec leaves a detail open. Deviations from the spec 
 - **Docker test skipping.** Docker tests skip locally when no daemon is reachable; CI sets
   `SADDLEFIT_REQUIRE_DOCKER=1`, which turns a missing daemon into a failure.
 - **Line coverage.** "Line coverage" is measured without branch coverage.
-- **Release PRs.** release-please opens its PR with the workflow token, which does not trigger
-  CI; the PR is closed and reopened once by a maintainer to run the checks, instead of adding a
-  personal access token.
+- **Release PRs and publishing.** release-please works with the workflow token, and events
+  from that token start no other workflow. Its release PR is therefore closed and reopened once
+  by a maintainer to run the checks, instead of adding a personal access token. For the same
+  reason a Release it creates does not trigger `publish.yml` by itself: release-please dispatches
+  `publish.yml` for the new tag (`workflow_dispatch` is the one event that token may start), and
+  a maintainer can dispatch it again for an existing tag. Tags are plain `vX.Y.Z`, matching the
+  protected `refs/tags/v*` ruleset.
 - **Live smoke model.** Nightly live tests use `qwen3:0.6b` through the `ollama/ollama` service
   container.
 - **max_steps vs. timeout.** "max_steps can never stretch a run past evaluation.timeout_seconds"
