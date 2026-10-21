@@ -202,12 +202,26 @@ def test_native_calls_are_validated_against_declared_tools(call: Any) -> None:
     assert len(reply.malformed) == 1
 
 
+def ollama(url: str, payload: Any) -> Any:
+    return {"version": "0.40.6"} if url.endswith("/api/version") else {"models": []}
+
+
 @pytest.mark.parametrize(
     ("effort", "sent_value"), [("off", "none"), ("low", "low"), ("high", "high"), (None, None)]
 )
-def test_reasoning_effort_reaches_the_runner(effort: str | None, sent_value: str | None) -> None:
+def test_reasoning_effort_reaches_ollama(effort: str | None, sent_value: str | None) -> None:
     sdk = StubSDK(response(content="ok"))
-    client(sdk).chat(USER, None, GenParams(reasoning=effort))  # type: ignore[arg-type]
+    client(sdk, fetch=ollama).chat(USER, None, GenParams(reasoning=effort))  # type: ignore[arg-type]
     sent = sdk.requests[-1]
     assert sent.get("reasoning_effort") == sent_value
     assert ("reasoning_effort" in sent) is (effort is not None)
+
+
+@pytest.mark.parametrize(
+    ("effort", "sent_value"), [("off", None), ("low", "low"), ("high", "high")]
+)
+def test_other_runners_get_only_standard_effort_values(effort: str, sent_value: str | None) -> None:
+    # "none" is Ollama's own value; elsewhere "off" sends nothing rather than risk a rejection
+    sdk = StubSDK(response(content="ok"))
+    client(sdk).chat(USER, None, GenParams(reasoning=effort))  # type: ignore[arg-type]
+    assert sdk.requests[-1].get("reasoning_effort") == sent_value
