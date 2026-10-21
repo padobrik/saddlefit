@@ -436,3 +436,6 @@ def test_the_environment_image_is_recorded_for_the_project(tmp_path: Path) -> No
     assert image.startswith("saddlefit-env-repo:")
     record = json.loads((project.state / "environment.json").read_text(encoding="utf-8"))
     assert (record["schema_version"], record["base_image"], record["image"]) == (1, base, image)
+    (repo / "pyproject.toml").unlink()  # the dependencies are gone: back to the base image
+    assert project.environment_image(FakeDocker(FakeImages({base}))) == base
+    assert not (project.state / "environment.json").exists()

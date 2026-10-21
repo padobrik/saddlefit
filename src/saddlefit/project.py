@@ -168,12 +168,14 @@ class Project:
         in the base image.
         """
         config = self.config()
-        record = ensure_environment(docker_client, config.sandbox.image, self.root, config.project)
-        if record is None:
-            return config.sandbox.image
-        (self.state / "environment.json").write_text(
-            record.model_dump_json(indent=2) + "\n", encoding="utf-8"
+        record = ensure_environment(
+            docker_client, config.sandbox.image, self.root, config.project, config.sandbox
         )
+        path = self.state / "environment.json"
+        if record is None:
+            path.unlink(missing_ok=True)  # an older record would name an image no longer used
+            return config.sandbox.image
+        path.write_text(record.model_dump_json(indent=2) + "\n", encoding="utf-8")
         return record.image
 
     def student_timeout(self, digest: str | None = None) -> float:
