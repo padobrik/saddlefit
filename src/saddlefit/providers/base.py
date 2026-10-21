@@ -44,8 +44,12 @@ class GenParams(_Frozen):
 
 
 class Usage(_Frozen):
+    # prompt_tokens counts uncached input only; cached input is split out below
     prompt_tokens: int = 0
     completion_tokens: int = 0
+    cache_write_5m_tokens: int = 0
+    cache_write_1h_tokens: int = 0
+    cache_read_tokens: int = 0
 
 
 class ModelInfo(_Frozen):
@@ -83,7 +87,14 @@ class ModelClient(Protocol):
 
 
 class ProviderError(Exception):
-    """A model call failed and should not be retried."""
+    """A model call failed and should not be retried.
+
+    ``usage`` is set when the call was answered, and so billed, but the reply is unusable.
+    """
+
+    def __init__(self, message: str = "", usage: Usage | None = None) -> None:
+        super().__init__(message)
+        self.usage = usage
 
 
 class TransientProviderError(ProviderError):

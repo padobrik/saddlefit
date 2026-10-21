@@ -91,6 +91,14 @@ Assumptions taken where the spec leaves a detail open. Deviations from the spec 
   command first needs them, as a format change of their own.
 - **Earlier proposal.** The tie-break's "earlier proposal" is the order in which the tutor
   produced the candidates in a round, not the proposal ID.
+- **Anthropic provider.** Current Claude models refuse a forced `tool_choice`, so the tutor's
+  proposal tool is offered with `tool_choice: auto` and `strict: true`, and the prompt asks for
+  the call. Sampling settings (`temperature`, `seed`) are not sent; `reasoning` maps to
+  `output_config.effort` (`off` → `low`, since thinking cannot be disabled), and no setting
+  leaves the API's default. The system prompt is cached with the 1-hour TTL: batch reruns
+  separate a round's tutor calls by more than five minutes. Refused calls fall back on the
+  server (`fallbacks: "default"`); the reply's `raw.model` names the model that answered.
+  Retries are Saddlefit's (B5), so the SDK makes one attempt per call.
 - **Tool script linting.** B8 asks new tool scripts to pass ruff (Python) or shellcheck (shell)
   and to run only inside the sandbox, so the sandbox image ships both linters and the scripts
   are linted there, in a container with no network, with ruff's `--isolated` so no file in the
