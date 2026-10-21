@@ -269,6 +269,13 @@ class HarnessStore:
         """Tag ``ref``, for example the harness a release was measured with."""
         self._git("tag", _checked(_REF, name, "tag name"), _checked(_REF, ref, "ref"))
 
+    def read(self, path: str, ref: str = MAIN) -> str:
+        """One harness file's committed text at ``ref``."""
+        _checked(_REF, ref, "ref")
+        if disallowed([path]):
+            raise HarnessStoreError(f"not a harness file: {path}")
+        return self._git_bytes("show", f"{ref}:{path}").decode("utf-8")
+
     def export(self, ref: str, dest: Path) -> None:
         """Write the harness files at ``ref`` into ``dest`` (no .git), byte for byte.
 
