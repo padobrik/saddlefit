@@ -7,6 +7,9 @@ baseline and its report.
 from __future__ import annotations
 
 import json
+import os
+import shutil
+import stat
 import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -20,7 +23,7 @@ from saddlefit.errors import UserError
 from saddlefit.eval.evaluator import Evaluator
 from saddlefit.eval.leak_guard import GuardedClient, guard_for_suite
 from saddlefit.harness.loop_config import LoopConfig, clamp, load_loop_config
-from saddlefit.harness.store import HarnessStore
+from saddlefit.harness.store import HarnessStore, HarnessStoreError
 from saddlefit.loops.baseline import BASELINE_SPLITS, BaselineRunner, RunOutcome
 from saddlefit.providers.base import ModelClient
 from saddlefit.reports.baseline import ReportContext
@@ -82,7 +85,7 @@ class Project:
         config = Config(
             schema_version=CONFIG_SCHEMA_VERSION, project=self.root.name, student=student
         )
-        commit = self.harness.init()
+        commit = self._harness_commit()
         if not self.suite.lock.exists():  # a retried init keeps the salt it already made
             save_lock(self.suite, new_lock(config.splits))
         self._ignore_state()
@@ -94,6 +97,20 @@ class Project:
             "harness_commit": commit,
             "state": str(self.state),
         }
+
+    def _harness_commit(self) -> str:
+        """Create the harness store, or reuse one a failed init already finished.
+
+        A store left without a first commit is incomplete, so it is built again.
+        """
+        if (self.harness.path / ".git").exists():
+            try:
+                return self.harness.head()
+            except HarnessStoreError:
+                if not self.harness.is_empty():
+                    raise  # it holds commits: never delete it, report the git error
+                remove_tree(self.harness.path)
+        return self.harness.init()
 
     def _ignore_state(self) -> None:
         """B3: ``init`` adds ``.saddlefit/`` to ``.gitignore``."""
@@ -202,3 +219,18 @@ class Project:
 def report_id(kind: str) -> str:
     """A sortable report name, ``<kind>-<UTC timestamp>``."""
     return f"{kind}-{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}"
+
+
+def remove_tree(path: Path) -> None:
+    """Delete ``path`` even where git left read-only files, which Windows will not unlink."""
+
+    def make_writable_and_retry(
+        func: Callable[[str], object], target: str, exc: BaseException
+    ) -> None:
+        # only a refused read-only file is retried, and never through a symlink
+        if not isinstance(exc, PermissionError) or os.path.islink(target):
+            raise exc
+        os.chmod(target, stat.S_IWRITE)
+        func(target)
+
+    shutil.rmtree(path, onexc=make_writable_and_retry)

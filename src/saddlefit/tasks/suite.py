@@ -8,6 +8,7 @@ canary) for the evaluator only. The base snapshot is the commit's parent.
 from __future__ import annotations
 
 import hashlib
+import os
 import posixpath
 import re
 import shlex
@@ -20,7 +21,13 @@ import yaml
 
 from saddlefit.config import SplitsConfig
 from saddlefit.errors import UserError
-from saddlefit.tasks.mining import Candidate, _git_bytes, task_id_for, task_type_for
+from saddlefit.tasks.mining import (
+    Candidate,
+    _git_bytes,
+    is_test_path,
+    task_id_for,
+    task_type_for,
+)
 from saddlefit.tasks.models import TASK_SCHEMA_VERSION, RepoRef, SuiteLock, TaskMeta
 from saddlefit.tasks.sealing import SealedWriter
 from saddlefit.tasks.splits import add_task, check_fractions
@@ -86,19 +93,28 @@ def load_lock(paths: SuitePaths, splits: SplitsConfig) -> SuiteLock:
     """
     if not paths.lock.exists():
         raise UserError(f"{paths.lock} is missing; splits cannot be recovered without it")
-    lock = SuiteLock.model_validate_json(paths.lock.read_text(encoding="utf-8"))
+    try:
+        lock = SuiteLock.model_validate_json(paths.lock.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:  # pydantic's ValidationError is a ValueError
+        raise UserError(f"{paths.lock} is unreadable or invalid: {exc}") from exc
     check_fractions(lock, splits)
     return lock
 
 
 def save_lock(paths: SuitePaths, lock: SuiteLock) -> None:
+    """Replace ``suite.lock`` atomically: a failed write never leaves it truncated."""
     paths.root.mkdir(parents=True, exist_ok=True)
-    paths.lock.write_text(lock.model_dump_json(indent=2) + "\n", encoding="utf-8")
+    staged = paths.lock.with_name(f".{paths.lock.name}.tmp")
+    staged.write_text(lock.model_dump_json(indent=2) + "\n", encoding="utf-8")
+    os.replace(staged, paths.lock)
 
 
 def load_meta(paths: SuitePaths, task_id: str) -> TaskMeta:
-    raw = yaml.safe_load((paths.public_dir / task_id / "meta.yaml").read_text(encoding="utf-8"))
-    return TaskMeta.model_validate(raw)
+    path = paths.public_dir / task_id / "meta.yaml"
+    try:
+        return TaskMeta.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")))
+    except (OSError, ValueError, yaml.YAMLError) as exc:
+        raise UserError(f"{path} is missing or invalid: {exc}") from exc
 
 
 def _show(repo: Path, ref: str, rel: str) -> bytes | None:
@@ -119,8 +135,21 @@ def _visible_check(repo: Path, candidate: Candidate) -> str:
     existing = [rel for rel in candidate.test_files if _show(repo, candidate.parent, rel)]
     if not existing:
         dirs = sorted({posixpath.dirname(rel) for rel in candidate.test_files} - {""})
-        existing = [d for d in dirs if _show(repo, candidate.parent, d)]
-    return " ".join([PYTEST, *(shlex.quote(rel) for rel in existing)])
+        existing = [d for d in dirs if _has_tests(repo, candidate.parent, d)]
+    if existing:
+        return " ".join([PYTEST, *(shlex.quote(rel) for rel in existing)])
+    # the whole suite; when the parent has no tests at all, "no tests collected" (5) is a pass
+    return f"{PYTEST} || test $? -eq 5"
+
+
+def _has_tests(repo: Path, ref: str, directory: str) -> bool:
+    """Whether ``directory`` at ``ref`` holds test files pytest would collect."""
+    try:
+        listing = _git_bytes(repo, "ls-tree", "-r", "--name-only", ref, "--", directory)
+    except subprocess.CalledProcessError:
+        return False
+    names = listing.decode("utf-8", errors="surrogateescape").splitlines()
+    return any(is_test_path(name) for name in names)
 
 
 def materialize(

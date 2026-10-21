@@ -148,6 +148,10 @@ class HarnessStore:
                 f"(current {HARNESS_SCHEMA_VERSION})"
             )
 
+    def is_empty(self) -> bool:
+        """Whether the store has no commit at all, as an init that stopped early leaves it."""
+        return self._git("rev-list", "--all", "--count") == "0"
+
     def head(self, ref: str = MAIN) -> str:
         """The commit SHA that ``ref`` points to."""
         return self._git("rev-parse", "--verify", "--quiet", _checked(_REF, ref, "ref"))

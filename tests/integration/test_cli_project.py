@@ -1,5 +1,9 @@
 import json
+import os
+import shlex
 import shutil
+import stat
+import subprocess
 import sys
 from pathlib import Path
 
@@ -14,10 +18,19 @@ from saddlefit import cli
 from saddlefit.cli import app
 from saddlefit.errors import UserError
 from saddlefit.harness.store import HarnessStore, HarnessStoreError
-from saddlefit.project import Project
+from saddlefit.project import Project, remove_tree
 
 pytestmark = pytest.mark.integration
 runner = CliRunner()
+
+
+def git_env(home: Path) -> dict[str, str]:
+    return {
+        "PATH": os.environ.get("PATH", ""),
+        "HOME": str(home),
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_GLOBAL": os.devnull,
+    }
 
 
 def invoke(repo: Path, *args: str, monkeypatch: pytest.MonkeyPatch) -> object:
@@ -163,3 +176,137 @@ def test_contamination_follows_the_configured_release_date(
     )
     rows = invoke(repo, "tasks", "list", monkeypatch=monkeypatch)
     assert {r["contaminated"] for r in rows} == {flagged}  # type: ignore[union-attr,index]
+
+
+def test_a_corrupt_lock_or_meta_is_a_user_error(tmp_path: Path) -> None:
+    repo = build(tmp_path / "repo")
+    project = Project(repo)
+    project.init()
+    _, metas = project.mine(HostRunner(python=sys.executable), limit=1)
+    meta = project.suite.public_dir / metas[0].id / "meta.yaml"
+    meta.write_text("schema_version: [", encoding="utf-8")
+    with pytest.raises(UserError, match=r"meta\.yaml"):
+        project.tasks()
+    project.suite.lock.write_text("{not json", encoding="utf-8")
+    with pytest.raises(UserError, match=r"suite\.lock"):
+        project.tasks()
+
+
+def test_the_lock_is_replaced_atomically(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    repo = build(tmp_path / "repo")
+    project = Project(repo)
+    project.init()
+    before = project.suite.lock.read_text(encoding="utf-8")
+
+    real_write = Path.write_text
+
+    def dies_halfway_through_the_lock(self: Path, *args: object, **kwargs: object) -> int:
+        if "suite.lock" in self.name:
+            self.open("w").close()  # the write had truncated the file when the disk filled up
+            raise OSError("disk full")
+        return real_write(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(Path, "write_text", dies_halfway_through_the_lock)
+    with pytest.raises(OSError, match="disk full"):
+        project.mine(HostRunner(python=sys.executable), limit=1)
+    monkeypatch.undo()
+    assert project.suite.lock.read_text(encoding="utf-8") == before
+
+
+def test_init_recovers_from_a_half_built_harness_store(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = build(tmp_path / "repo")
+    project = Project(repo)
+    real_git = HarnessStore._git
+
+    def fails_on_commit(self: HarnessStore, *args: str, **kwargs: object) -> str:
+        if args[0] == "commit":
+            raise HarnessStoreError("git commit failed: boom")
+        return real_git(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(HarnessStore, "_git", fails_on_commit)
+    with pytest.raises(HarnessStoreError):
+        project.init()
+    assert (project.harness.path / ".git").exists()  # left half-built
+    monkeypatch.undo()
+    assert project.init()["harness_commit"]  # retried without any manual cleanup
+
+
+def test_init_reuses_a_finished_harness_store(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = build(tmp_path / "repo")
+    project = Project(repo)
+    real_write = Path.write_text
+
+    def config_write_fails(self: Path, *args: object, **kwargs: object) -> int:
+        if self.name == "saddlefit.yaml":
+            raise OSError("read-only")
+        return real_write(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(Path, "write_text", config_write_fails)
+    with pytest.raises(OSError, match="read-only"):
+        project.init()
+    first = project.harness.head()
+    monkeypatch.undo()
+    assert project.init()["harness_commit"] == first
+
+
+def test_the_visible_check_skips_a_directory_without_tests(tmp_path: Path) -> None:
+    repo = build(tmp_path / "repo")
+    add_fix(repo, "src/toykit/test_extra.py")  # src/toykit exists in the parent, but has no tests
+    project = Project(repo)
+    project.init()
+    _, metas = project.mine(HostRunner(python=sys.executable), limit=1)
+    assert metas
+    check = metas[0].visible_check or ""
+    assert "src/toykit" not in check
+    if os.name == "nt":
+        return  # the check is a command for the Linux sandbox (":" in PYTHONPATH, bash)
+    # what it does run collects tests on the parent
+    subprocess.run(["git", "checkout", "-q", metas[0].repo.base_commit], cwd=repo, check=True)
+    command = check.replace("python", shlex.quote(sys.executable), 1)
+    result = subprocess.run(["bash", "-c", command], cwd=repo, check=False)
+    assert result.returncode == 0
+
+
+def test_removing_a_store_handles_read_only_git_objects(tmp_path: Path) -> None:
+    # git writes its object files read-only; Windows refuses to delete those as they are
+    store = tmp_path / "harness"
+    (store / ".git" / "objects" / "ab").mkdir(parents=True)
+    obj = store / ".git" / "objects" / "ab" / "cdef"
+    obj.write_text("x", encoding="utf-8")
+    obj.chmod(stat.S_IREAD)
+    remove_tree(store)
+    assert not store.exists()
+
+
+def test_init_keeps_a_store_it_cannot_read(tmp_path: Path) -> None:
+    repo = build(tmp_path / "repo")
+    project = Project(repo)
+    project.harness.init()  # a finished store, but its branch is not where init expects it
+    subprocess.run(
+        ["git", "branch", "-m", "main", "elsewhere"],
+        cwd=project.harness.path,
+        env=git_env(project.harness.path),
+        check=True,
+    )
+    with pytest.raises(HarnessStoreError):
+        project.init()
+    assert project.harness.path.exists()
+    assert not project.harness.is_empty()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="creating symlinks needs privileges on Windows")
+def test_remove_tree_reraises_other_errors_and_leaves_link_targets_alone(tmp_path: Path) -> None:
+    target = tmp_path / "target"
+    target.mkdir()
+    (target / "keep.txt").write_text("x", encoding="utf-8")
+    mode = target.stat().st_mode
+    link = tmp_path / "link"
+    link.symlink_to(target, target_is_directory=True)
+    with pytest.raises(OSError, match="link"):  # the message differs across Python versions
+        remove_tree(link)
+    assert (target / "keep.txt").exists()
+    assert target.stat().st_mode == mode

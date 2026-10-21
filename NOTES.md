@@ -44,6 +44,7 @@ Assumptions taken where the spec leaves a detail open. Deviations from the spec 
   lines, issue-closing lines and sign-off trailers. A pull request's description otherwise reads
   as a report that the work is done.
 - **Visible check for history tasks.** Every history task gets one: the parent's versions of the
-  commit's test files, else the existing tests in the same directories, else the whole suite,
-  run with the same command as the hidden check (`PYTHONPATH=src:.`), so `finish_gate.run` is not
-  needed for mined tasks.
+  commit's test files, else the directories of the new test files that already hold tests in the
+  parent, else the whole suite, run with the same command as the hidden check
+  (`PYTHONPATH=src:.`), so `finish_gate.run` is not needed for mined tasks. When the parent has no
+  tests at all, pytest's "no tests collected" (exit 5) counts as a pass.

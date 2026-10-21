@@ -237,3 +237,19 @@ def test_off_that_cannot_be_applied_is_reported_once(caplog: pytest.LogCaptureFi
     warnings = [r for r in caplog.records if "reasoning" in r.getMessage()]
     assert len(warnings) == 1
     assert "not applied" in warnings[0].getMessage()
+
+
+def test_the_reasoning_warning_never_logs_the_runner_url(caplog: pytest.LogCaptureFixture) -> None:
+    secret = OpenAICompatibleClient(
+        base_url="https://user:sk-secret-123@proxy.example/v1",
+        model="m",
+        sdk=StubSDK(response(content="ok")),
+        fetch_json=lambda url, payload: (_ for _ in ()).throw(OSError("not ollama")),
+        sleep=lambda _: None,
+    )
+    # DEBUG too: the failed runner probe logs at that level
+    with caplog.at_level(logging.DEBUG, logger="saddlefit.providers.openai_compat"):
+        secret.chat(USER, None, GenParams(reasoning="off"))
+    assert caplog.records
+    assert "sk-secret-123" not in caplog.text
+    assert "proxy.example" not in caplog.text
