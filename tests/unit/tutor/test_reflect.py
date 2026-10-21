@@ -166,9 +166,12 @@ def test_unusable_lessons_are_tutor_errors(reply: ModelReply, match: str) -> Non
     assert caught.value.usage == reply.usage
 
 
-@pytest.mark.parametrize("old", ["# Lessons\n", "# Lessons\n- (model: m) First.", ""])
+@pytest.mark.parametrize(
+    "old",
+    ["# Lessons\n", "# Lessons\n- (model: m) First.", "", "# Lessons\n- (model: m) a\x0cb\n"],
+)
 def test_a_lesson_patch_applies_with_git(tmp_path: Path, old: str) -> None:
-    (tmp_path / "EXPERIENCE.md").write_text(old, encoding="utf-8")
+    (tmp_path / "EXPERIENCE.md").write_bytes(old.encode())  # bytes: no CRLF on Windows
     patch = lesson_patch(old, "- (model: m) Second.")
     env = {"PATH": os.environ.get("PATH", ""), "HOME": str(tmp_path), "GIT_CONFIG_NOSYSTEM": "1"}
     subprocess.run(
@@ -179,8 +182,18 @@ def test_a_lesson_patch_applies_with_git(tmp_path: Path, old: str) -> None:
         check=True,
         capture_output=True,
     )
-    lines = (tmp_path / "EXPERIENCE.md").read_text(encoding="utf-8").splitlines()
-    assert lines == [*old.splitlines(), "- (model: m) Second."]
+    new = (tmp_path / "EXPERIENCE.md").read_bytes().decode()
+    assert new == old + ("\n" if old and not old.endswith("\n") else "") + "- (model: m) Second.\n"
+
+
+def test_a_lesson_already_recorded_is_not_repeated(store: HarnessStore) -> None:
+    lesson = Lesson(text="Retries help.", evidence_run_ids=(RUN_A,))
+    first = record_lesson(store, lesson, "m", NoLint())
+    assert record_lesson(store, lesson, "m", NoLint()) is None
+    assert store.head() == first
+    assert store.read("EXPERIENCE.md").count("Retries help.") == 1
+    # the same text learned on another model is a different lesson
+    assert record_lesson(store, lesson, "other", NoLint()) is not None
 
 
 def test_lessons_only_change_experience_md(store: HarnessStore) -> None:

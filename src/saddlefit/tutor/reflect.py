@@ -130,14 +130,20 @@ def lesson_line(lesson: Lesson, student_model: str) -> str:
     return f"- (model: {student_model}) {lesson.text}"
 
 
+def _git_lines(text: str) -> list[str]:
+    """Lines as git splits them, on ``\n`` only; ``str.splitlines`` also splits on ``\f``."""
+    parts = text.split("\n")
+    return [p + "\n" for p in parts[:-1]] + ([parts[-1]] if parts[-1] else [])
+
+
 def lesson_patch(experience: str, line: str) -> str:
     """A git-style diff that appends ``line`` to EXPERIENCE.md."""
     after = (
         experience + ("\n" if experience and not experience.endswith("\n") else "") + line + "\n"
     )
     body = difflib.unified_diff(
-        experience.splitlines(keepends=True),
-        after.splitlines(keepends=True),
+        _git_lines(experience),
+        _git_lines(after),
         f"a/{EXPERIENCE_FILE}",
         f"b/{EXPERIENCE_FILE}",
     )
@@ -151,9 +157,16 @@ def lesson_patch(experience: str, line: str) -> str:
 
 def record_lesson(
     store: HarnessStore, lesson: Lesson, student_model: str, linter: ScriptLinter
-) -> str:
-    """Append the lesson to EXPERIENCE.md on ``main`` through a validated proposal."""
+) -> str | None:
+    """Append the lesson to EXPERIENCE.md on ``main`` through a validated proposal.
+
+    Returns the new ``main`` SHA, or ``None`` when the same lesson is already there: every
+    copy would reach the student's context and cost tokens.
+    """
     line = lesson_line(lesson, student_model)
+    experience = store.read(EXPERIENCE_FILE)
+    if line in experience.split("\n"):
+        return None
     try:
         proposal = Proposal(
             schema_version=PROPOSAL_SCHEMA_VERSION,
@@ -164,7 +177,7 @@ def record_lesson(
             evidence_run_ids=lesson.evidence_run_ids,
             technique="lesson for EXPERIENCE.md",
             rationale=lesson.text,
-            patch=lesson_patch(store.read(EXPERIENCE_FILE), line),
+            patch=lesson_patch(experience, line),
             expected_effect="later rounds and the student know what worked",
             context_tokens_delta=len(line) // 4,
         )
