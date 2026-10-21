@@ -82,3 +82,8 @@ Assumptions taken where the spec leaves a detail open. Deviations from the spec 
   `tutor.prices_usd_per_mtok` also carries `cache_write_5m`, `cache_write_1h` and `cache_read`,
   defaulting to 0.0 like the other prices. They arrived in `saddlefit.yaml` v2; a v1 file is
   migrated by its version alone, and its cache prices stay 0.0 until the user fills them in.
+- **Tool script linting.** B8 asks new tool scripts to pass ruff (Python) or shellcheck (shell)
+  and to run only inside the sandbox, so the sandbox image ships both linters and the scripts
+  are linted there, in a container with no network, with ruff's `--isolated` so no file in the
+  workspace can switch rules off. Every `.py` and `.sh` file a proposal adds or changes is
+  linted, in `skills/` too; `tools/` may hold nothing else.
