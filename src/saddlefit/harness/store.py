@@ -42,6 +42,9 @@ _COMMIT = re.compile(r"[0-9a-f]{7,64}")
 _MODE_LINE = re.compile(r"^(?:new file mode|new mode) (\d+)$", re.MULTILINE)
 _FILE_MODES: Final = frozenset({"100644", "100755"})
 MAX_PATCH_LINES: Final = 200  # B8: a proposal changes at most 200 lines
+# --recount: trust the hunk bodies, not their line counts, which models often get wrong;
+# the context lines must still match exactly.
+_APPLY: Final = ("--recount", "--whitespace=nowarn")
 
 DEFAULT_FILES: dict[str, str] = {
     "systemprompt.md": "You are a careful software engineer. Solve the task, then run its check.\n",
@@ -173,8 +176,8 @@ class HarnessStore:
         branch = f"candidate/{proposal_id}"
         self._git("switch", "--quiet", "-c", branch, MAIN)
         try:
-            self._git("apply", "--check", "--whitespace=nowarn", "-", stdin=patch)
-            self._git("apply", "--index", "--whitespace=nowarn", "-", stdin=patch)
+            self._git("apply", *_APPLY, "--check", "-", stdin=patch)
+            self._git("apply", *_APPLY, "--index", "-", stdin=patch)
             # the text checks above are early rejections; this judges what git actually staged
             self._check_staged()
             self._git("commit", "--quiet", "-m", f"{message}\n\nproposal: {proposal_id}")
@@ -192,7 +195,7 @@ class HarnessStore:
     def _check_size(self, patch: str) -> None:
         """Refuse a patch that changes more than ``MAX_PATCH_LINES`` lines, or binary data."""
         changed = 0
-        for line in self._git("apply", "--numstat", "-", stdin=patch).splitlines():
+        for line in self._git("apply", "--recount", "--numstat", "-", stdin=patch).splitlines():
             added, deleted, _ = line.split("\t", 2)
             if not (added.isdigit() and deleted.isdigit()):
                 raise HarnessStoreError("patch changes a binary file")
