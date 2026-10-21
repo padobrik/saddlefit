@@ -31,7 +31,7 @@ from saddlefit.loops.baseline import (
     BaselineRunner,
     RunOutcome,
 )
-from saddlefit.providers.base import ModelClient
+from saddlefit.providers.base import ModelClient, ModelInfo
 from saddlefit.providers.retry import LOCAL_TIMEOUT_S
 from saddlefit.reports.baseline import ReportContext
 from saddlefit.reports.baseline import build as build_report
@@ -205,11 +205,17 @@ class Project:
         *,
         docker_client: Any,
         model_client: Callable[[], ModelClient],
+        model_info: ModelInfo | None = None,
         limit: int | None = None,
         on_run: Callable[[RunOutcome], None] | None = None,
     ) -> tuple[dict[str, Any], Path]:
-        """Run the baseline on training and held-out tasks and write its report."""
+        """Run the baseline on training and held-out tasks and write its report.
+
+        ``model_info`` is the model as the command saw it once; the tool mode and the
+        report both use it, so they cannot disagree about which model ran.
+        """
         config = self.config()
+        info = model_info or model_client().info()
         loop, _ = self.effective_loop()
         lock = load_lock(self.suite, config.splits)
         metas = [m for m in self.tasks() if m.split in BASELINE_SPLITS][:limit]
@@ -236,11 +242,10 @@ class Project:
                 ),
                 docker_client=docker_client,
                 image=config.sandbox.image,
-                tool_mode=self.tool_mode(model_client().info().digest),
+                tool_mode=self.tool_mode(info.digest),
                 on_run=on_run,
             )
             result = runner.run(metas)
-        info = model_client().info()
         ctx = ReportContext(
             model=info.model,
             model_digest=info.digest,

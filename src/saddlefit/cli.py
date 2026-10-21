@@ -209,7 +209,8 @@ def baseline(
 
     # the running model's digest decides whether doctor's measurements still apply
     probe = OpenAICompatibleClient(base_url=config.student.base_url, model=config.student.model)
-    timeout_s = project.student_timeout(probe.info().digest)
+    model_info = probe.info()  # read once: timeout, tool mode and report use the same model
+    timeout_s = project.student_timeout(model_info.digest)
 
     def model_client() -> ModelClient:
         return OpenAICompatibleClient(
@@ -228,7 +229,11 @@ def baseline(
             typer.echo(progress_line(run, finished))
 
     report, markdown = project.baseline(
-        docker_client=_docker(), model_client=model_client, limit=limit, on_run=progress
+        docker_client=_docker(),
+        model_client=model_client,
+        model_info=model_info,
+        limit=limit,
+        on_run=progress,
     )
     _emit(ctx, report, markdown.read_text(encoding="utf-8"))
 
