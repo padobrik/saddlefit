@@ -143,26 +143,21 @@ def test_test_paths_are_quoted_in_the_checks(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(("release", "flagged"), [("2099-01-01", True), ("2000-01-01", False)])
-def test_tasks_older_than_the_model_are_flagged_as_contaminated(
-    tmp_path: Path, release: str, flagged: bool
+def test_contamination_follows_the_configured_release_date(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, release: str, flagged: bool
 ) -> None:
     repo = build(tmp_path / "repo")
     project = Project(repo)
     project.init()
+    _, metas = project.mine(HostRunner(python=sys.executable), limit=2)
+    assert metas
+    assert all(m.committed is not None for m in metas)
+    rows = invoke(repo, "tasks", "list", monkeypatch=monkeypatch)
+    assert not any(r["contaminated"] for r in rows)  # type: ignore[union-attr,index]
+    # the release date is set after mining, and the listing follows it without re-mining
     config = project.config_path.read_text(encoding="utf-8")
     project.config_path.write_text(
         config.replace("release_date: null", f"release_date: {release}"), encoding="utf-8"
     )
-    _, metas = project.mine(HostRunner(python=sys.executable), limit=2)
-    assert metas
-    assert all(m.contaminated is flagged for m in metas)
-    assert all(m.contaminated is flagged for m in project.tasks())
-
-
-def test_without_a_release_date_nothing_is_flagged(tmp_path: Path) -> None:
-    repo = build(tmp_path / "repo")
-    project = Project(repo)
-    project.init()
-    _, metas = project.mine(HostRunner(python=sys.executable), limit=2)
-    assert metas
-    assert not any(m.contaminated for m in metas)
+    rows = invoke(repo, "tasks", "list", monkeypatch=monkeypatch)
+    assert {r["contaminated"] for r in rows} == {flagged}  # type: ignore[union-attr,index]
