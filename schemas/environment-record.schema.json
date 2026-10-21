@@ -1,0 +1,42 @@
+{
+  "additionalProperties": false,
+  "description": "``.saddlefit/environment.json``: which image holds this repository's dependencies.",
+  "properties": {
+    "base_id": {
+      "title": "Base Id",
+      "type": "string"
+    },
+    "base_image": {
+      "title": "Base Image",
+      "type": "string"
+    },
+    "built_at": {
+      "format": "date-time",
+      "title": "Built At",
+      "type": "string"
+    },
+    "dependencies": {
+      "title": "Dependencies",
+      "type": "string"
+    },
+    "image": {
+      "title": "Image",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "schema_version",
+    "base_image",
+    "base_id",
+    "image",
+    "dependencies",
+    "built_at"
+  ],
+  "title": "EnvironmentRecord",
+  "type": "object"
+}
