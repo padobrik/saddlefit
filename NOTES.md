@@ -76,3 +76,9 @@ Assumptions taken where the spec leaves a detail open. Deviations from the spec 
   release publishes the image under the same tag in the same run. `init` writes the value into
   `saddlefit.yaml`, so an existing project keeps the image it started with until its owner
   changes it. The generated schema shows no default for it.
+- **Prompt-cache prices.** Prompt caching is not in the spec. The tutor's repeated parts (system
+  prompt, harness files) are worth caching, and cache writes and reads are priced apart from
+  plain input, with different prices for 5-minute and 1-hour writes. So
+  `tutor.prices_usd_per_mtok` also carries `cache_write_5m`, `cache_write_1h` and `cache_read`,
+  defaulting to 0.0 like the other prices. They arrived in `saddlefit.yaml` v2; a v1 file is
+  migrated by its version alone, and its cache prices stay 0.0 until the user fills them in.
