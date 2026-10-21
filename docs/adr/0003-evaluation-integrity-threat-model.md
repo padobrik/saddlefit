@@ -62,5 +62,8 @@ the fast loop still fails, and reports stay limited to what B10's table allows t
 
 The verdict fields that do leave evaluation, exit code, duration and timeout flag, are what the
 run record keeps for the hidden check. The duration is a timing side channel: it can tell how long
-the hidden tests ran, nothing about what they contain. That risk is accepted. The evaluator PR can merge with the B10 design. Gaming hidden
-tests blindly stays a known risk, and the held-out and control sets measure it.
+the hidden tests ran, nothing about what they contain. That risk is accepted.
+
+The evaluator can keep the B10 design. Generic code that games tests, written without seeing them
+but able to read them at run time, stays a known risk, and the held-out and control sets measure
+it.
