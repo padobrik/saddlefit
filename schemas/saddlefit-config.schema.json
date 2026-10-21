@@ -97,7 +97,6 @@
           "type": "number"
         },
         "image": {
-          "default": "ghcr.io/padobrik/saddlefit-sandbox:0.1.0",
           "title": "Image",
           "type": "string"
         },
@@ -314,13 +313,7 @@
       "type": "string"
     },
     "sandbox": {
-      "$ref": "#/$defs/SandboxConfig",
-      "default": {
-        "cpus": 2.0,
-        "image": "ghcr.io/padobrik/saddlefit-sandbox:0.1.0",
-        "memory": "4g",
-        "pids_limit": 512
-      }
+      "$ref": "#/$defs/SandboxConfig"
     },
     "schema_version": {
       "const": 1,

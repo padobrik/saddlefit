@@ -71,3 +71,8 @@ Assumptions taken where the spec leaves a detail open. Deviations from the spec 
   installing the project by hand would; the files are the repository owner's, and the student
   never takes part in this step. The build gets the sandbox's memory limit and a 30-minute HTTP
   timeout. The Docker API has no CPU cap or daemon-side deadline for a build, so neither is set.
+- **Default sandbox image.** `sandbox.image` defaults to
+  `ghcr.io/padobrik/saddlefit-sandbox:<installed version>`, so it never needs a hand edit: every
+  release publishes the image under the same tag in the same run. `init` writes the value into
+  `saddlefit.yaml`, so an existing project keeps the image it started with until its owner
+  changes it. The generated schema shows no default for it.

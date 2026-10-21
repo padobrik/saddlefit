@@ -13,10 +13,17 @@ from typing import Final, Literal, Self
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
+from saddlefit import __version__
 from saddlefit.errors import UserError
 
 CONFIG_SCHEMA_VERSION: Final = 1
 CONFIG_FILENAME = "saddlefit.yaml"
+SANDBOX_REPOSITORY: Final = "ghcr.io/padobrik/saddlefit-sandbox"
+
+
+def default_sandbox_image() -> str:
+    """The sandbox image published with this release; each release pushes its own tag."""
+    return f"{SANDBOX_REPOSITORY}:{__version__}"
 
 
 class _Strict(BaseModel):
@@ -100,7 +107,8 @@ class SplitsConfig(_Strict):
 class SandboxConfig(_Strict):
     """Image and resource limits for the student and evaluation containers."""
 
-    image: str = "ghcr.io/padobrik/saddlefit-sandbox:0.1.0"
+    # a factory, not a value: the generated schema then carries no version to go stale
+    image: str = Field(default_factory=default_sandbox_image)
     cpus: float = Field(default=2, gt=0)
     memory: str = Field(default="4g", pattern=r"^[0-9]+[bkmg]?$")
     pids_limit: int = Field(default=512, gt=0)
@@ -124,7 +132,7 @@ class Config(_Strict):
     generator: GeneratorConfig = GeneratorConfig()
     evaluation: EvaluationConfig = EvaluationConfig()
     splits: SplitsConfig = SplitsConfig()
-    sandbox: SandboxConfig = SandboxConfig()
+    sandbox: SandboxConfig = Field(default_factory=SandboxConfig)
     fast_loop: FastLoopConfig = FastLoopConfig()
 
 
