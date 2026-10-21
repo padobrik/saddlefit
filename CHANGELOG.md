@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.1](https://github.com/padobrik/saddlefit/compare/v0.1.0...v0.1.1) (2026-10-21)
+
+
+### Bug Fixes
+
+* **ci:** publish the sandbox image for arm64 as well ([#85](https://github.com/padobrik/saddlefit/issues/85)) ([3a5bf93](https://github.com/padobrik/saddlefit/commit/3a5bf93e10e0753ebde93bb459e136cda5574244))
+* **sandbox:** build per-repository environment images ([#84](https://github.com/padobrik/saddlefit/issues/84)) ([b3343b7](https://github.com/padobrik/saddlefit/commit/b3343b7ea89d316f2ec0657c593f2f60ec5cccc0))
+
 ## 0.1.0 (2026-10-21)
 
 
