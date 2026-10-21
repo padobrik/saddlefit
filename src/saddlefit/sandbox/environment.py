@@ -5,6 +5,12 @@ network, so the dependencies must already be in the image. They are installed in
 image in a separate build step, which may use the network; runs never do. There is one image
 per repository, built from its current dependency files and tagged with a hash of them and of
 the base image, so an unchanged repository reuses the image it already has.
+
+The dependency files are the repository owner's own, and installing them runs their build
+hooks with network access, exactly as installing the project by hand would. The student never
+touches this step: it only sees the finished image, from a container with no network. The
+build runs under the sandbox's memory limit and an HTTP timeout; the Docker API offers no CPU
+cap or daemon-side deadline for a build.
 """
 
 from __future__ import annotations
@@ -21,10 +27,13 @@ from typing import Any, Final, Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from saddlefit.sandbox.container import SandboxError
+from saddlefit.config import SandboxConfig
+from saddlefit.sandbox.container import SandboxError, memory_bytes
 
 ENVIRONMENT_SCHEMA_VERSION: Final = 1
 REQUIREMENTS_GLOBS: Final = ("requirements*.txt", "requirements/*.txt")
+# seconds the Docker API may stay silent during a build before the client gives up
+BUILD_TIMEOUT_S: Final = 1800
 Source = Literal["uv.lock", "requirements", "pyproject"]
 
 
@@ -108,12 +117,18 @@ def dockerfile(base_image: str, deps: Dependencies) -> str:
 
 
 def ensure_environment(
-    docker_client: Any, base_image: str, repo: Path, project: str
+    docker_client: Any,
+    base_image: str,
+    repo: Path,
+    project: str,
+    limits: SandboxConfig | None = None,
 ) -> EnvironmentRecord | None:
     """The environment image for ``repo``, built only when no image matches its dependencies.
 
     Returns ``None`` when the repository declares no dependencies: the base image is enough.
+    The build runs under ``limits``' memory limit, the sandbox's by default.
     """
+    memory = memory_bytes((limits or SandboxConfig()).memory)
     deps = find_dependencies(repo)
     if deps is None:
         return None
@@ -145,7 +160,14 @@ def ensure_environment(
         (context / "Dockerfile").write_text(dockerfile(base_image, deps), encoding="utf-8")
         try:
             with _without_registry_credentials(docker_client):
-                docker_client.images.build(path=str(context), tag=tag, rm=True, pull=False)
+                docker_client.images.build(
+                    path=str(context),
+                    tag=tag,
+                    rm=True,
+                    pull=False,
+                    timeout=BUILD_TIMEOUT_S,
+                    container_limits={"memory": memory, "memswap": memory},
+                )
         except Exception as exc:
             raise SandboxError(f"building the environment image {tag} failed: {exc}") from exc
     return record
@@ -163,8 +185,12 @@ def _without_registry_credentials(docker_client: Any) -> Iterator[None]:
     if api is None or not hasattr(api, "_set_auth_headers"):
         yield
         return
+    own = api.__dict__.get("_set_auth_headers")  # an override someone else already set
     api._set_auth_headers = lambda headers: None
     try:
         yield
     finally:
-        del api._set_auth_headers  # back to the class's method
+        if own is None:
+            del api._set_auth_headers  # back to the class's method
+        else:
+            api._set_auth_headers = own

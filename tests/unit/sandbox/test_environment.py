@@ -3,8 +3,11 @@ from typing import Any
 
 import pytest
 
+from saddlefit.config import SandboxConfig
 from saddlefit.sandbox.container import SandboxError
 from saddlefit.sandbox.environment import (
+    BUILD_TIMEOUT_S,
+    _without_registry_credentials,
     dockerfile,
     ensure_environment,
     find_dependencies,
@@ -147,3 +150,43 @@ def test_build_and_base_failures_are_environment_errors(tmp_path: Path) -> None:
         ensure_environment(
             FakeDocker(FakeImages({"base"}, fail_build=True)), "base", tmp_path, "toy"
         )
+
+
+@pytest.mark.parametrize(
+    ("limits", "memory"), [(None, 4 * 1024**3), (SandboxConfig(memory="512m"), 512 * 1024**2)]
+)
+def test_the_build_runs_under_the_sandbox_memory_limit_and_a_timeout(
+    tmp_path: Path, limits: SandboxConfig | None, memory: int
+) -> None:
+    write(tmp_path, {"requirements.txt": "pytest\n"})
+    images = FakeImages({"base"})
+    ensure_environment(FakeDocker(images), "base", tmp_path, "toy", limits)
+    build = images.builds[0]
+    assert build["container_limits"] == {"memory": memory, "memswap": memory}
+    assert build["timeout"] == BUILD_TIMEOUT_S
+
+
+class Api:
+    def _set_auth_headers(self, headers: dict[str, str]) -> None:
+        headers["X-Registry-Config"] = "credentials"
+
+
+def auth_headers(api: Api) -> dict[str, str]:
+    headers: dict[str, str] = {}
+    api._set_auth_headers(headers)
+    return headers
+
+
+def test_registry_credentials_are_left_out_only_during_the_build() -> None:
+    client = type("Client", (), {"api": Api()})()
+    with _without_registry_credentials(client):
+        assert auth_headers(client.api) == {}
+    assert auth_headers(client.api) == {"X-Registry-Config": "credentials"}
+
+    def own(headers: dict[str, str]) -> None:
+        headers["X-Own"] = "1"
+
+    client.api._set_auth_headers = own  # someone else's override survives the build
+    with _without_registry_credentials(client):
+        assert auth_headers(client.api) == {}
+    assert auth_headers(client.api) == {"X-Own": "1"}
