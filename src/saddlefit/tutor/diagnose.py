@@ -206,8 +206,10 @@ def diagnose(
     ]
     reply = client.chat(messages, [PROPOSE_TOOL], GenParams(max_tokens=max_tokens))
     names = [c.name for c in reply.tool_calls]
-    if names != [TOOL_NAME]:
-        raise TutorError(f"expected exactly one {TOOL_NAME} call, got {names}", reply.usage)
+    if names != [TOOL_NAME] or reply.malformed:
+        # a call the provider could not parse is still an attempted call
+        attempted = names + ["<malformed>"] * len(reply.malformed)
+        raise TutorError(f"expected exactly one {TOOL_NAME} call, got {attempted}", reply.usage)
     try:
         proposal = Proposal.model_validate(
             {

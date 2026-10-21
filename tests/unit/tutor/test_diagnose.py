@@ -220,6 +220,14 @@ def test_proposal_ids_are_unique() -> None:
             ),
             "'read'",
         ),
+        (
+            ModelReply(
+                tool_calls=proposing().tool_calls,
+                malformed=('{"tool": "propose", "args": {',),
+                usage=Usage(completion_tokens=9),
+            ),
+            "<malformed>",
+        ),
         (proposing(evidence_run_ids="not-a-list"), "malformed"),
         (proposing(evidence_run_ids=[{"id": 1}]), "malformed"),
         (proposing(evidence_run_ids=[RUN_A, "01JB2Y8Q4V9N1K3D7M5R6T0W30"]), "not shown"),
