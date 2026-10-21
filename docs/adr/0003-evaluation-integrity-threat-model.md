@@ -29,11 +29,13 @@ What the evaluator does guarantee:
   their way is `tampered` and never runs;
 - every sealed file carries a canary, and a canary in any prompt aborts the run (required test 2).
 
-So code under test can at most read the test that is running it. Neither the hidden tests' content
-nor the check's output can travel back to the model, the tutor or a report; the only channel out
-is the verdict's exit code, duration and timeout flag, plus the aggregates B10 allows in reports.
-B10 defends against code that games the tests blindly with held-out
-and control sets and repeated runs (B10 known traps, B12).
+So code under test can read every hidden test copied into the container, and could change its
+behaviour at run time based on what it reads. It cannot send anything back: neither the hidden
+tests' content nor the check's output can travel to the model, the tutor or a report. The only
+channel out is the verdict's exit code, duration and timeout flag, plus the aggregates B10 allows
+in reports. Such code has to be written before its author has seen any hidden test, so it can only
+be a generic attempt to game tests. B10 defends against that with held-out and control sets and
+repeated runs (B10 known traps, B12).
 
 ## Decision
 
