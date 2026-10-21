@@ -1,3 +1,4 @@
+import os
 import subprocess
 from pathlib import Path
 
@@ -6,10 +7,12 @@ import pytest
 from saddlefit.config import EvaluationConfig, SandboxConfig
 from saddlefit.eval import evaluator as evaluator_module
 from saddlefit.eval.evaluator import (
+    DIFF_FILE,
     MAX_DIFF_BYTES,
     Evaluator,
     PlantedSymlinkError,
     _inside,
+    _stage_diff,
     _tampered,
 )
 from saddlefit.eval.sealed import SealedStore
@@ -108,8 +111,8 @@ def test_environment_errors_are_reported(tmp_path: Path) -> None:
     )
     verdict = evaluator.evaluate("t-0001", base, diff, "01JB2Y8Q4V9N1K3D7M5R6T0W2X")
     assert not verdict.passed
-    assert verdict.env_error is not None
-    assert "daemon unavailable" in verdict.env_error
+    assert verdict.env_error is True
+    assert "daemon unavailable" not in repr(verdict)  # the message stays in the log
 
 
 def test_an_oversized_diff_fails_before_any_parsing(
@@ -167,3 +170,41 @@ def test_a_verdict_never_names_a_path(tmp_path: Path) -> None:
     verdict = evaluator.evaluate("t-0001", tmp_path, diff, "01JB2Y8Q4V9N1K3D7M5R6T0W2X")
     assert verdict.tampered is True
     assert "test_h" not in repr(verdict)
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "conftest.py",
+        "src/conftest.py",
+        "src/sitecustomize.py",
+        "usercustomize.py",
+        "pytest.ini",
+        "tox.ini",
+        "setup.cfg",
+        "pyproject.toml",
+        "src/evil.pth",
+    ],
+)
+def test_files_that_steer_pytest_are_tampering(tmp_path: Path, path: str) -> None:
+    diff = (
+        f"diff --git a/{path} b/{path}\nnew file mode 100644\n"
+        f"--- /dev/null\n+++ b/{path}\n@@ -0,0 +1 @@\n+x\n"
+    )
+    evaluator = Evaluator(_store(tmp_path), None, "img", SandboxConfig(), EvaluationConfig())
+    verdict = evaluator.evaluate("t-0001", tmp_path, diff, "01JB2Y8Q4V9N1K3D7M5R6T0W2X")
+    assert verdict.tampered is True
+
+
+@pytest.mark.skipif(os.name == "nt", reason="creating symlinks needs privileges on Windows")
+def test_staging_the_diff_never_follows_a_planted_symlink(tmp_path: Path) -> None:
+    work = tmp_path / "work"
+    work.mkdir()
+    outside = tmp_path / "outside.txt"
+    outside.write_text("keep me", encoding="utf-8")
+    (work / DIFF_FILE).symlink_to(outside)
+    staged = _stage_diff(work, b"diff body")
+    assert outside.read_text(encoding="utf-8") == "keep me"
+    assert staged == work / DIFF_FILE
+    assert not staged.is_symlink()
+    assert staged.read_bytes() == b"diff body"
