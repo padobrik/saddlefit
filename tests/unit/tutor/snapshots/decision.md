@@ -8,7 +8,6 @@ The middle loop decided on this proposal.
 - Expected effect: Fewer gave_up failures
 - Evidence runs: 01JB2Y8Q4V9N1K3D7M5R6T0W2X, 01JB2Y8Q4V9N1K3D7M5R6T0W2Y
 - Training batch: 2/6 → 5/6 tasks solved
-- Held-out: net +2
 
 Write one lesson with `record_lesson`, or an empty one if the decision teaches nothing new.
 
@@ -23,6 +22,5 @@ The middle loop decided on this proposal.
 - Expected effect: Fewer gave_up failures
 - Evidence runs: 01JB2Y8Q4V9N1K3D7M5R6T0W2X, 01JB2Y8Q4V9N1K3D7M5R6T0W2Y
 - Training batch: 2/6 → 2/6 tasks solved
-- Held-out: not reached
 
 Write one lesson with `record_lesson`, or an empty one if the decision teaches nothing new.

@@ -48,14 +48,17 @@ LESSON_TOOL: Final = ToolSpec(
 
 @dataclass(frozen=True)
 class Decision:
-    """What the middle loop decided; held-out data arrives as an aggregate only (B10)."""
+    """What the middle loop decided, without held-out results.
+
+    A lesson lands in EXPERIENCE.md, which the student reads, and the student may see no
+    held-out data at all (B10); so held-out numbers never enter the reflection prompt.
+    """
 
     proposal: Proposal
     status: Literal["accepted", "rejected"]
     train_before: int
     train_after: int
     train_tasks: int
-    held_out_net: int | None = None  # None when the batch gate already rejected it
 
 
 @dataclass(frozen=True)
@@ -73,7 +76,6 @@ class ReflectionResult:
 
 def render_decision(decision: Decision) -> str:
     p = decision.proposal
-    held_out = "not reached" if decision.held_out_net is None else f"net {decision.held_out_net:+d}"
     return load_prompt("decision.md").substitute(
         status=decision.status,
         level=p.level,
@@ -86,7 +88,6 @@ def render_decision(decision: Decision) -> str:
             f"{decision.train_before}/{decision.train_tasks} → "
             f"{decision.train_after}/{decision.train_tasks} tasks solved"
         ),
-        held_out=held_out,
     )
 
 

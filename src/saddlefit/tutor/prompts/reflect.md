@@ -11,7 +11,7 @@ and the student read in later rounds.
   new, call `record_lesson` with an empty lesson.
 - At most two short lines, at most $max_chars characters in all. State the lesson, then the
   numbers that back it, for example: "A mapping table in a skill fixed old API calls; a
-  prompt line did not (train 2/6 → 5/6, held-out net +2)."
+  prompt line did not (train 2/6 → 5/6)."
 - Name no task, file or test from the runs; the lesson must hold for tasks not yet seen.
 - Do not repeat a lesson that is already in EXPERIENCE.md.
 - Cite the IDs of the runs the lesson rests on; they must be among the proposal's evidence.

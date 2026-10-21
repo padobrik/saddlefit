@@ -46,9 +46,7 @@ PROPOSAL = Proposal(
     expected_effect="Fewer gave_up failures",
     context_tokens_delta=0,
 )
-ACCEPTED = Decision(
-    PROPOSAL, "accepted", train_before=2, train_after=5, train_tasks=6, held_out_net=2
-)
+ACCEPTED = Decision(PROPOSAL, "accepted", train_before=2, train_after=5, train_tasks=6)
 
 
 class Scripted:
@@ -100,15 +98,10 @@ def test_decision_prompt_snapshot() -> None:
 
 
 def test_a_two_line_lesson_becomes_one_labelled_line(store: HarnessStore) -> None:
-    text = (
-        "More finish-gate retries turned gave_up runs into fixes.\n(train 2/6 → 5/6, held-out +2)"
-    )
+    text = "More finish-gate retries turned gave_up runs into fixes.\n(train 2/6 → 5/6)"
     result = reflect(Scripted(answer(text)), ACCEPTED, "# Lessons\n")
     assert result.lesson == Lesson(
-        text=(
-            "More finish-gate retries turned gave_up runs into fixes."
-            " (train 2/6 → 5/6, held-out +2)"
-        ),
+        text=("More finish-gate retries turned gave_up runs into fixes. (train 2/6 → 5/6)"),
         evidence_run_ids=(RUN_A,),
     )
     assert result.model == "tutor-model"
@@ -194,6 +187,11 @@ def test_a_lesson_already_recorded_is_not_repeated(store: HarnessStore) -> None:
     assert store.read("EXPERIENCE.md").count("Retries help.") == 1
     # the same text learned on another model is a different lesson
     assert record_lesson(store, lesson, "other", NoLint()) is not None
+
+
+def test_the_reflection_prompt_carries_no_held_out_data() -> None:
+    assert "held_out" not in Decision.__dataclass_fields__
+    assert "held-out" not in render_decision(ACCEPTED).lower()
 
 
 def test_lessons_only_change_experience_md(store: HarnessStore) -> None:

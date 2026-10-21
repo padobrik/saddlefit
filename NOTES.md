@@ -119,4 +119,6 @@ Assumptions taken where the spec leaves a detail open. Deviations from the spec 
   tutor may write up to two lines; they are joined. A lesson reaches EXPERIENCE.md as a
   validated proposal that is accepted at once, with no gates, since B13 makes reflection
   part of every decision. Its evidence must be among the decided proposal's evidence runs,
-  and the tutor sees held-out results only as the net count (B10, mechanism 4).
+  and the reflection prompt carries no held-out results: B10 lets the tutor see held-out
+  aggregates, but a lesson lands in EXPERIENCE.md, which the student reads, and the student
+  may see no held-out data. So lessons cite training numbers only, unlike the example in A9.

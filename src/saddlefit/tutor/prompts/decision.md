@@ -8,6 +8,5 @@ The middle loop decided on this proposal.
 - Expected effect: $expected_effect
 - Evidence runs: $evidence
 - Training batch: $train
-- Held-out: $held_out
 
 Write one lesson with `record_lesson`, or an empty one if the decision teaches nothing new.
