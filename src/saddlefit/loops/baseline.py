@@ -231,7 +231,7 @@ class BaselineRunner:
                 env_error = True
                 writer.event("error", {"kind": "sandbox", "message": str(exc)[:2000]})
         verdict = (
-            Verdict(passed=False, exit_code=None, duration_s=0.0, env_error="sandbox")
+            Verdict(passed=False, exit_code=None, duration_s=0.0, env_error=True)
             if env_error
             else self.evaluator.evaluate(meta.id, base, diff, run_id)
         )
