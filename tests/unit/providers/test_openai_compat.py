@@ -1,3 +1,4 @@
+import logging
 from types import SimpleNamespace
 from typing import Any
 
@@ -225,3 +226,14 @@ def test_other_runners_get_only_standard_effort_values(effort: str, sent_value: 
     sdk = StubSDK(response(content="ok"))
     client(sdk).chat(USER, None, GenParams(reasoning=effort))  # type: ignore[arg-type]
     assert sdk.requests[-1].get("reasoning_effort") == sent_value
+
+
+def test_off_that_cannot_be_applied_is_reported_once(caplog: pytest.LogCaptureFixture) -> None:
+    sdk = StubSDK(response(content="ok"), response(content="ok"))
+    student = client(sdk)
+    with caplog.at_level(logging.WARNING, logger="saddlefit.providers.openai_compat"):
+        student.chat(USER, None, GenParams(reasoning="off"))
+        student.chat(USER, None, GenParams(reasoning="off"))
+    warnings = [r for r in caplog.records if "reasoning" in r.getMessage()]
+    assert len(warnings) == 1
+    assert "not applied" in warnings[0].getMessage()

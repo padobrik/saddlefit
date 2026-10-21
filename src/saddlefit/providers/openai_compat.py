@@ -143,6 +143,7 @@ class OpenAICompatibleClient:
             base_url=base_url, api_key=api_key, timeout=timeout_s, max_retries=0
         )
         self._info: ModelInfo | None = None
+        self._warned_reasoning_off = False
 
     def _reasoning_effort(self, reasoning: str | None) -> str | None:
         """The OpenAI-style ``reasoning_effort`` value for this runner, or ``None`` to send none.
@@ -153,7 +154,16 @@ class OpenAICompatibleClient:
         if reasoning is None:
             return None
         if reasoning == "off":
-            return "none" if self.info().runner == "ollama" else None
+            if self.info().runner == "ollama":
+                return "none"
+            if not self._warned_reasoning_off:
+                self._warned_reasoning_off = True
+                log.warning(
+                    "reasoning effort 'off' was not applied: %s is not known to support it; "
+                    "the runner's default reasoning is used",
+                    self.base_url,
+                )
+            return None
         return reasoning
 
     def info(self) -> ModelInfo:
