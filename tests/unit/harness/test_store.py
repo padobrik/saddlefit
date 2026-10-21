@@ -348,10 +348,33 @@ def test_export_writes_the_committed_bytes(store: HarnessStore, tmp_path: Path) 
 
 def test_a_hidden_deletion_of_the_version_marker_is_refused(store: HarnessStore) -> None:
     marker = (store.path / "harness.json").read_text(encoding="utf-8")
-    # git may pair the deletion with the new file as a rename and report only the new path
-    patch = unified("skills/moved.json", "", marker) + (
-        "--- a/harness.json\n+++ /dev/null\n@@ -1 +0,0 @@\n" + f"-{marker}"
+    # git may pair the deletion with the new file as a rename and report only the new path;
+    # the deletion comes first, with no diff --git header, so the text check cannot see it
+    # and --recount cannot fold it into another file's hunk
+    patch = ("--- a/harness.json\n+++ /dev/null\n@@ -1 +0,0 @@\n" + f"-{marker}") + unified(
+        "skills/moved.json", "", marker
     )
     with pytest.raises(HarnessStoreError, match="allowlist"):
         store.propose("p-hide-marker", patch, "move the marker")
     assert (store.path / "harness.json").read_text(encoding="utf-8") == marker
+
+
+def test_a_hunk_with_wrong_line_counts_still_applies(store: HarnessStore) -> None:
+    # as a tutor wrote it: four old lines under a header that says three
+    patch = (
+        "diff --git a/loop.yaml b/loop.yaml\n--- a/loop.yaml\n+++ b/loop.yaml\n"
+        "@@ -9,3 +9,3 @@\n   reread_task: true\n   run: pytest -q\n-  max_retries: 1\n"
+        "+  max_retries: 3\n loop_detection:\n"
+    )
+    store.propose("p9", patch, "more retries")
+    store.accept("p9")
+    assert load_loop_config(store.path / "loop.yaml").finish_gate.max_retries == 3
+
+
+def test_a_hunk_whose_context_does_not_match_is_refused(store: HarnessStore) -> None:
+    patch = (
+        "diff --git a/loop.yaml b/loop.yaml\n--- a/loop.yaml\n+++ b/loop.yaml\n"
+        "@@ -9,3 +9,3 @@\n   reread_task: false\n-  max_retries: 1\n+  max_retries: 3\n"
+    )
+    with pytest.raises(HarnessStoreError, match="git apply failed"):
+        store.propose("p9", patch, "more retries")
