@@ -82,6 +82,15 @@ Assumptions taken where the spec leaves a detail open. Deviations from the spec 
   `tutor.prices_usd_per_mtok` also carries `cache_write_5m`, `cache_write_1h` and `cache_read`,
   defaulting to 0.0 like the other prices. They arrived in `saddlefit.yaml` v2; a v1 file is
   migrated by its version alone, and its cache prices stay 0.0 until the user fills them in.
+- **Inconclusive tasks in the gates.** A task whose environment errors left too few runs to
+  decide it (as in `baseline`) is not solved for the batch gate, and neither a win nor a loss
+  for the held-out gate, but it still counts in the held-out n, which can only raise the
+  margin a candidate needs.
+- **Gate settings.** B12 makes every default configurable. The held-out margin (0.1) and loss
+  limit (1) are parameters of the decision functions; they move into `saddlefit.yaml` when a
+  command first needs them, as a format change of their own.
+- **Earlier proposal.** The tie-break's "earlier proposal" is the order in which the tutor
+  produced the candidates in a round, not the proposal ID.
 - **Tool script linting.** B8 asks new tool scripts to pass ruff (Python) or shellcheck (shell)
   and to run only inside the sandbox, so the sandbox image ships both linters and the scripts
   are linted there, in a container with no network, with ruff's `--isolated` so no file in the
