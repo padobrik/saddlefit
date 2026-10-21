@@ -83,6 +83,8 @@ class Project:
             try:
                 return self.harness.head()
             except HarnessStoreError:
+                if not self.harness.is_empty():
+                    raise  # it holds commits: never delete it, report the git error
                 remove_tree(self.harness.path)
         return self.harness.init()
 
@@ -131,8 +133,11 @@ def remove_tree(path: Path) -> None:
     """Delete ``path`` even where git left read-only files, which Windows will not unlink."""
 
     def make_writable_and_retry(
-        func: Callable[[str], object], target: str, _: BaseException
+        func: Callable[[str], object], target: str, exc: BaseException
     ) -> None:
+        # only a refused read-only file is retried, and never through a symlink
+        if not isinstance(exc, PermissionError) or os.path.islink(target):
+            raise exc
         os.chmod(target, stat.S_IWRITE)
         func(target)
 

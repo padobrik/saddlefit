@@ -1,4 +1,6 @@
 import json
+import os
+import shlex
 import shutil
 import stat
 import subprocess
@@ -20,6 +22,15 @@ from saddlefit.project import Project, remove_tree
 
 pytestmark = pytest.mark.integration
 runner = CliRunner()
+
+
+def git_env(home: Path) -> dict[str, str]:
+    return {
+        "PATH": os.environ.get("PATH", ""),
+        "HOME": str(home),
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_GLOBAL": os.devnull,
+    }
 
 
 def invoke(repo: Path, *args: str, monkeypatch: pytest.MonkeyPatch) -> object:
@@ -251,11 +262,12 @@ def test_the_visible_check_skips_a_directory_without_tests(tmp_path: Path) -> No
     assert metas
     check = metas[0].visible_check or ""
     assert "src/toykit" not in check
+    if os.name == "nt":
+        return  # the check is a command for the Linux sandbox (":" in PYTHONPATH, bash)
     # what it does run collects tests on the parent
     subprocess.run(["git", "checkout", "-q", metas[0].repo.base_commit], cwd=repo, check=True)
-    result = subprocess.run(
-        ["bash", "-c", check.replace("python", sys.executable, 1)], cwd=repo, check=False
-    )
+    command = check.replace("python", shlex.quote(sys.executable), 1)
+    result = subprocess.run(["bash", "-c", command], cwd=repo, check=False)
     assert result.returncode == 0
 
 
@@ -268,3 +280,33 @@ def test_removing_a_store_handles_read_only_git_objects(tmp_path: Path) -> None:
     obj.chmod(stat.S_IREAD)
     remove_tree(store)
     assert not store.exists()
+
+
+def test_init_keeps_a_store_it_cannot_read(tmp_path: Path) -> None:
+    repo = build(tmp_path / "repo")
+    project = Project(repo)
+    project.harness.init()  # a finished store, but its branch is not where init expects it
+    subprocess.run(
+        ["git", "branch", "-m", "main", "elsewhere"],
+        cwd=project.harness.path,
+        env=git_env(project.harness.path),
+        check=True,
+    )
+    with pytest.raises(HarnessStoreError):
+        project.init()
+    assert project.harness.path.exists()
+    assert not project.harness.is_empty()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="creating symlinks needs privileges on Windows")
+def test_remove_tree_reraises_other_errors_and_leaves_link_targets_alone(tmp_path: Path) -> None:
+    target = tmp_path / "target"
+    target.mkdir()
+    (target / "keep.txt").write_text("x", encoding="utf-8")
+    mode = target.stat().st_mode
+    link = tmp_path / "link"
+    link.symlink_to(target, target_is_directory=True)
+    with pytest.raises(OSError, match="link"):  # the message differs across Python versions
+        remove_tree(link)
+    assert (target / "keep.txt").exists()
+    assert target.stat().st_mode == mode
