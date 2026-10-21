@@ -1,0 +1,16 @@
+{
+  "additionalProperties": false,
+  "description": "``harness.json``: the version of the harness-store layout.",
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "schema_version"
+  ],
+  "title": "HarnessStoreInfo",
+  "type": "object"
+}
