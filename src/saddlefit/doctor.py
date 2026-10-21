@@ -7,6 +7,7 @@ comes from ``saddlefit.compact``.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -29,11 +30,12 @@ from saddlefit.providers.base import (
     Message,
     ModelClient,
     ModelInfo,
-    ProviderError,
     ToolMode,
     ToolSpec,
 )
 from saddlefit.providers.openai_compat import OpenAICompatibleClient
+
+log = logging.getLogger(__name__)
 
 DOCTOR_SCHEMA_VERSION: Final = 1
 
@@ -135,7 +137,8 @@ def probe_tools(client: ModelClient, mode: ToolMode) -> int:
                 [PROBE_TOOL],
                 GenParams(temperature=0.0, seed=7, max_tokens=1024, tool_mode=mode),
             )
-        except ProviderError:
+        except Exception as exc:  # a probe that breaks is a probe that failed
+            log.debug("tool-call probe for %s failed: %s", city, exc)
             continue
         calls = reply.tool_calls
         if (
@@ -163,7 +166,7 @@ def run_doctor(
     try:
         info: ModelInfo = client.info()
         tps = measure_speed(client)
-    except ProviderError as exc:
+    except Exception as exc:
         report.checks.append(Check("runner", False, f"unreachable: {exc}"))
         report.environment_ok = False
         return report
@@ -223,13 +226,18 @@ def docker_checks(image: str) -> list[Check]:
     except Exception as exc:
         return [Check("docker", False, f"unreachable: {exc}")]
     try:
-        version = client.version().get("Version", "unknown")
+        try:
+            docker_check = Check("docker", True, f"Docker {client.version().get('Version')}")
+        except docker.errors.DockerException as exc:
+            return [Check("docker", False, f"API error: {exc}")]
         try:
             client.images.get(image)
             image_check = Check("sandbox image", True, image)
         except docker.errors.ImageNotFound:
             image_check = Check("sandbox image", False, f"{image} not found; pull or build it")
-        return [Check("docker", True, f"Docker {version}"), image_check]
+        except docker.errors.DockerException as exc:
+            image_check = Check("sandbox image", False, f"{image}: API error: {exc}")
+        return [docker_check, image_check]
     finally:
         client.close()
 
