@@ -145,3 +145,14 @@ def test_the_default_sandbox_image_is_the_one_released_with_this_version() -> No
     assert config.sandbox.image == f"ghcr.io/padobrik/saddlefit-sandbox:{__version__}"
     schema = Path(__file__).parents[2] / "schemas" / "saddlefit-config.schema.json"
     assert "saddlefit-sandbox:" not in schema.read_text(encoding="utf-8")  # no pin to go stale
+
+
+def test_a_written_config_keeps_its_image_across_releases(tmp_path: Path) -> None:
+    # init writes the image out, so a project keeps its image when the default moves on
+    written = yaml.safe_load(dump_config(Config(schema_version=1, project="p")))
+    assert written["sandbox"]["image"] == f"ghcr.io/padobrik/saddlefit-sandbox:{__version__}"
+    old = (
+        "schema_version: 1\nproject: p\n"
+        "sandbox:\n  image: ghcr.io/padobrik/saddlefit-sandbox:0.1.0\n"
+    )
+    assert load_config(write(tmp_path, old)).sandbox.image.endswith(":0.1.0")
