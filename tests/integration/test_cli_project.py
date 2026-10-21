@@ -423,3 +423,16 @@ def test_doctor_measurements_for_another_digest_are_ignored(tmp_path: Path) -> N
     assert project.student_timeout(digest="sha256:new") == LOCAL_TIMEOUT_S
     # a runner that reports no digest falls back to matching by name
     assert project.tool_mode(digest=None) == "json"
+
+
+def test_the_environment_image_is_recorded_for_the_project(tmp_path: Path) -> None:
+    from tests.unit.sandbox.test_environment import FakeDocker, FakeImages  # noqa: PLC0415
+
+    repo = build(tmp_path / "repo")
+    project = Project(repo)
+    project.init()
+    base = project.config().sandbox.image
+    image = project.environment_image(FakeDocker(FakeImages({base})))  # the toy has a pyproject
+    assert image.startswith("saddlefit-env-repo:")
+    record = json.loads((project.state / "environment.json").read_text(encoding="utf-8"))
+    assert (record["schema_version"], record["base_image"], record["image"]) == (1, base, image)

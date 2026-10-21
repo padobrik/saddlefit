@@ -59,3 +59,11 @@ Assumptions taken where the spec leaves a detail open. Deviations from the spec 
   4,096-token reply from a model writing about 24 tokens a second. `baseline` derives the
   timeout from `doctor.json`: a full reply at the measured speed, times 1.5, never below 120 s.
   Without a record for the configured model the default stays, so run `saddlefit doctor` first.
+- **Environment images.** B11 asks for dependencies to be installed into a derived image in a
+  separate build step but names no command, so `tasks mine` and `baseline` build it on demand.
+  The dependencies come from `uv.lock` (exported with all groups) when it exists, else the
+  `requirements*.txt` files, else `pyproject.toml` (compiled with all extras). They are installed
+  as root on top of the sandbox image, and the image ends as the sandbox user. The tag is a hash
+  of the base image and those files, so an unchanged repository reuses its image, and the result
+  is recorded in `.saddlefit/environment.json`. The build sends no registry credentials: the base
+  image is local and nothing is pulled.

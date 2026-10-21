@@ -8,6 +8,7 @@ from saddlefit.config import Config
 from saddlefit.doctor import DoctorRecord
 from saddlefit.harness.loop_config import LoopConfig
 from saddlefit.harness.store import HarnessStoreInfo
+from saddlefit.sandbox.environment import EnvironmentRecord
 from saddlefit.storage.runs import RunEvent, RunSummary
 from saddlefit.tasks.models import SealedTaskInfo, SuiteLock, TaskMeta
 
@@ -15,6 +16,7 @@ from saddlefit.tasks.models import SealedTaskInfo, SuiteLock, TaskMeta
 SCHEMA_MODELS: dict[str, type[BaseModel]] = {
     "saddlefit-config": Config,
     "doctor-record": DoctorRecord,
+    "environment-record": EnvironmentRecord,
     "harness-store": HarnessStoreInfo,
     "loop-config": LoopConfig,
     "run-event": RunEvent,

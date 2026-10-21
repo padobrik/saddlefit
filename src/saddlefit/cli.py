@@ -96,7 +96,10 @@ def _docker() -> Any:
 def mining_runner(project: Project) -> Runner:
     """Candidates' tests run in the sandbox, never on the host (B11)."""
     config = project.config()
-    return SandboxRunner(_docker(), config.sandbox.image, config.sandbox)
+    docker_client = _docker()
+    # the candidates' tests need the repository's dependencies, which the sandbox cannot fetch
+    image = project.environment_image(docker_client)
+    return SandboxRunner(docker_client, image, config.sandbox)
 
 
 @app.command()
