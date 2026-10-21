@@ -8,6 +8,7 @@
     },
     "evidence_run_ids": {
       "items": {
+        "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
         "type": "string"
       },
       "title": "Evidence Run Ids",

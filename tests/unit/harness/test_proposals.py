@@ -138,6 +138,8 @@ def test_scripts_to_lint() -> None:
     [
         {"proposal_id": "not-a-ulid"},
         {"proposal_id": "--upload-pack=x"},
+        {"evidence_run_ids": ["../x"]},
+        {"evidence_run_ids": ["01JB2Y8Q4V9N1K3D7M5R6T0W2"]},
         {"source": "student"},
         {"level": "budget"},
         {"failure_tags": ["unknown_tag"]},
@@ -154,3 +156,31 @@ def test_malformed_proposals_are_refused(changes: dict[str, object]) -> None:
 
 def test_the_proposal_schema_is_generated() -> None:
     assert SCHEMA_MODELS["proposal"] is Proposal
+
+
+SECOND_ID = "01JB2Z0C7H2P6S8E4F1A9B3D5H"
+DELETE_SCRIPT = (
+    "diff --git a/tools/x.py b/tools/x.py\ndeleted file mode 100644\n--- a/tools/x.py\n"
+    "+++ /dev/null\n@@ -1 +0,0 @@\n-print(1)\n"
+)
+
+
+def accepted_script(store: HarnessStore) -> None:
+    apply_proposal(store, proposal(new_file("tools/x.py", "print(1)")), RecordingLinter())
+    store.accept(PROPOSAL_ID)
+
+
+def test_a_modified_script_is_linted_with_its_new_bytes(store: HarnessStore) -> None:
+    accepted_script(store)
+    linter = RecordingLinter()
+    patch = edit("tools/x.py", "print(1)", "print(2)")
+    apply_proposal(store, proposal(patch, proposal_id=SECOND_ID), linter)
+    assert linter.calls == [{"tools/x.py": b"print(2)\n"}]
+
+
+def test_a_deleted_script_needs_no_linting(store: HarnessStore) -> None:
+    accepted_script(store)
+    linter = RecordingLinter()
+    sha = apply_proposal(store, proposal(DELETE_SCRIPT, proposal_id=SECOND_ID), linter)
+    assert store.head(f"candidate/{SECOND_ID}") == sha
+    assert linter.calls == []

@@ -10,9 +10,9 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from pathlib import PurePosixPath
-from typing import Final, Literal, Protocol
+from typing import Annotated, Final, Literal, Protocol
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from saddlefit.eval.taxonomy import Tag
 from saddlefit.harness.store import HarnessStore, HarnessStoreError
@@ -23,6 +23,8 @@ ULID_PATTERN: Final = r"^[0-9A-HJKMNP-TV-Z]{26}$"
 # B8: tool scripts are Python, checked by ruff, or shell, checked by shellcheck
 SCRIPT_SUFFIXES: Final = frozenset({".py", ".sh"})
 
+Ulid = Annotated[str, StringConstraints(pattern=ULID_PATTERN)]
+
 
 class Proposal(BaseModel):
     """One change to the harness, from the tutor, the fast loop or the playbook (B8)."""
@@ -30,11 +32,11 @@ class Proposal(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
 
     schema_version: Literal[1]
-    proposal_id: str = Field(pattern=ULID_PATTERN)
+    proposal_id: Ulid
     source: Literal["tutor", "fast_loop", "playbook"]
     level: Literal["mechanics", "tools", "text", "reasoning"]
     failure_tags: tuple[Tag, ...]
-    evidence_run_ids: tuple[str, ...]
+    evidence_run_ids: tuple[Ulid, ...]  # run IDs are ULIDs too
     technique: str = Field(min_length=1)
     rationale: str
     patch: str = Field(min_length=1)
