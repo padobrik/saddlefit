@@ -19,13 +19,20 @@ from typing import Any
 
 from saddlefit import __version__
 from saddlefit.config import CONFIG_SCHEMA_VERSION, Config, StudentConfig, dump_config, load_config
+from saddlefit.doctor import DoctorRecord
 from saddlefit.errors import UserError
 from saddlefit.eval.evaluator import Evaluator
 from saddlefit.eval.leak_guard import GuardedClient, guard_for_suite
 from saddlefit.harness.loop_config import LoopConfig, clamp, load_loop_config
 from saddlefit.harness.store import HarnessStore, HarnessStoreError
-from saddlefit.loops.baseline import BASELINE_SPLITS, BaselineRunner, RunOutcome
+from saddlefit.loops.baseline import (
+    BASELINE_SPLITS,
+    MAX_REPLY_TOKENS,
+    BaselineRunner,
+    RunOutcome,
+)
 from saddlefit.providers.base import ModelClient
+from saddlefit.providers.retry import LOCAL_TIMEOUT_S
 from saddlefit.reports.baseline import ReportContext
 from saddlefit.reports.baseline import build as build_report
 from saddlefit.reports.baseline import write as write_report
@@ -151,6 +158,22 @@ class Project:
         if task_id not in {meta.id for meta in self.tasks()}:
             raise UserError(f"no such task: {task_id}")
         return (self.suite.public_dir / task_id / "task.md").read_text(encoding="utf-8")
+
+    def student_timeout(self) -> float:
+        """Seconds one model call may take: a full reply at the measured speed, with room.
+
+        The provider's local default (120 s) is too short for a 4,096-token reply from a
+        model that writes about 24 tokens a second, so a long, careful reply would time out.
+        ``saddlefit doctor`` measures the speed; without its record the default stays.
+        """
+        record_path = self.state / "doctor.json"
+        try:
+            record = DoctorRecord.model_validate_json(record_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return LOCAL_TIMEOUT_S
+        if record.model != self.config().student.model or record.tokens_per_second <= 0:
+            return LOCAL_TIMEOUT_S
+        return max(LOCAL_TIMEOUT_S, MAX_REPLY_TOKENS / record.tokens_per_second * 1.5)
 
     def effective_loop(self) -> tuple[LoopConfig, list[str]]:
         """``loop.yaml`` from the harness store, clamped to ``saddlefit.yaml``."""

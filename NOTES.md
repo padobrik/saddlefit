@@ -48,3 +48,7 @@ Assumptions taken where the spec leaves a detail open. Deviations from the spec 
   parent, else the whole suite, run with the same command as the hidden check
   (`PYTHONPATH=src:.`), so `finish_gate.run` is not needed for mined tasks. When the parent has no
   tests at all, pytest's "no tests collected" (exit 5) counts as a pass.
+- **Student call timeout.** The spec's local default of 120 s per call is too short for a
+  4,096-token reply from a model writing about 24 tokens a second. `baseline` derives the
+  timeout from `doctor.json`: a full reply at the measured speed, times 1.5, never below 120 s.
+  Without a record for the configured model the default stays, so run `saddlefit doctor` first.

@@ -200,11 +200,14 @@ def baseline(
     project = _project()
     config = project.config()
 
+    timeout_s = project.student_timeout()
+
     def model_client() -> ModelClient:
         return OpenAICompatibleClient(
             base_url=config.student.base_url,
             model=config.student.model,
             context_length=config.student.context_length,
+            timeout_s=timeout_s,
         )
 
     def progress(run: RunOutcome) -> None:

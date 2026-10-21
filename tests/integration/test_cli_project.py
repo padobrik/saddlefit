@@ -5,6 +5,7 @@ import shutil
 import stat
 import subprocess
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
 import docker
@@ -16,9 +17,12 @@ from typer.testing import CliRunner
 
 from saddlefit import cli
 from saddlefit.cli import app
+from saddlefit.doctor import DoctorRecord
 from saddlefit.errors import UserError
 from saddlefit.harness.store import HarnessStore, HarnessStoreError
+from saddlefit.loops.baseline import MAX_REPLY_TOKENS
 from saddlefit.project import Project, remove_tree
+from saddlefit.providers.retry import LOCAL_TIMEOUT_S
 
 pytestmark = pytest.mark.integration
 runner = CliRunner()
@@ -310,3 +314,27 @@ def test_remove_tree_reraises_other_errors_and_leaves_link_targets_alone(tmp_pat
         remove_tree(link)
     assert (target / "keep.txt").exists()
     assert target.stat().st_mode == mode
+
+
+def test_the_student_timeout_follows_the_measured_speed(tmp_path: Path) -> None:
+    repo = build(tmp_path / "repo")
+    project = Project(repo)
+    project.init(model="qwen3:8b")
+    assert project.student_timeout() == LOCAL_TIMEOUT_S  # nothing measured yet
+    record = DoctorRecord(
+        schema_version=1,
+        model="qwen3:8b",
+        digest=None,
+        tool_mode="native",
+        native_probes=10,
+        json_probes=None,
+        tokens_per_second=20.0,
+        tier="M",
+        checked_at=datetime(2026, 10, 21, tzinfo=UTC),
+    )
+    (project.state / "doctor.json").write_text(record.model_dump_json(), encoding="utf-8")
+    # a full reply at 20 tokens/s, with half again as much room
+    assert project.student_timeout() == pytest.approx(MAX_REPLY_TOKENS / 20.0 * 1.5)
+    other = record.model_copy(update={"model": "another:1b"})
+    (project.state / "doctor.json").write_text(other.model_dump_json(), encoding="utf-8")
+    assert project.student_timeout() == LOCAL_TIMEOUT_S  # measured for a different model
