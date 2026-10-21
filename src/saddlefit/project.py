@@ -15,6 +15,7 @@ from saddlefit.errors import UserError
 from saddlefit.harness.store import HarnessStore
 from saddlefit.tasks.mining import STATE_DIR, MiningReport, Runner, mine
 from saddlefit.tasks.models import TaskMeta
+from saddlefit.tasks.splits import new_lock
 from saddlefit.tasks.suite import SuitePaths, load_lock, load_meta, materialize, save_lock
 
 
@@ -56,10 +57,12 @@ class Project:
         config = Config(
             schema_version=CONFIG_SCHEMA_VERSION, project=self.root.name, student=student
         )
-        self.config_path.write_text(dump_config(config), encoding="utf-8")
         commit = self.harness.init()
-        save_lock(self.suite, load_lock(self.suite, config.splits))
+        if not self.suite.lock.exists():  # a retried init keeps the salt it already made
+            save_lock(self.suite, new_lock(config.splits))
         self._ignore_state()
+        # written last: an existing config marks a finished init, so a failed one can be retried
+        self.config_path.write_text(dump_config(config), encoding="utf-8")
         return {
             "project": config.project,
             "model": config.student.model,
