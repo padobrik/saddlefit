@@ -27,7 +27,9 @@ reviews:
         output) or held-out and control outcomes. Control results must never feed a decision.
         Code under test reading the hidden tests inside the evaluation container is the B10
         design, not a leak, as long as check output goes only to the sealed store and only
-        the verdict's exit code, duration and timeout flag leave evaluation. Reports may carry
+        the verdict's flags and numbers (passed, exit code, duration, timed out, tampered,
+        diff applied, environment error) leave evaluation, never hidden-test content, paths
+        or check output. Reports may carry
         held-out aggregates, and control outcomes only after report --final (ADR 0003).
     - path: "src/saddlefit/sandbox/**"
       instructions: |
@@ -69,8 +71,10 @@ reviews:
           held-out or control outcomes, or lets control results influence any decision. Code
           under test reading the hidden tests inside the evaluation container, as B10
           mechanism 2 prescribes, is not such a read, provided the check's output goes only
-          to the sealed store and nothing but the verdict's exit code, duration and timeout
-          flag reaches the student model, the tutor, the generator or the fast loop. Reports
+          to the sealed store and nothing but the verdict (passed, exit code, duration,
+          timed out, tampered, diff applied, environment error) reaches the student model,
+          the tutor, the generator or the fast loop; the verdict never carries hidden-test
+          content, hidden-test paths or check output. Reports
           may carry what B10 allows them: held-out aggregates, and control outcomes only
           after report --final (ADR 0003).
           Pass otherwise.
