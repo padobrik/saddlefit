@@ -104,3 +104,12 @@ Assumptions taken where the spec leaves a detail open. Deviations from the spec 
   are linted there, in a container with no network, with ruff's `--isolated` so no file in the
   workspace can switch rules off. Every `.py` and `.sh` file a proposal adds or changes is
   linted, in `skills/` too; `tools/` may hold nothing else.
+- **Tutor prompt.** The stable part (instructions, constraints, harness files, lessons and
+  playbook) is the system prompt, which the provider caches; the failed runs are the user
+  message. A run's events are rendered one line each from the run record, which stores tool
+  output sizes, not tool output; the visible check output is the last finish-gate output of
+  the student's own run. A proposal citing a run it was not shown is refused.
+- **Patch format.** Proposals must be git-style diffs (`diff --git` headers): the store finds
+  a patch's paths from those headers, and a plain unified diff was refused as changing no
+  files. Patches apply with `git apply --recount`, because models miscount hunk lines; the
+  context lines must still match exactly. Both came from a live tutor call.
