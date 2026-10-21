@@ -5,6 +5,6 @@ from importlib.metadata import PackageNotFoundError, version
 try:
     __version__ = version("saddlefit")
 except PackageNotFoundError:  # pragma: no cover - only when running from an unbuilt tree
-    __version__ = "0.1.2"
+    __version__ = "0.1.3"
 
 __all__ = ["__version__"]

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.3](https://github.com/padobrik/saddlefit/compare/v0.1.2...v0.1.3) (2026-10-21)
+
+
+### Features
+
+* **config:** add prompt-cache prices for the tutor ([#92](https://github.com/padobrik/saddlefit/issues/92)) ([0ba3bcb](https://github.com/padobrik/saddlefit/commit/0ba3bcb58b800bd281b612a0f0e74e5326b95f8c)), closes [#91](https://github.com/padobrik/saddlefit/issues/91)
+
 ## [0.1.2](https://github.com/padobrik/saddlefit/compare/v0.1.1...v0.1.2) (2026-10-21)
 
 
