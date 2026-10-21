@@ -45,9 +45,10 @@ The pre-merge check is reworded to say this explicitly, keeping every other cond
 > Fail if the change lets the student model (its prompts, tool results, run records or reports),
 > the tutor, the generator or the fast loop read sealed task data or held-out or control outcomes,
 > or lets control results influence any decision. Code under test reading the hidden tests inside
-> the evaluation container, as B10 mechanism 2 prescribes, is not such a read, provided nothing
-> from that container except the verdict's exit code, duration and timeout flag leaves it. Pass
-> otherwise.
+> the evaluation container, as B10 mechanism 2 prescribes, is not such a read, provided the
+> check's output goes only to the sealed store and nothing but the verdict's exit code, duration
+> and timeout flag reaches the student model, the tutor, the generator, the fast loop or a
+> report. Pass otherwise.
 
 ## Consequences
 
