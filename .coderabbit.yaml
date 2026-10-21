@@ -86,7 +86,11 @@ reviews:
           persisted format (its model, serializer or file layout) changes without a
           schema_version bump, a migration and a test. A format is released once a vX.Y.Z
           tag contains it. A change to a format no release has shipped yet needs no bump
-          or migration, because no reader of an earlier version can exist. Pass otherwise.
+          or migration, because no reader of an earlier version can exist. A new default
+          for an optional field is not a format change when the serializer writes that
+          field out: a value present in a file keeps its meaning, and only a file that
+          omits the field resolves to the new default. Nor is removing a JSON Schema
+          `default` annotation. Pass otherwise.
   tools:
     ruff:
       enabled: true
