@@ -99,3 +99,8 @@ Assumptions taken where the spec leaves a detail open. Deviations from the spec 
   separate a round's tutor calls by more than five minutes. Refused calls fall back on the
   server (`fallbacks: "default"`); the reply's `raw.model` names the model that answered.
   Retries are Saddlefit's (B5), so the SDK makes one attempt per call.
+- **Tool script linting.** B8 asks new tool scripts to pass ruff (Python) or shellcheck (shell)
+  and to run only inside the sandbox, so the sandbox image ships both linters and the scripts
+  are linted there, in a container with no network, with ruff's `--isolated` so no file in the
+  workspace can switch rules off. Every `.py` and `.sh` file a proposal adds or changes is
+  linted, in `skills/` too; `tools/` may hold nothing else.

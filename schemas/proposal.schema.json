@@ -1,0 +1,99 @@
+{
+  "additionalProperties": false,
+  "description": "One change to the harness, from the tutor, the fast loop or the playbook (B8).",
+  "properties": {
+    "context_tokens_delta": {
+      "title": "Context Tokens Delta",
+      "type": "integer"
+    },
+    "evidence_run_ids": {
+      "items": {
+        "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+        "type": "string"
+      },
+      "title": "Evidence Run Ids",
+      "type": "array"
+    },
+    "expected_effect": {
+      "title": "Expected Effect",
+      "type": "string"
+    },
+    "failure_tags": {
+      "items": {
+        "enum": [
+          "env_error",
+          "tampered",
+          "timeout",
+          "context_overflow",
+          "malformed_tool_call",
+          "loop",
+          "gave_up",
+          "tool_error",
+          "check_fail",
+          "solved"
+        ],
+        "type": "string"
+      },
+      "title": "Failure Tags",
+      "type": "array"
+    },
+    "level": {
+      "enum": [
+        "mechanics",
+        "tools",
+        "text",
+        "reasoning"
+      ],
+      "title": "Level",
+      "type": "string"
+    },
+    "patch": {
+      "minLength": 1,
+      "title": "Patch",
+      "type": "string"
+    },
+    "proposal_id": {
+      "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+      "title": "Proposal Id",
+      "type": "string"
+    },
+    "rationale": {
+      "title": "Rationale",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "source": {
+      "enum": [
+        "tutor",
+        "fast_loop",
+        "playbook"
+      ],
+      "title": "Source",
+      "type": "string"
+    },
+    "technique": {
+      "minLength": 1,
+      "title": "Technique",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "proposal_id",
+    "source",
+    "level",
+    "failure_tags",
+    "evidence_run_ids",
+    "technique",
+    "rationale",
+    "patch",
+    "expected_effect",
+    "context_tokens_delta"
+  ],
+  "title": "Proposal",
+  "type": "object"
+}

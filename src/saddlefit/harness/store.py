@@ -222,6 +222,14 @@ class HarnessStore:
             except LoopConfigError as exc:
                 raise HarnessStoreError(f"loop.yaml no longer validates: {exc}") from exc
 
+    def candidate_files(self, proposal_id: str) -> dict[str, bytes]:
+        """The files a candidate adds or modifies against ``main``, as committed."""
+        branch = f"candidate/{_checked(_PROPOSAL_ID, proposal_id, 'proposal id')}"
+        names = self._git(
+            "diff", "--no-renames", "--diff-filter=AM", "--name-only", "-z", f"{MAIN}...{branch}"
+        )
+        return {p: self._git_bytes("show", f"{branch}:{p}") for p in names.split("\0") if p}
+
     def accept(self, proposal_id: str) -> str:
         """Merge the candidate into ``main``; return the new ``main`` SHA."""
         branch = f"candidate/{_checked(_PROPOSAL_ID, proposal_id, 'proposal id')}"
