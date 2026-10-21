@@ -70,7 +70,7 @@ def held_out_gate(
     margin: float = HELD_OUT_MARGIN,
     max_losses: int = HELD_OUT_MAX_LOSSES,
 ) -> bool:
-    """Pass when ``wins − losses ≥ max(1, ⌈margin · n⌉)`` and ``losses ≤ max_losses``."""
+    """Pass when ``wins - losses ≥ max(1, ⌈margin · n⌉)`` and ``losses ≤ max_losses``."""
     return comparison.net >= required_net(comparison.tasks, margin) and (
         comparison.losses <= max_losses
     )
@@ -87,7 +87,7 @@ class Candidate:
 
 
 def tie_break(candidates: Iterable[Candidate]) -> Candidate | None:
-    """Larger ``wins − losses``, then fewer added context tokens, then the earlier proposal."""
+    """Larger ``wins - losses``, then fewer added context tokens, then the earlier proposal."""
     return min(
         candidates,
         key=lambda c: (-c.held_out.net, c.context_tokens_added, c.order),
