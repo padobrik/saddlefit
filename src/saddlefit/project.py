@@ -36,6 +36,7 @@ from saddlefit.providers.retry import LOCAL_TIMEOUT_S
 from saddlefit.reports.baseline import ReportContext
 from saddlefit.reports.baseline import build as build_report
 from saddlefit.reports.baseline import write as write_report
+from saddlefit.sandbox.environment import ensure_environment
 from saddlefit.tasks.mining import STATE_DIR, MiningReport, Runner, mine
 from saddlefit.tasks.models import TaskMeta
 from saddlefit.tasks.splits import new_lock
@@ -159,6 +160,24 @@ class Project:
             raise UserError(f"no such task: {task_id}")
         return (self.suite.public_dir / task_id / "task.md").read_text(encoding="utf-8")
 
+    def environment_image(self, docker_client: Any) -> str:
+        """The image this repository's tests run in: the sandbox plus its dependencies (B11).
+
+        Built in its own step, which may use the network, and reused while the dependency
+        files and the base image are unchanged. A repository without dependency files runs
+        in the base image.
+        """
+        config = self.config()
+        record = ensure_environment(
+            docker_client, config.sandbox.image, self.root, config.project, config.sandbox
+        )
+        path = self.state / "environment.json"
+        if record is None:
+            path.unlink(missing_ok=True)  # an older record would name an image no longer used
+            return config.sandbox.image
+        path.write_text(record.model_dump_json(indent=2) + "\n", encoding="utf-8")
+        return record.image
+
     def student_timeout(self, digest: str | None = None) -> float:
         """Seconds one model call may take: a full reply at the measured speed, with room.
 
@@ -223,6 +242,7 @@ class Project:
             raise UserError("no training or held-out tasks; run `saddlefit tasks mine` first")
         sealed = self.suite.sealed_dir
         commit = self.harness.head()
+        image = self.environment_image(docker_client)
         with tempfile.TemporaryDirectory(prefix="saddlefit-harness-") as tmp:
             self.harness.export(commit, Path(tmp))
             runner = BaselineRunner(
@@ -238,10 +258,10 @@ class Project:
                     model_client(), guard_for_suite(sealed, self.incidents)
                 ),
                 evaluator=Evaluator.for_suite(
-                    sealed, docker_client, config.sandbox.image, config.sandbox, config.evaluation
+                    sealed, docker_client, image, config.sandbox, config.evaluation
                 ),
                 docker_client=docker_client,
-                image=config.sandbox.image,
+                image=image,
                 tool_mode=self.tool_mode(info.digest),
                 on_run=on_run,
             )
