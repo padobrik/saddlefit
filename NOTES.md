@@ -20,8 +20,11 @@ Assumptions taken where the spec leaves a detail open. Deviations from the spec 
   by a maintainer to run the checks, instead of adding a personal access token. For the same
   reason a Release it creates does not trigger `publish.yml` by itself: release-please dispatches
   `publish.yml` for the new tag (`workflow_dispatch` is the one event that token may start), and
-  a maintainer can dispatch it again for an existing tag. Tags are plain `vX.Y.Z`, matching the
-  protected `refs/tags/v*` ruleset.
+  a maintainer can dispatch it again for an existing tag. A dispatch must name a tag with a
+  published Release and checks out exactly `refs/tags/<tag>`. PyPI never replaces a file, so a
+  repeated dispatch skips files already uploaded (`skip-existing`) and re-pushes only the sandbox
+  image; a broken package needs a new version. Tags are plain `vX.Y.Z`, matching the protected
+  `refs/tags/v*` ruleset.
 - **Live smoke model.** Nightly live tests use `qwen3:0.6b` through the `ollama/ollama` service
   container.
 - **max_steps vs. timeout.** "max_steps can never stretch a run past evaluation.timeout_seconds"

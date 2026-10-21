@@ -18,7 +18,28 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Only a tag with a published GitHub Release may be shipped, whichever way this started.
+  release-tag:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      ref: ${{ steps.check.outputs.ref }}
+    steps:
+      - id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          draft=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)
+          if [ "$draft" != "false" ]; then
+            echo "::error::$TAG has no published release"
+            exit 1
+          fi
+          echo "ref=refs/tags/$TAG" >> "$GITHUB_OUTPUT"
+
   pypi:
+    needs: release-tag
     runs-on: ubuntu-latest
     environment:
       name: pypi
@@ -29,15 +50,19 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.tag || github.ref }}
+          ref: ${{ needs.release-tag.outputs.ref }}
           persist-credentials: false
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           python-version: "3.12"
       - run: uv build
       - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          # PyPI never replaces a file; a repeated dispatch skips what is already there
+          skip-existing: true
 
   sandbox-image:
+    needs: release-tag
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -45,7 +70,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.tag || github.ref }}
+          ref: ${{ needs.release-tag.outputs.ref }}
           persist-credentials: false
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
