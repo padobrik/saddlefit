@@ -247,7 +247,8 @@ def test_the_reasoning_warning_never_logs_the_runner_url(caplog: pytest.LogCaptu
         fetch_json=lambda url, payload: (_ for _ in ()).throw(OSError("not ollama")),
         sleep=lambda _: None,
     )
-    with caplog.at_level(logging.WARNING, logger="saddlefit.providers.openai_compat"):
+    # DEBUG too: the failed runner probe logs at that level
+    with caplog.at_level(logging.DEBUG, logger="saddlefit.providers.openai_compat"):
         secret.chat(USER, None, GenParams(reasoning="off"))
     assert caplog.records
     assert "sk-secret-123" not in caplog.text

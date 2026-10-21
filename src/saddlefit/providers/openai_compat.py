@@ -183,7 +183,8 @@ class OpenAICompatibleClient:
                     digest = digest if digest is None or ":" in digest else f"sha256:{digest}"
                     break
         except (OSError, ValueError, AttributeError):
-            log.debug("runner at %s does not expose the Ollama API", root)
+            # no URL: a base URL can carry credentials
+            log.debug("the runner does not expose the Ollama API")
         return ModelInfo(
             provider="openai-compatible",
             model=self.model,
