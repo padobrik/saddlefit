@@ -1,6 +1,8 @@
 """Required test 6 (fit part): end to end with fakes, the middle loop accepts the one change
 that helps, rejects a useless one, and never evaluates control (A7, B12, B13)."""
 
+import re
+import subprocess
 from collections.abc import Mapping, Sequence
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -204,7 +206,7 @@ def test_fit_accepts_the_change_that_helps_and_rejects_the_useless_one(tmp_path:
     assert practice.held_out_comparisons == 1
     assert not hasattr(practice, "run_control")
     prompts = "\n".join(tutor.prompts)
-    assert not any(t in prompts.split() for t in HELD_OUT + CONTROL)
+    assert not any(re.search(rf"\b{t}\b", prompts) for t in HELD_OUT + CONTROL)
     # 2 diagnoses + 2 reflections, priced
     assert report.tutor_calls == 4
     assert report.tutor_usd == pytest.approx(4 * (1000 * 4 + 200 * 20) / 1e6)
@@ -267,3 +269,64 @@ def test_no_candidate_branch_outlives_its_round(tmp_path: Path) -> None:
     for record in report.records:
         with pytest.raises(HarnessStoreError):
             loop.store.head(f"candidate/{record.proposal_id}")
+
+
+# the winner also edits EXPERIENCE.md, where every lesson is appended
+RIGHT_WITH_NOTE = RIGHT + (
+    "diff --git a/EXPERIENCE.md b/EXPERIENCE.md\n--- a/EXPERIENCE.md\n+++ b/EXPERIENCE.md\n"
+    "@@ -1 +1,2 @@\n # Lessons\n+- (model: student) Keep the finish gate patient.\n"
+)
+
+
+def candidate_branches(store: HarnessStore) -> list[str]:
+    out = subprocess.run(
+        ["git", "branch", "--list", "candidate/*"],
+        cwd=store.path,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return out.stdout.split()
+
+
+def test_lessons_wait_until_every_candidate_is_decided(tmp_path: Path) -> None:
+    # a lesson about the rejected tweak must not reach main before the winner is merged
+    loop, _ = make_loop(tmp_path, FakeTutor([USELESS, RIGHT_WITH_NOTE]))
+    report = loop.round(0)
+    assert report.accepted == report.records[1].proposal_id
+    assert "Keep the finish gate patient." in loop.store.read("EXPERIENCE.md")
+    assert candidate_branches(loop.store) == []
+
+
+class CrashingPractice(FakePractice):
+    """The second candidate's batch run fails, as a broken sandbox would."""
+
+    def run_batch(self, harness_ref: str, task_ids: Sequence[str]) -> BatchResult:
+        if harness_ref != "main" and getattr(self, "candidate_runs", 0) >= 1:
+            raise RuntimeError("sandbox died")
+        if harness_ref != "main":
+            self.candidate_runs = getattr(self, "candidate_runs", 0) + 1
+        return super().run_batch(harness_ref, task_ids)
+
+
+def test_a_failed_round_leaves_no_candidate_branch(tmp_path: Path) -> None:
+    loop, _ = make_loop(tmp_path, FakeTutor([USELESS, RIGHT]))
+    loop.practice = CrashingPractice(loop.store)
+    with pytest.raises(RuntimeError, match="sandbox died"):
+        loop.round(0)
+    assert candidate_branches(loop.store) == []
+    assert retries(loop.store, "main") == 1
+
+
+def test_a_failed_lesson_does_not_stop_the_round(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def broken(*args: Any, **kwargs: Any) -> None:
+        raise HarnessStoreError("git apply failed")
+
+    monkeypatch.setattr("saddlefit.loops.middle.record_lesson", broken)
+    loop, _ = make_loop(tmp_path, FakeTutor([USELESS, RIGHT]))
+    report = loop.round(0)
+    assert report.accepted is not None
+    assert len(report.records) == 2
+    assert report.lessons == 0

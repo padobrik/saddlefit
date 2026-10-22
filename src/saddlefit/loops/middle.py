@@ -16,6 +16,7 @@ here can run control tasks (B10).
 
 from __future__ import annotations
 
+import contextlib
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import date
@@ -32,7 +33,7 @@ from saddlefit.eval.decisions import (
 )
 from saddlefit.eval.tamper import diff_paths
 from saddlefit.harness.proposals import Proposal, ProposalError, ScriptLinter, apply_proposal
-from saddlefit.harness.store import MAIN, HarnessStore
+from saddlefit.harness.store import MAIN, HarnessStore, HarnessStoreError
 from saddlefit.providers.base import ModelClient, ProviderError, Usage
 from saddlefit.providers.cost import cost_usd
 from saddlefit.storage.library import (
@@ -147,34 +148,58 @@ class MiddleLoop:
         before = self.practice.run_batch(MAIN, batch)
         report = RoundReport(batch=batch, train_before=_solved(before))
         tried: list[Tried] = []
-        if before.failures:
-            tried = self._try_candidates(batch, before, budget, report)
+        try:
+            if before.failures:
+                self._try_candidates(batch, before, budget, report, tried)
+            decided = self._decide(tried, report)
+        except Exception:
+            self._drop(tried)  # no candidate branch outlives a failed round
+            raise
+        # main moves only now: every candidate is decided before any lesson is written
+        for t, status in decided:
+            report.records.append(self._record(t, status, report.train_before, len(batch)))
+        for t, status in decided:
+            report.lessons += self._reflect(t, status, report.train_before, len(batch), budget)
+        report.tutor_calls, report.tutor_usd = budget.calls, budget.usd
+        return report
+
+    def _decide(
+        self, tried: list[Tried], report: RoundReport
+    ) -> list[tuple[Tried, Literal["accepted", "rejected"]]]:
+        """Accept the tie-break winner among candidates passing both gates; reject the rest."""
         passing = [
             Candidate(t.proposal.proposal_id, i, t.held_out, t.proposal.context_tokens_delta)
             for i, t in enumerate(tried)
             if t.held_out is not None and held_out_gate(t.held_out)
         ]
         winner = tie_break(passing)
-        for t in tried:
-            status: Literal["accepted", "rejected"] = (
-                "accepted"
-                if winner and winner.proposal_id == t.proposal.proposal_id
-                else "rejected"
-            )
-            if status == "accepted":
+        decided: list[tuple[Tried, Literal["accepted", "rejected"]]] = []
+        for t in list(tried):
+            if winner and winner.proposal_id == t.proposal.proposal_id:
                 self.store.accept(t.proposal.proposal_id)
                 report.accepted = t.proposal.proposal_id
+                decided.append((t, "accepted"))
             else:
                 self.store.reject(t.proposal.proposal_id)
-            report.records.append(self._record(t, status, report.train_before, len(batch)))
-            report.lessons += self._reflect(t, status, report.train_before, len(batch), budget)
-        report.tutor_calls, report.tutor_usd = budget.calls, budget.usd
-        return report
+                decided.append((t, "rejected"))
+            tried.remove(t)  # decided, so no longer cleaned up on failure
+        return decided
+
+    def _drop(self, tried: list[Tried]) -> None:
+        """Reject undecided candidates; a failing cleanup never hides the original error."""
+        for t in tried:
+            with contextlib.suppress(HarnessStoreError):
+                self.store.reject(t.proposal.proposal_id)
 
     def _try_candidates(
-        self, batch: tuple[str, ...], before: BatchResult, budget: Budget, report: RoundReport
-    ) -> list[Tried]:
-        tried: list[Tried] = []
+        self,
+        batch: tuple[str, ...],
+        before: BatchResult,
+        budget: Budget,
+        report: RoundReport,
+        tried: list[Tried],
+    ) -> None:
+        """Fill ``tried``; a candidate is in it from the moment its branch exists."""
         for _ in range(self.candidates_per_round):
             if not budget.can_call():
                 break
@@ -198,12 +223,16 @@ class MiddleLoop:
             except ProposalError:
                 report.refused += 1
                 continue
-            after = self.practice.run_batch(ref, batch)
-            held_out = None
-            if batch_gate(before.solved, after.solved):
-                held_out = self.practice.compare_held_out(MAIN, ref)
+            try:
+                after = self.practice.run_batch(ref, batch)
+                held_out = None
+                if batch_gate(before.solved, after.solved):
+                    held_out = self.practice.compare_held_out(MAIN, ref)
+            except Exception:
+                with contextlib.suppress(HarnessStoreError):
+                    self.store.reject(result.proposal.proposal_id)
+                raise
             tried.append(Tried(result.proposal, ref, _solved(after), held_out))
-        return tried
 
     def _record(
         self, t: Tried, status: Literal["accepted", "rejected"], before: int, tasks: int
@@ -257,6 +286,6 @@ class MiddleLoop:
             return 0
         try:
             recorded = record_lesson(self.store, result.lesson, self.student_model, self.linter)
-        except ProposalError:
-            return 0
+        except (ProposalError, ProviderError, HarnessStoreError):
+            return 0  # a lesson is optional; it never stops the round
         return 0 if recorded is None else 1
