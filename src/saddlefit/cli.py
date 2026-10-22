@@ -351,6 +351,21 @@ def prune(ctx: typer.Context) -> None:
     _emit(ctx, data, "\n".join(lines))
 
 
+@app.command(name="export")
+def export_command(
+    ctx: typer.Context,
+    format: Annotated[str, typer.Option("--format", help="Export format: skill.")] = "skill",
+    out: Annotated[Path | None, typer.Option(help="Directory to create.")] = None,
+    ref: Annotated[str, typer.Option(help="Harness commit or tag to export.")] = "main",
+) -> None:
+    """Export the fitted harness for other agents; `skill` writes Agent Skills."""
+    if format != "skill":
+        raise UserError(f"export format {format!r} is not available yet; use --format skill")
+    folders = _project().export_skill(out, ref)
+    data = {"format": format, "ref": ref, "skills": [str(f) for f in folders]}
+    _emit(ctx, data, "\n".join(f"wrote {f}" for f in folders))
+
+
 @app.command()
 def report(
     ctx: typer.Context,
