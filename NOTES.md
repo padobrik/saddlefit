@@ -158,3 +158,7 @@ Assumptions taken where the spec leaves a detail open. Deviations from the spec 
 - **`prune`.** Ablation on demand, as `fit` would run it: only the student runs, so `prune`
   needs no tutor and no API key. It holds the fit lock and resets the count of accepted
   changes since the last ablation; the round count and student model stay as they are.
+- **Statistics.** The paired bootstrap resamples tasks with replacement, keeping each task's
+  before and after outcomes together, and takes the 2.5th and 97.5th percentiles of the
+  10,000 mean differences; the seed is fixed (20261021). It lives in `saddlefit.eval`, since
+  it needs per-task outcomes; callers get only the interval.
