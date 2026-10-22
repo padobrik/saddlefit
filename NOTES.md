@@ -122,3 +122,7 @@ Assumptions taken where the spec leaves a detail open. Deviations from the spec 
   and the reflection prompt carries no held-out results: B10 lets the tutor see held-out
   aggregates, but a lesson lands in EXPERIENCE.md, which the student reads, and the student
   may see no held-out data. So lessons cite training numbers only, unlike the example in A9.
+- **Change records.** One record per candidate that reached the training batch; a proposal
+  refused by validation never became a candidate and has none. `harness_commit` is the
+  candidate's commit, and `held_out` is empty when the batch gate already rejected it.
+  Records hold held-out aggregates only, never per-task outcomes.
