@@ -190,5 +190,7 @@ Assumptions taken where the spec leaves a detail open. Deviations from the spec 
   the layout. `export --format skill` writes Agent Skills: `saddlefit-<project>/SKILL.md`
   with the system prompt, the tool guidance, the finish-gate rule from `loop.yaml` and the
   lessons for the student model, its tool scripts in `scripts/`, and each harness skill
-  copied as it is. The export is scanned for canaries before it is kept (a hit exits 2 and
+  copied as it is; the generated skill takes the next free name if a harness skill has its
+  name. `export.json` (`schema_version: 1`) records the project, model, harness commit and
+  skills. The export is scanned for canaries before it is kept (a hit exits 2 and
   writes nothing), and it never overwrites a directory. `agents-md` and `hooks` come later.

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 import shutil
 import stat
 import tempfile
@@ -564,7 +565,8 @@ class Project:
         """Export the harness at ``ref`` as Agent Skills (B14); return the skill folders."""
         config = self.config()
         state = load_fit_state(self.state)
-        dest = out or self.state / "exports" / report_id("skill")
+        # a random suffix keeps two exports in the same second apart; nothing is overwritten
+        dest = out or self.state / "exports" / f"{report_id('skill')}-{secrets.token_hex(3)}"
         try:
             return export_skill(
                 self.harness,

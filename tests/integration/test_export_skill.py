@@ -4,12 +4,13 @@ import json
 from pathlib import Path
 
 import pytest
+import yaml
 from tests.fixtures.toyrepo.build import build
 from typer.testing import CliRunner
 
 from saddlefit.cli import app
 from saddlefit.eval.leak_guard import LeakDetected, LeakGuard
-from saddlefit.export.skill import skill_name
+from saddlefit.export.skill import export_skill, skill_name
 from saddlefit.project import Project
 
 pytestmark = pytest.mark.integration
@@ -57,7 +58,12 @@ def test_export_writes_the_harness_as_skills(project: Project, tmp_path: Path) -
     assert [Path(p).name for p in data["skills"]] == ["dates", "saddlefit-repo"]
 
     main = (out / "saddlefit-repo" / "SKILL.md").read_text(encoding="utf-8")
-    assert main.startswith("---\nname: saddlefit-repo\ndescription: ")
+    meta = frontmatter(main)
+    assert meta["name"] == "saddlefit-repo"
+    manifest = json.loads((out / "export.json").read_text(encoding="utf-8"))
+    assert manifest["schema_version"] == 1
+    assert manifest["skills"] == ["dates", "saddlefit-repo"]
+    assert manifest["harness_commit"] == project.harness.head()
     assert "fitted by Saddlefit for qwen3:8b" in main
     assert "You are a careful software engineer." in main  # the system prompt
     assert "run `pytest -q`; finish only when it passes" in main  # loop.yaml's finish gate
@@ -74,7 +80,8 @@ def test_export_of_another_ref(project: Project, tmp_path: Path) -> None:
     out = tmp_path / "old"
     result = runner.invoke(app, ["export", "--out", str(out), "--ref", first])
     assert result.exit_code == 0, result.output
-    assert [p.name for p in out.iterdir()] == ["saddlefit-repo"]  # before the skill was added
+    # before the skill was added
+    assert sorted(p.name for p in out.iterdir()) == ["export.json", "saddlefit-repo"]
 
 
 @pytest.mark.parametrize(
@@ -115,9 +122,53 @@ def test_a_canary_stops_the_export(
 
 def test_default_export_location(project: Project) -> None:
     assert runner.invoke(app, ["export"]).exit_code == 0
-    (folder,) = (project.state / "exports").iterdir()
-    assert folder.name.startswith("skill-")
-    assert (folder / "saddlefit-repo" / "SKILL.md").exists()
+    assert runner.invoke(app, ["export"]).exit_code == 0  # in the same second
+    folders = sorted((project.state / "exports").iterdir())
+    assert len(folders) == 2
+    for folder in folders:
+        assert folder.name.startswith("skill-")
+        assert (folder / "saddlefit-repo" / "SKILL.md").exists()
+
+
+def frontmatter(text: str) -> dict[str, object]:
+    head = text.split("---\n")[1]
+    loaded = yaml.safe_load(head)
+    assert isinstance(loaded, dict)
+    return loaded
+
+
+def test_a_project_name_with_yaml_syntax_stays_valid(project: Project, tmp_path: Path) -> None:
+    out = tmp_path / "out"
+    export_skill(
+        project.harness,
+        "main",
+        out,
+        project="team: service #1",
+        model="qwen3:8b",
+        guard=LeakGuard({}),
+    )
+    (main,) = [p for p in out.iterdir() if p.name.startswith("saddlefit-")]
+    meta = frontmatter((main / "SKILL.md").read_text(encoding="utf-8"))
+    assert meta["name"] == "saddlefit-team-service-1"
+    assert "team: service #1" in str(meta["description"])
+
+
+def test_a_harness_skill_with_the_generated_name_is_kept(project: Project, tmp_path: Path) -> None:
+    clash = new_file(
+        "skills/saddlefit-repo/SKILL.md", ["---", "name: saddlefit-repo", "description: x", "---"]
+    )
+    project.harness.propose("p3", clash, "clash")
+    project.harness.accept("p3")
+    out = tmp_path / "out"
+    assert runner.invoke(app, ["export", "--out", str(out)]).exit_code == 0
+    assert sorted(p.name for p in out.iterdir() if p.is_dir()) == [
+        "dates",
+        "saddlefit-repo",
+        "saddlefit-repo-2",
+    ]
+    assert frontmatter((out / "saddlefit-repo-2" / "SKILL.md").read_text())["name"] == (
+        "saddlefit-repo-2"
+    )
 
 
 @pytest.mark.parametrize(

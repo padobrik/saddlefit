@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 from saddlefit.config import Config
 from saddlefit.doctor import DoctorRecord
+from saddlefit.export.skill import ExportManifest
 from saddlefit.harness.loop_config import LoopConfig
 from saddlefit.harness.proposals import Proposal
 from saddlefit.harness.store import HarnessStoreInfo
@@ -24,6 +25,7 @@ SCHEMA_MODELS: dict[str, type[BaseModel]] = {
     "fit-state": FitState,
     "doctor-record": DoctorRecord,
     "environment-record": EnvironmentRecord,
+    "export-manifest": ExportManifest,
     "harness-store": HarnessStoreInfo,
     "loop-config": LoopConfig,
     "proposal": Proposal,
