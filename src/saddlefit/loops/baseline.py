@@ -135,6 +135,8 @@ class BaselineRunner:
     tool_mode: Literal["native", "json"] = "native"
     clock: Callable[[], float] = time.monotonic
     on_run: Callable[[RunOutcome], None] | None = None
+    # control only through `report --final`, which passes it explicitly (B10)
+    splits: frozenset[str] = BASELINE_SPLITS
 
     def run(self, tasks: Sequence[TaskMeta]) -> BaselineResult:
         evaluation = self.config.evaluation
@@ -143,7 +145,7 @@ class BaselineRunner:
         )
         harness = Harness.load(self.harness_dir)
         for meta in tasks:
-            if meta.split not in BASELINE_SPLITS:
+            if meta.split not in self.splits:
                 continue
             task_text = (self.public_dir / meta.id / "task.md").read_text(encoding="utf-8")
             with tempfile.TemporaryDirectory(prefix="saddlefit-base-") as tmp:

@@ -16,6 +16,7 @@ import json
 import os
 import re
 import subprocess
+from datetime import date
 from pathlib import Path, PurePosixPath
 from typing import Final, Literal
 
@@ -316,6 +317,18 @@ class HarnessStore:
             return self._git("rev-parse", "--verify", "--quiet", f"{commit}^{{tree}}")
         except HarnessStoreError:
             return None
+
+    def freeze(self, day: date, ref: str = MAIN) -> str:
+        """Tag ``ref`` as ``fit-<yyyy-mm-dd>-<n>``, the next free n for ``day`` (C7)."""
+        prefix = f"fit-{day.isoformat()}-"
+        taken = [
+            int(t.removeprefix(prefix))
+            for t in self._git("tag", "--list", f"{prefix}*").split()
+            if t.removeprefix(prefix).isdigit()
+        ]
+        name = f"{prefix}{max(taken, default=0) + 1}"
+        self.tag(name, ref)
+        return name
 
     def tag(self, name: str, ref: str = MAIN) -> None:
         """Tag ``ref``, for example the harness a release was measured with."""
