@@ -1,0 +1,52 @@
+from pathlib import Path
+from typing import Any
+
+import pytest
+from pydantic import ValidationError
+
+from saddlefit.schema_registry import SCHEMA_MODELS
+from saddlefit.storage.control_log import (
+    ControlEvaluation,
+    ControlLog,
+    control_evaluations,
+    load_control_log,
+    log_control_evaluation,
+)
+
+
+def evaluation(**changes: Any) -> ControlEvaluation:
+    fields: dict[str, Any] = {
+        "tag": "fit-2026-10-22-1",
+        "harness_commit": "b4c5d6e",
+        "baseline_harness_commit": "a1b2c3d",
+        "created": "2026-10-22T10:00:00+00:00",
+        "tasks": 6,
+    }
+    return ControlEvaluation.model_validate({**fields, **changes})
+
+
+def test_no_control_evaluation_yet(tmp_path: Path) -> None:
+    assert control_evaluations(tmp_path) == 0
+
+
+def test_every_evaluation_is_logged_and_counted(tmp_path: Path) -> None:
+    log_control_evaluation(tmp_path, evaluation())
+    log_control_evaluation(tmp_path, evaluation(tag="fit-2026-10-22-2"))
+    assert control_evaluations(tmp_path) == 2
+    assert [e.tag for e in load_control_log(tmp_path).evaluations] == [
+        "fit-2026-10-22-1",
+        "fit-2026-10-22-2",
+    ]
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["control.json"]
+
+
+@pytest.mark.parametrize(
+    "changes", [{"tag": "release-1"}, {"harness_commit": "--x"}, {"tasks": -1}, {"extra": 1}]
+)
+def test_malformed_evaluations_are_refused(changes: dict[str, Any]) -> None:
+    with pytest.raises(ValidationError):
+        evaluation(**changes)
+
+
+def test_the_control_log_schema_is_generated() -> None:
+    assert SCHEMA_MODELS["control-log"] is ControlLog

@@ -2,6 +2,7 @@ import difflib
 import json
 import os
 import subprocess
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -430,3 +431,11 @@ def test_tree_names_the_files_of_a_commit(store: HarnessStore) -> None:
     assert store.tree(head[:12]) == tree
     assert store.tree("0123456789abcdef") is None  # not in the store
     assert store.tree("--output=x") is None  # never reaches git as an option
+
+
+def test_freeze_tags_main_with_the_next_number_of_the_day(store: HarnessStore) -> None:
+    day = date(2026, 10, 22)
+    assert store.freeze(day) == "fit-2026-10-22-1"
+    assert store.freeze(day) == "fit-2026-10-22-2"
+    assert store.freeze(date(2026, 10, 23)) == "fit-2026-10-23-1"
+    assert store.head("fit-2026-10-22-2") == store.head()

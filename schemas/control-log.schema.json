@@ -1,0 +1,63 @@
+{
+  "$defs": {
+    "ControlEvaluation": {
+      "additionalProperties": false,
+      "properties": {
+        "baseline_harness_commit": {
+          "pattern": "^[0-9a-f]{7,64}$",
+          "title": "Baseline Harness Commit",
+          "type": "string"
+        },
+        "created": {
+          "title": "Created",
+          "type": "string"
+        },
+        "harness_commit": {
+          "pattern": "^[0-9a-f]{7,64}$",
+          "title": "Harness Commit",
+          "type": "string"
+        },
+        "tag": {
+          "pattern": "^fit-\\d{4}-\\d{2}-\\d{2}-\\d+$",
+          "title": "Tag",
+          "type": "string"
+        },
+        "tasks": {
+          "minimum": 0,
+          "title": "Tasks",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "tag",
+        "harness_commit",
+        "baseline_harness_commit",
+        "created",
+        "tasks"
+      ],
+      "title": "ControlEvaluation",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "evaluations": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/ControlEvaluation"
+      },
+      "title": "Evaluations",
+      "type": "array"
+    },
+    "schema_version": {
+      "const": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "schema_version"
+  ],
+  "title": "ControlLog",
+  "type": "object"
+}
