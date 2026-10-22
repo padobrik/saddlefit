@@ -21,6 +21,7 @@ from saddlefit import __version__
 from saddlefit.config import CONFIG_SCHEMA_VERSION, Config, StudentConfig, dump_config, load_config
 from saddlefit.doctor import DoctorRecord
 from saddlefit.errors import UserError
+from saddlefit.eval.control import control_summary
 from saddlefit.eval.evaluator import Evaluator
 from saddlefit.eval.leak_guard import GuardedClient, guard_for_suite
 from saddlefit.eval.progress import Comparable, harness_progress
@@ -34,6 +35,7 @@ from saddlefit.loops.baseline import (
     BaselineRunner,
     RunOutcome,
 )
+from saddlefit.loops.final import ControlRunner
 from saddlefit.loops.fit import run_rounds
 from saddlefit.loops.middle import MiddleLoop, RoundReport
 from saddlefit.loops.practice import DockerPractice, without_control
@@ -46,6 +48,11 @@ from saddlefit.reports.progress import ProgressContext
 from saddlefit.reports.progress import build as build_progress
 from saddlefit.reports.progress import write as write_progress
 from saddlefit.sandbox.environment import ensure_environment
+from saddlefit.storage.control_log import (
+    ControlEvaluation,
+    control_evaluations,
+    log_control_evaluation,
+)
 from saddlefit.storage.fit_state import (
     FitState,
     ensure_unlocked,
@@ -58,6 +65,17 @@ from saddlefit.tasks.mining import STATE_DIR, MiningReport, Runner, mine
 from saddlefit.tasks.models import TaskMeta
 from saddlefit.tasks.splits import new_lock
 from saddlefit.tasks.suite import SuitePaths, load_lock, load_meta, materialize, save_lock
+
+
+@dataclass(frozen=True)
+class ReportBasis:
+    """What a report compares against: the latest baseline, checked as still comparable."""
+
+    config: Config
+    baseline: dict[str, Any]
+    before_tree: str
+    state: FitState
+    suite_hash: str
 
 
 @dataclass(frozen=True)
@@ -422,6 +440,87 @@ class Project:
 
     def report(self) -> tuple[dict[str, Any], Path]:
         """Write a progress report: the baseline harness against the current one (B15)."""
+        basis = self._report_basis()
+        report = self._progress_report(basis, self.harness.head(), control_evaluations(self.state))
+        return report, write_progress(report, self.reports, report_id("progress"))
+
+    def final_report(
+        self,
+        *,
+        docker_client: Any,
+        model_client: Callable[[], ModelClient],
+        model_info: ModelInfo,
+        on_run: Callable[[RunOutcome], None] | None = None,
+    ) -> tuple[dict[str, Any], Path]:
+        """Freeze the harness, evaluate control once, and report it (B10 mechanism 5, B15).
+
+        The only path that runs control tasks. The current ``main`` is tagged
+        ``fit-<yyyy-mm-dd>-<n>``; control runs under the baseline's harness and under the tag,
+        and the evaluation is logged and counted. Holds the fit lock throughout.
+        """
+        basis = self._report_basis()  # refuse an incomparable baseline before running anything
+        control = [m for m in self.tasks() if m.split == "control"]
+        if not control:
+            raise UserError("no control tasks; mine more tasks before `report --final`")
+        runner = self._control_runner(basis, docker_client, model_client, model_info, on_run)
+        with fit_lock(self.state):
+            tag = self.harness.freeze(date.today())
+            frozen = self.harness.head(tag)
+            baseline_commit = basis.baseline["harness_commit"]
+            before, before_tokens = runner.outcomes(baseline_commit, control)
+            if self.harness.tree(frozen) == basis.before_tree:
+                after, tokens = before, before_tokens  # the same files: one run is enough
+            else:
+                after, tokens = runner.outcomes(frozen, control)
+            log = log_control_evaluation(
+                self.state,
+                ControlEvaluation(
+                    tag=tag,
+                    harness_commit=frozen,
+                    baseline_harness_commit=baseline_commit,
+                    created=datetime.now(UTC),
+                    tasks=len(control),
+                ),
+            )
+            report = self._progress_report(basis, frozen, len(log.evaluations))
+        report["kind"] = "final"
+        report["frozen_tag"] = tag
+        report["control"] = control_summary(
+            before, after, task_types={m.id: m.type for m in control}, mean_harness_tokens=tokens
+        )
+        return report, write_progress(report, self.reports, report_id("final"))
+
+    def _control_runner(
+        self,
+        basis: ReportBasis,
+        docker_client: Any,
+        model_client: Callable[[], ModelClient],
+        model_info: ModelInfo,
+        on_run: Callable[[RunOutcome], None] | None,
+    ) -> ControlRunner:
+        config = basis.config
+        sealed = self.suite.sealed_dir
+        guard = guard_for_suite(sealed, self.incidents)
+        image = self.environment_image(docker_client)
+        return ControlRunner(
+            repo=self.root,
+            config=config,
+            store=self.harness,
+            public_dir=self.suite.public_dir,
+            runs_root=self.runs,
+            suite_hash=basis.suite_hash,
+            client_factory=lambda: GuardedClient(model_client(), guard),
+            evaluator=Evaluator.for_suite(
+                sealed, docker_client, image, config.sandbox, config.evaluation
+            ),
+            docker_client=docker_client,
+            image=image,
+            tool_mode=self.tool_mode(model_info.digest),
+            on_run=on_run,
+        )
+
+    def _report_basis(self) -> ReportBasis:
+        """The latest baseline, checked to be comparable with the project as it is now."""
         config = self.config()
         baseline = self.latest_report()
         before_tree = self.harness.tree(baseline["harness_commit"])
@@ -433,15 +532,19 @@ class Project:
         state = load_fit_state(self.state)
         suite_hash = load_lock(self.suite, config.splits).suite_hash()
         self._check_comparable(baseline, config, state, suite_hash)
-        head = self.harness.head()
+        return ReportBasis(config, baseline, before_tree, state, suite_hash)
+
+    def _progress_report(self, basis: ReportBasis, head: str, control_count: int) -> dict[str, Any]:
+        """Training and held-out aggregates for the harness at ``head`` against the baseline."""
+        config, baseline = basis.config, basis.baseline
         after_tree = self.harness.tree(head)
         if after_tree is None:
-            raise HarnessStoreError(f"main points to {head!r}, which has no tree")
+            raise HarnessStoreError(f"{head!r} has no tree in the harness store")
         metas = self.tasks()
         progress = harness_progress(
             self.runs,
             tree_of=self.harness.tree,
-            before_tree=before_tree,
+            before_tree=basis.before_tree,
             after_tree=after_tree,
             tasks={s: [m.id for m in metas if m.split == s] for s in ("train", "held_out")},
             task_types={m.id: m.type for m in metas},
@@ -458,17 +561,16 @@ class Project:
             model_digest=baseline["model"]["digest"],
             baseline_harness_commit=baseline["harness_commit"],
             harness_commit=head,
-            suite_hash=suite_hash,
+            suite_hash=basis.suite_hash,
             saddlefit_version=__version__,
             runs_per_task=config.evaluation.runs_per_task,
             solved_threshold=config.evaluation.solved_threshold,
-            fit_rounds=state.rounds_done,
-            tutor_calls=state.tutor_calls,
-            tutor_usd=state.tutor_usd,
-            control_evaluations=0,  # control runs only through `report --final`
+            fit_rounds=basis.state.rounds_done,
+            tutor_calls=basis.state.tutor_calls,
+            tutor_usd=basis.state.tutor_usd,
+            control_evaluations=control_count,
         )
-        report = build_progress(progress, ctx)
-        return report, write_progress(report, self.reports, report_id("progress"))
+        return build_progress(progress, ctx)
 
     @staticmethod
     def _check_comparable(

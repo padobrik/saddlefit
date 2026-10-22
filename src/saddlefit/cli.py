@@ -352,10 +352,26 @@ def prune(ctx: typer.Context) -> None:
 
 
 @app.command()
-def report(ctx: typer.Context) -> None:
+def report(
+    ctx: typer.Context,
+    final: Annotated[
+        bool,
+        typer.Option(
+            "--final",
+            help="Freeze the harness and evaluate control once; logged and counted.",
+        ),
+    ] = False,
+) -> None:
     """Report progress: the baseline harness against the current one, training and
     held-out aggregates only; control appears only in ``report --final``."""
-    data, markdown = _project().report()
+    project = _project()
+    if final:
+        model_info, model_client = _student(project)
+        data, markdown = project.final_report(
+            docker_client=_docker(), model_client=model_client, model_info=model_info
+        )
+    else:
+        data, markdown = project.report()
     _emit(ctx, data, markdown.read_text(encoding="utf-8"))
 
 
