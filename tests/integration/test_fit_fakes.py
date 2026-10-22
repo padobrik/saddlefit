@@ -14,7 +14,7 @@ import yaml
 from saddlefit.config import TokenPrices
 from saddlefit.eval.decisions import HeldOutComparison
 from saddlefit.harness.store import HarnessStore, HarnessStoreError
-from saddlefit.loops.middle import BatchResult, MiddleLoop, pick_batch
+from saddlefit.loops.middle import BatchResult, MiddleLoop, pick_batch, run_rounds
 from saddlefit.providers.base import (
     GenParams,
     Message,
@@ -24,6 +24,7 @@ from saddlefit.providers.base import (
     ToolSpec,
     Usage,
 )
+from saddlefit.storage.fit_state import load_fit_state
 from saddlefit.storage.library import read_records
 from saddlefit.storage.runs import RunEvent, RunSummary
 from saddlefit.tutor.diagnose import digest_run
@@ -344,3 +345,22 @@ def test_a_round_survives_a_winner_that_removes_experience_md(tmp_path: Path) ->
     assert report.accepted == report.records[0].proposal_id
     assert report.lessons == 0
     assert "EXPERIENCE.md" not in loop.store.texts()
+
+
+def test_each_fit_continues_with_the_next_batch(tmp_path: Path) -> None:
+    loop, _ = make_loop(
+        tmp_path, FakeTutor([USELESS, USELESS]), batch_size=4, candidates_per_round=1
+    )
+    (first,) = run_rounds(loop, tmp_path, 1)
+    (second,) = run_rounds(loop, tmp_path, 1)  # a new fit invocation
+    assert first.batch == ("t0", "t1", "t2", "t3")
+    assert second.batch == ("t4", "t5", "t0", "t1")
+    assert load_fit_state(tmp_path).rounds_done == 2
+
+
+def test_a_failed_round_is_not_counted(tmp_path: Path) -> None:
+    loop, _ = make_loop(tmp_path, FakeTutor([USELESS, RIGHT]))
+    loop.practice = CrashingPractice(loop.store)
+    with pytest.raises(RuntimeError):
+        run_rounds(loop, tmp_path, 1)
+    assert load_fit_state(tmp_path).rounds_done == 0

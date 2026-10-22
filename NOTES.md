@@ -133,3 +133,17 @@ Assumptions taken where the spec leaves a detail open. Deviations from the spec 
   proposal's own estimate (`context_tokens_delta`). The loop reaches the student through
   `Practice`, which returns training outcomes per task and held-out results only as one
   aggregate per comparison, and has no way to run control tasks.
+- **`fit`.** Each round runs the student through the baseline's runner with the harness at a
+  given commit exported and its `loop.yaml` clamped, so candidates run exactly as `main`
+  would. The current harness's held-out results are kept per commit, so each comparison
+  reruns only the candidate. Proposed scripts are linted in `sandbox.image`, which ships the
+  linters, not in the project's environment image. `fit` needs the `anthropic` tutor and
+  warns when tutor prices are unset, since `max_usd_per_round` cannot stop a round then.
+- **Fit state.** `.saddlefit/fit.json` counts finished middle-loop rounds, so each `fit`
+  continues with the next training batch instead of starting again at the first; a round
+  that fails is not counted.
+- **One fit at a time.** B3 says parallel fitting sessions never share mutable state. The
+  minimal reading: `fit` holds an exclusive `.saddlefit/fit.lock` for its whole run, so two
+  sessions never run at once on a project. A crash can leave the lock behind; the error names
+  the file to remove. `fit` also refuses a suite without held-out tasks, where no candidate
+  could pass the held-out gate.

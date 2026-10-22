@@ -23,6 +23,7 @@ from saddlefit.doctor import DoctorRecord
 from saddlefit.errors import UserError
 from saddlefit.eval.evaluator import Evaluator
 from saddlefit.eval.leak_guard import GuardedClient, guard_for_suite
+from saddlefit.harness.lint import SandboxLinter
 from saddlefit.harness.loop_config import LoopConfig, clamp, load_loop_config
 from saddlefit.harness.store import HarnessStore, HarnessStoreError
 from saddlefit.loops.baseline import (
@@ -31,12 +32,15 @@ from saddlefit.loops.baseline import (
     BaselineRunner,
     RunOutcome,
 )
+from saddlefit.loops.middle import MiddleLoop, RoundReport, run_rounds
+from saddlefit.loops.practice import DockerPractice, without_control
 from saddlefit.providers.base import ModelClient, ModelInfo
 from saddlefit.providers.retry import LOCAL_TIMEOUT_S
 from saddlefit.reports.baseline import ReportContext
 from saddlefit.reports.baseline import build as build_report
 from saddlefit.reports.baseline import write as write_report
 from saddlefit.sandbox.environment import ensure_environment
+from saddlefit.storage.fit_state import fit_lock
 from saddlefit.tasks.mining import STATE_DIR, MiningReport, Runner, mine
 from saddlefit.tasks.models import TaskMeta
 from saddlefit.tasks.splits import new_lock
@@ -276,6 +280,67 @@ class Project:
         report = build_report(result, ctx)
         markdown, _ = write_report(report, self.reports, report_id("baseline"))
         return report, markdown
+
+    def fit(
+        self,
+        *,
+        docker_client: Any,
+        model_client: Callable[[], ModelClient],
+        tutor_client: ModelClient,
+        model_info: ModelInfo,
+        rounds: int,
+        on_run: Callable[[RunOutcome], None] | None = None,
+        on_round: Callable[[RoundReport], None] | None = None,
+    ) -> list[RoundReport]:
+        """Run ``rounds`` more middle-loop rounds; control tasks are never run (B10).
+
+        Rounds continue where the last ``fit`` stopped, so each one takes a new batch.
+        """
+        config = self.config()
+        tasks = without_control(self.tasks())
+        train = [m.id for m in tasks if m.split == "train"]
+        if not train:
+            raise UserError("no training tasks; run `saddlefit tasks mine` first")
+        if not any(m.split == "held_out" for m in tasks):
+            # no candidate could pass the held-out gate, so every tutor call would be wasted
+            raise UserError("no held-out tasks; mine more tasks before running fit")
+        sealed = self.suite.sealed_dir
+        guard = guard_for_suite(sealed, self.incidents)
+        image = self.environment_image(docker_client)
+        practice = DockerPractice(
+            repo=self.root,
+            config=config,
+            store=self.harness,
+            tasks=tasks,
+            public_dir=self.suite.public_dir,
+            runs_root=self.runs,
+            suite_hash=load_lock(self.suite, config.splits).suite_hash(),
+            client_factory=lambda: GuardedClient(model_client(), guard),
+            evaluator=Evaluator.for_suite(
+                sealed, docker_client, image, config.sandbox, config.evaluation
+            ),
+            docker_client=docker_client,
+            image=image,
+            tool_mode=self.tool_mode(model_info.digest),
+            on_run=on_run,
+        )
+        loop_config, _ = self.effective_loop()
+        middle = MiddleLoop(
+            store=self.harness,
+            practice=practice,
+            tutor=GuardedClient(tutor_client, guard),  # the tutor's prompts are scanned too
+            linter=SandboxLinter(docker_client, config.sandbox.image, config.sandbox),
+            root=self.state,
+            train_tasks=train,
+            student_model=model_info.model,
+            student_digest=model_info.digest,
+            context_budget=loop_config.context.budget_tokens,
+            max_calls_per_round=config.tutor.max_calls_per_round,
+            max_usd_per_round=config.tutor.max_usd_per_round,
+            prices=config.tutor.prices_usd_per_mtok,
+        )
+        with fit_lock(self.state):
+            return run_rounds(middle, self.state, rounds, on_round)
 
     def latest_report(self) -> dict[str, Any]:
         """The newest baseline report's JSON."""
