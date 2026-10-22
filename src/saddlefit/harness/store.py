@@ -308,6 +308,15 @@ class HarnessStore:
         """Delete ``ablation/<name>``; ``main`` is untouched."""
         self._git("branch", "-D", f"ablation/{_checked(_PROPOSAL_ID, name, 'name')}")
 
+    def tree(self, commit: str) -> str | None:
+        """The git tree of ``commit``, or ``None`` if the store does not have it."""
+        if not _COMMIT.fullmatch(commit):
+            return None
+        try:
+            return self._git("rev-parse", "--verify", "--quiet", f"{commit}^{{tree}}")
+        except HarnessStoreError:
+            return None
+
     def tag(self, name: str, ref: str = MAIN) -> None:
         """Tag ``ref``, for example the harness a release was measured with."""
         self._git("tag", _checked(_REF, name, "tag name"), _checked(_REF, ref, "ref"))

@@ -34,6 +34,9 @@ class FitState(BaseModel):
     accepted_since_ablation: int = Field(default=0, ge=0)
     student_model: str | None = None
     student_digest: str | None = None  # the same name can point to new weights
+    # tutor spending over every fit, for reports (B15)
+    tutor_calls: int = Field(default=0, ge=0)
+    tutor_usd: float = Field(default=0.0, ge=0.0)
 
 
 def load_fit_state(root: Path) -> FitState:

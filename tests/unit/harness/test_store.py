@@ -420,3 +420,13 @@ def test_a_conflicting_ablation_leaves_nothing_behind(store: HarnessStore) -> No
 def test_accept_commit_needs_an_accepted_proposal(store: HarnessStore) -> None:
     with pytest.raises(HarnessStoreError, match="no single accept commit"):
         store.accept_commit("never-accepted")
+
+
+def test_tree_names_the_files_of_a_commit(store: HarnessStore) -> None:
+    head = store.head()
+    tree = store.tree(head)
+    assert tree is not None
+    assert len(tree) == 40
+    assert store.tree(head[:12]) == tree
+    assert store.tree("0123456789abcdef") is None  # not in the store
+    assert store.tree("--output=x") is None  # never reaches git as an option
