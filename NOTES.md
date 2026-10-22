@@ -194,3 +194,7 @@ Assumptions taken where the spec leaves a detail open. Deviations from the spec 
   name. `export.json` (`schema_version: 1`) records the project, model, harness commit and
   skills. The export is scanned for canaries before it is kept (a hit exits 2 and
   writes nothing), and it never overwrites a directory. `agents-md` and `hooks` come later.
+- **Interrupted runs.** A crash or power loss can leave a run record without its summary
+  line, or with its last line cut off (every complete line ends in a newline). Reading one
+  raises `UnfinishedRun`; `report` leaves such runs out, since they have no outcome. Any
+  other malformed record still fails the read.
