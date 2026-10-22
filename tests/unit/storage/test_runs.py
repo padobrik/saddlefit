@@ -141,6 +141,14 @@ def test_a_record_cut_off_mid_line_is_unfinished(tmp_path: Path) -> None:
     writer.path.write_text(whole[:20] + "\n" + whole, encoding="utf-8")
     with pytest.raises(json.JSONDecodeError):
         read_run(writer.path)
+    lines = whole.splitlines(keepends=True)
+    writer.path.write_text(lines[0] + "\n" + lines[1], encoding="utf-8")  # a blank record
+    with pytest.raises(json.JSONDecodeError):
+        read_run(writer.path)
+    # nothing is written after a summary, so a tail there is corruption
+    writer.path.write_text(whole + "{", encoding="utf-8")
+    with pytest.raises(ValueError, match="after its summary"):
+        read_run(writer.path)
     writer.path.write_text('{"schema_version": 1, "type": "bogus"}\n', encoding="utf-8")
     with pytest.raises(ValidationError):
         read_run(writer.path)

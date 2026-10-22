@@ -233,22 +233,19 @@ class UnfinishedRun(ValueError):
 def _read_run_any(path: Path) -> tuple[list[RunEvent], RunSummary]:
     """Read any run record. Evaluator only: import it solely from ``saddlefit.eval``."""
     data = path.read_bytes()
-    raw = [line for line in data.split(b"\n") if line]
-    if raw and not data.endswith(b"\n"):
-        # a crash mid-write leaves the last line cut off, possibly inside a UTF-8 character;
-        # every complete line ends in a newline, so drop the rest before decoding
-        raw.pop()
-        if not raw:
-            raise UnfinishedRun(f"run record was interrupted before its summary line: {path}")
-    if not raw:
+    if not data:
         raise ValueError(f"empty run record: {path}")
+    # every complete line ends in a newline; a crash mid-write leaves the last one cut off,
+    # possibly inside a UTF-8 character, so that part is dropped before decoding
+    *lines, cut = data.split(b"\n")
     records = [
-        upgrade(RUN_KIND, json.loads(line.decode("utf-8")), RUN_SCHEMA_VERSION) for line in raw
+        upgrade(RUN_KIND, json.loads(line.decode("utf-8")), RUN_SCHEMA_VERSION) for line in lines
     ]
-    *head, last = records
-    events = [RunEvent.model_validate(e) for e in head]
-    if last.get("type") != "summary":
-        RunEvent.model_validate(last)  # a malformed record is not an interrupted one
+    last = records.pop() if records and records[-1].get("type") == "summary" else None
+    if last is not None and cut:
+        raise ValueError(f"run record continues after its summary line: {path}")
+    events = [RunEvent.model_validate(e) for e in records]  # malformed is not interrupted
+    if last is None:
         raise UnfinishedRun(f"run record was interrupted before its summary line: {path}")
     return events, RunSummary.model_validate(last)
 
