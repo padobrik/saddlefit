@@ -174,6 +174,8 @@ Assumptions taken where the spec leaves a detail open. Deviations from the spec 
   Control evaluations stay 0 until `report --final` exists.
 - **Control log.** `.saddlefit/control.json` logs each `report --final`: the frozen tag, its
   commit, the baseline harness commit it was compared with, the time and the number of
-  control tasks. The count every report prints is the number of entries. `BaselineRunner`
+  control tasks. The count every report prints is the number of entries. Appends hold
+  `control.lock` across the read and the atomic replace, so no evaluation is lost; times
+  are timezone-aware UTC. `BaselineRunner`
   runs control only when its caller passes the split explicitly, which only `report --final`
   does.

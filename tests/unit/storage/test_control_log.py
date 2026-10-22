@@ -1,9 +1,11 @@
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
 import pytest
 from pydantic import ValidationError
 
+from saddlefit.errors import EnvironmentFailure
 from saddlefit.schema_registry import SCHEMA_MODELS
 from saddlefit.storage.control_log import (
     ControlEvaluation,
@@ -37,11 +39,34 @@ def test_every_evaluation_is_logged_and_counted(tmp_path: Path) -> None:
         "fit-2026-10-22-1",
         "fit-2026-10-22-2",
     ]
-    assert sorted(p.name for p in tmp_path.iterdir()) == ["control.json"]
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["control.json"]  # lock released
+
+
+def test_parallel_appends_lose_nothing(tmp_path: Path) -> None:
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        list(pool.map(lambda i: log_control_evaluation(tmp_path, evaluation(tasks=i)), range(16)))
+    assert sorted(e.tasks for e in load_control_log(tmp_path).evaluations) == list(range(16))
+
+
+def test_a_stuck_lock_is_reported(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("saddlefit.storage.control_log.LOCK_WAIT_S", 0.1)
+    (tmp_path / "control.lock").write_text("")
+    with pytest.raises(EnvironmentFailure, match="control log is locked"):
+        log_control_evaluation(tmp_path, evaluation())
+    assert control_evaluations(tmp_path) == 0
 
 
 @pytest.mark.parametrize(
-    "changes", [{"tag": "release-1"}, {"harness_commit": "--x"}, {"tasks": -1}, {"extra": 1}]
+    "changes",
+    [
+        {"tag": "release-1"},
+        {"harness_commit": "--x"},
+        {"tasks": -1},
+        {"extra": 1},
+        {"created": "yesterday"},
+        {"created": "2026-10-22T10:00:00"},  # no time zone
+        {"created": "2026-10-22T10:00:00+02:00"},  # not UTC
+    ],
 )
 def test_malformed_evaluations_are_refused(changes: dict[str, Any]) -> None:
     with pytest.raises(ValidationError):

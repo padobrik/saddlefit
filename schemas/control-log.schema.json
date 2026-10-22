@@ -9,6 +9,7 @@
           "type": "string"
         },
         "created": {
+          "format": "date-time",
           "title": "Created",
           "type": "string"
         },
