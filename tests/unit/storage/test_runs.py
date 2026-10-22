@@ -134,7 +134,7 @@ def test_a_record_cut_off_mid_line_is_unfinished(tmp_path: Path) -> None:
     with pytest.raises(UnfinishedRun):
         read_run(writer.path)
     # cut inside a multibyte character, after a complete event
-    writer.path.write_bytes(whole.splitlines(keepends=True)[0].encode() + "{\"é".encode()[:-1])
+    writer.path.write_bytes(whole.splitlines(keepends=True)[0].encode() + '{"é'.encode()[:-1])
     with pytest.raises(UnfinishedRun):
         read_run(writer.path)
     # a broken line that was written out whole is corruption, not an interruption
