@@ -451,7 +451,9 @@ class Project:
     def report(self) -> tuple[dict[str, Any], Path]:
         """Write a progress report: the baseline harness against the current one (B15)."""
         basis = self._report_basis()
-        report = self._progress_report(basis, self.harness.head(), control_evaluations(self.state))
+        report = self._progress_report(
+            basis, self.harness.head(), control_evaluations(self.state), self.tasks()
+        )
         return report, write_progress(report, self.reports, report_id("progress"))
 
     def final_report(
@@ -477,7 +479,9 @@ class Project:
         with fit_lock(self.state):
             # a fit, a new baseline or new tasks may have come while the image was built
             fresh = self._report_basis()
-            fresh_control = [m.id for m in self.tasks() if m.split == "control"]
+            # one snapshot of the suite for the whole report: mining takes no fit lock
+            snapshot = self.tasks()
+            fresh_control = [m.id for m in snapshot if m.split == "control"]
             # the runner was built from the old inputs: any change to them refuses the run
             if (fresh.config, fresh.baseline, fresh.suite_hash, fresh_control) != (
                 basis.config,
@@ -510,7 +514,7 @@ class Project:
                     tasks=len(control),
                 ),
             )
-            report = self._progress_report(basis, frozen, len(log.evaluations))
+            report = self._progress_report(basis, frozen, len(log.evaluations), snapshot)
         report["kind"] = "final"
         report["frozen_tag"] = tag
         report["control"] = control_summary(
@@ -562,13 +566,15 @@ class Project:
         self._check_comparable(baseline, config, state, suite_hash)
         return ReportBasis(config, baseline, before_tree, state, suite_hash)
 
-    def _progress_report(self, basis: ReportBasis, head: str, control_count: int) -> dict[str, Any]:
-        """Training and held-out aggregates for the harness at ``head`` against the baseline."""
+    def _progress_report(
+        self, basis: ReportBasis, head: str, control_count: int, metas: list[TaskMeta]
+    ) -> dict[str, Any]:
+        """Training and held-out aggregates for the harness at ``head`` against the baseline,
+        over the task snapshot ``metas``."""
         config, baseline = basis.config, basis.baseline
         after_tree = self.harness.tree(head)
         if after_tree is None:
             raise HarnessStoreError(f"{head!r} has no tree in the harness store")
-        metas = self.tasks()
         progress = harness_progress(
             self.runs,
             tree_of=self.harness.tree,

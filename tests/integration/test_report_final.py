@@ -262,3 +262,18 @@ def test_final_refuses_a_config_or_baseline_that_changed_while_preparing(
     with pytest.raises(UserError, match="changed while"):
         project.final_report(docker_client=None, model_client=lambda: None, model_info=LIVE)  # type: ignore[arg-type]
     assert control.runs == []
+
+
+def test_tasks_mined_during_control_do_not_reach_the_final_report(
+    project: Project, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class MiningMeanwhile(FakeControl):
+        def outcomes(self, ref: str, tasks: Any) -> tuple[dict[str, bool | None], float]:
+            grown = [*CONTROL, *TRAIN, SimpleNamespace(id="t9", split="train", type="docs")]
+            monkeypatch.setattr(Project, "tasks", lambda self: grown)
+            return super().outcomes(ref, tasks)
+
+    monkeypatch.setattr(Project, "_control_runner", lambda self, *args: MiningMeanwhile(project))
+    report, _ = project.final_report(docker_client=None, model_client=lambda: None, model_info=LIVE)  # type: ignore[arg-type]
+    # the report is built from the suite as it was when control started
+    assert report["splits"]["train"]["unmeasured"] == len(TRAIN)
