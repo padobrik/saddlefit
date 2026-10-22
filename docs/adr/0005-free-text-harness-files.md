@@ -19,8 +19,9 @@ are `harness.json` and `loop.yaml`.
 The other harness files are free text that the tutor writes and the student reads:
 `systemprompt.md`, `tool_guidance.md`, `EXPERIENCE.md` and the files under `skills/` and
 `tools/`. Changing their content is what the tutor is for. They have no `schema_version`, no
-model and no schema. Where Saddlefit reads a convention from them, such as one lesson per `- `
-line in EXPERIENCE.md with a `(model: …)` label, the convention lives in the reader's code.
+model and no schema. Where Saddlefit reads a convention from them, such as one lesson per
+hyphen-led list item in EXPERIENCE.md with a `(model: …)` label, the convention lives in
+the reader's code.
 
 On #99 the check failed a change that writes lessons to EXPERIENCE.md in exactly the shape the
 reader released in 0.1.0 already parses, and asked for a `schema_version` and a migration for
