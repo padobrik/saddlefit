@@ -78,7 +78,12 @@ def test_prune_drops_the_useless_change_without_a_tutor(
 
 
 def test_prune_with_nothing_accepted(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
-    fake_practice(project, monkeypatch)
+    # no mined tasks, no model runner and no Docker: none of them is needed
+    def unavailable(*args: Any) -> None:
+        raise AssertionError("prune with nothing to test must not set up the student")
+
+    monkeypatch.setattr(cli, "_student", unavailable)
+    monkeypatch.setattr(cli, "_docker", unavailable)
     result = runner.invoke(app, ["prune"])
     assert result.exit_code == 0, result.output
     assert "no accepted changes to test" in result.output
@@ -86,6 +91,7 @@ def test_prune_with_nothing_accepted(project: Project, monkeypatch: pytest.Monke
 
 def test_prune_waits_for_a_running_fit(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
     fake_practice(project, monkeypatch)
+    accept_by_noise(project.harness, project.state)
     (project.state / "fit.lock").write_text("123\n")
     result = runner.invoke(app, ["prune"])
     assert result.exit_code == 1
@@ -95,9 +101,15 @@ def test_prune_waits_for_a_running_fit(project: Project, monkeypatch: pytest.Mon
 def test_prune_needs_held_out_tasks(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
     train_only = [SimpleNamespace(id=f"t{i}", split="train") for i in range(3)]
     monkeypatch.setattr(Project, "tasks", lambda self: train_only)
+    accept_by_noise(project.harness, project.state)
     result = runner.invoke(app, ["prune"])
     assert result.exit_code == 1
     assert "no held-out tasks" in str(result.exception)
+
+
+def test_project_prune_with_nothing_accepted_needs_no_tasks(project: Project) -> None:
+    assert project.tasks() == []
+    assert project.prune(docker_client=None, model_client=lambda: None, model_info=None) == []  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize(

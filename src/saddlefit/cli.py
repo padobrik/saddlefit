@@ -331,6 +331,9 @@ def ablation_line(result: AblationResult) -> str:
 def prune(ctx: typer.Context) -> None:
     """Ablate now: test every accepted change and drop those that do not help."""
     project = _project()
+    if not project.active_changes():
+        _emit(ctx, [], "no accepted changes to test")  # no model runner or Docker needed
+        return
     model_info, model_client = _student(project)
     results = project.prune(
         docker_client=_docker(), model_client=model_client, model_info=model_info

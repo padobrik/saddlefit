@@ -26,7 +26,7 @@ from saddlefit.eval.leak_guard import GuardedClient, guard_for_suite
 from saddlefit.harness.lint import SandboxLinter
 from saddlefit.harness.loop_config import LoopConfig, clamp, load_loop_config
 from saddlefit.harness.store import HarnessStore, HarnessStoreError
-from saddlefit.loops.ablation import AblationResult, AblationTarget, ablate
+from saddlefit.loops.ablation import AblationResult, AblationTarget, ablate, active_changes
 from saddlefit.loops.baseline import (
     BASELINE_SPLITS,
     MAX_REPLY_TOKENS,
@@ -43,6 +43,7 @@ from saddlefit.reports.baseline import build as build_report
 from saddlefit.reports.baseline import write as write_report
 from saddlefit.sandbox.environment import ensure_environment
 from saddlefit.storage.fit_state import fit_lock, load_fit_state, save_fit_state
+from saddlefit.storage.library import ChangeRecord, read_records
 from saddlefit.tasks.mining import STATE_DIR, MiningReport, Runner, mine
 from saddlefit.tasks.models import TaskMeta
 from saddlefit.tasks.splits import new_lock
@@ -337,6 +338,8 @@ class Project:
         Only the student runs, so no tutor and no API key are needed. Holds the fit lock and
         resets the count of accepted changes since the last ablation.
         """
+        if not self.active_changes():
+            return []  # nothing to test, so no tasks, model or Docker are needed
         practice, train = self._practice(
             docker_client=docker_client,
             model_client=model_client,
@@ -356,6 +359,10 @@ class Project:
             state = load_fit_state(self.state)
             save_fit_state(self.state, state.model_copy(update={"accepted_since_ablation": 0}))
         return results
+
+    def active_changes(self) -> list[ChangeRecord]:
+        """Accepted changes not pruned since, oldest first."""
+        return active_changes(read_records(self.state))
 
     def _practice(
         self,
