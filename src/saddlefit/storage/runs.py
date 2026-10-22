@@ -226,16 +226,28 @@ class RestrictedRunError(PermissionError):
 PUBLIC_SPLITS: Final = frozenset({"train"})
 
 
+class UnfinishedRun(ValueError):
+    """A run record that ends before its summary: the run was interrupted, so it has no outcome."""
+
+
 def _read_run_any(path: Path) -> tuple[list[RunEvent], RunSummary]:
     """Read any run record. Evaluator only: import it solely from ``saddlefit.eval``."""
-    lines = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
-    if not lines:
+    data = path.read_bytes()
+    if not data:
         raise ValueError(f"empty run record: {path}")
-    records = [upgrade(RUN_KIND, line, RUN_SCHEMA_VERSION) for line in lines]
-    *events, last = records
-    if last.get("type") != "summary":
-        raise ValueError(f"run record has no summary line: {path}")
-    return [RunEvent.model_validate(e) for e in events], RunSummary.model_validate(last)
+    # every complete line ends in a newline; a crash mid-write leaves the last one cut off,
+    # possibly inside a UTF-8 character, so that part is dropped before decoding
+    *lines, cut = data.split(b"\n")
+    records = [
+        upgrade(RUN_KIND, json.loads(line.decode("utf-8")), RUN_SCHEMA_VERSION) for line in lines
+    ]
+    last = records.pop() if records and records[-1].get("type") == "summary" else None
+    if last is not None and cut:
+        raise ValueError(f"run record continues after its summary line: {path}")
+    events = [RunEvent.model_validate(e) for e in records]  # malformed is not interrupted
+    if last is None:
+        raise UnfinishedRun(f"run record was interrupted before its summary line: {path}")
+    return events, RunSummary.model_validate(last)
 
 
 def read_run(path: Path) -> tuple[list[RunEvent], RunSummary]:
