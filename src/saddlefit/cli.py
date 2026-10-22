@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from datetime import date
 from enum import IntEnum
 from pathlib import Path
@@ -15,8 +16,10 @@ from saddlefit.config import ConfigError, SandboxConfig, StudentConfig, load_con
 from saddlefit.doctor import doctor_for, render
 from saddlefit.errors import EnvironmentFailure, SaddlefitError, UserError
 from saddlefit.loops.baseline import RunOutcome
+from saddlefit.loops.middle import RoundReport
 from saddlefit.project import Project
-from saddlefit.providers.base import ModelClient
+from saddlefit.providers.anthropic import AnthropicClient
+from saddlefit.providers.base import ModelClient, ModelInfo
 from saddlefit.providers.openai_compat import OpenAICompatibleClient
 from saddlefit.reports.baseline import render_markdown
 from saddlefit.tasks.mining import Runner, SandboxRunner
@@ -208,21 +211,7 @@ def baseline(
 ) -> None:
     """Measure the student on training and held-out tasks; control is never run."""
     project = _project()
-    config = project.config()
-
-    # the running model's digest decides whether doctor's measurements still apply
-    probe = OpenAICompatibleClient(base_url=config.student.base_url, model=config.student.model)
-    model_info = probe.info()  # read once: timeout, tool mode and report use the same model
-    timeout_s = project.student_timeout(model_info.digest)
-
-    def model_client() -> ModelClient:
-        return OpenAICompatibleClient(
-            base_url=config.student.base_url,
-            model=config.student.model,
-            context_length=config.student.context_length,
-            timeout_s=timeout_s,
-        )
-
+    model_info, model_client = _student(project)
     finished = 0
 
     def progress(run: RunOutcome) -> None:
@@ -239,6 +228,86 @@ def baseline(
         on_run=progress,
     )
     _emit(ctx, report, markdown.read_text(encoding="utf-8"))
+
+
+def _student(project: Project) -> tuple[ModelInfo, Callable[[], ModelClient]]:
+    """The student model as seen once, and a factory for its clients."""
+    config = project.config()
+    # the running model's digest decides whether doctor's measurements still apply
+    probe = OpenAICompatibleClient(base_url=config.student.base_url, model=config.student.model)
+    model_info = probe.info()  # read once: timeout, tool mode and report use the same model
+    timeout_s = project.student_timeout(model_info.digest)
+
+    def model_client() -> ModelClient:
+        return OpenAICompatibleClient(
+            base_url=config.student.base_url,
+            model=config.student.model,
+            context_length=config.student.context_length,
+            timeout_s=timeout_s,
+        )
+
+    return model_info, model_client
+
+
+def round_line(number: int, report: RoundReport) -> str:
+    """One round, as the console shows it."""
+    solved = f"{report.train_before}/{len(report.batch)}"
+    outcome = f"accepted {report.accepted}" if report.accepted else "nothing accepted"
+    return (
+        f"round {number}: batch solved {solved}; {len(report.records)} candidates tried, "
+        f"{report.refused} refused; {outcome}; {report.lessons} lessons; "
+        f"tutor {report.tutor_calls} calls, ${report.tutor_usd:.2f}"
+    )
+
+
+@app.command()
+def fit(
+    ctx: typer.Context,
+    rounds: Annotated[int, typer.Option(min=1, help="Middle-loop rounds to run.")] = 1,
+) -> None:
+    """Fit the harness to the student: the middle loop on training and held-out tasks."""
+    project = _project()
+    config = project.config()
+    if config.tutor.provider != "anthropic":
+        raise UserError(f"fit needs the anthropic tutor provider, not {config.tutor.provider!r}")
+    if not any(config.tutor.prices_usd_per_mtok.model_dump().values()):
+        typer.echo(
+            "warning: tutor prices are 0.0, so tutor.max_usd_per_round cannot stop a round; "
+            "fill in tutor.prices_usd_per_mtok from your price list",
+            err=True,
+        )
+    model_info, model_client = _student(project)
+    quiet = bool((ctx.find_root().obj or {}).get("json"))
+    done = 0
+
+    def on_round(report: RoundReport) -> None:
+        nonlocal done
+        done += 1
+        if not quiet:
+            typer.echo(round_line(done, report))
+
+    reports = project.fit(
+        docker_client=_docker(),
+        model_client=model_client,
+        tutor_client=AnthropicClient(config.tutor.model),
+        model_info=model_info,
+        rounds=rounds,
+        on_round=on_round,
+    )
+    data = [
+        {
+            "batch": list(r.batch),
+            "train_before": r.train_before,
+            "accepted": r.accepted,
+            "records": [rec.model_dump(mode="json") for rec in r.records],
+            "refused": r.refused,
+            "lessons": r.lessons,
+            "tutor_calls": r.tutor_calls,
+            "tutor_usd": r.tutor_usd,
+        }
+        for r in reports
+    ]
+    _emit(ctx, data, f"{len(reports)} rounds; {sum(bool(r.accepted) for r in reports)} accepted")
 
 
 @app.command()
