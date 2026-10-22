@@ -126,3 +126,10 @@ Assumptions taken where the spec leaves a detail open. Deviations from the spec 
   refused by validation never became a candidate and has none. `harness_commit` is the
   candidate's commit, and `held_out` is empty when the batch gate already rejected it.
   Records hold held-out aggregates only, never per-task outcomes.
+- **Middle loop round.** A7 asks for batches of 5–10 training tasks; a round takes 6, as a
+  window over the sorted training tasks that moves on every round. Up to 3 candidates per
+  round, each from its own tutor call on the same failures, within the round's call and spend
+  budget; reflection calls count toward it. The tie-break's "added context tokens" is the
+  proposal's own estimate (`context_tokens_delta`). The loop reaches the student through
+  `Practice`, which returns training outcomes per task and held-out results only as one
+  aggregate per comparison, and has no way to run control tasks.
