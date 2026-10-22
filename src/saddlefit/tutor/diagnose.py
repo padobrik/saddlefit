@@ -78,7 +78,7 @@ PROPOSE_TOOL: Final = ToolSpec(
 )
 
 
-def _template(name: str) -> Template:
+def load_prompt(name: str) -> Template:
     return Template((resources.files("saddlefit.tutor") / "prompts" / name).read_text("utf-8"))
 
 
@@ -152,7 +152,7 @@ def render_system(request: TutorRequest) -> str:
         for path, text in sorted(request.harness_files.items())
     )
     allowlist = sorted(ALLOWED_FILES) + [f"{d}/**" for d in sorted(ALLOWED_DIRS)]
-    return _template("system.md").substitute(
+    return load_prompt("system.md").substitute(
         level_order=", ".join(LEVEL_ORDER),
         allowlist=", ".join(f"`{p}`" for p in allowlist),
         max_patch_lines=MAX_PATCH_LINES,
@@ -164,7 +164,7 @@ def render_system(request: TutorRequest) -> str:
 
 
 def render_runs(request: TutorRequest) -> str:
-    run = _template("run.md")
+    run = load_prompt("run.md")
     runs = "\n\n".join(
         run.substitute(
             run_id=d.run_id,
@@ -180,7 +180,7 @@ def render_runs(request: TutorRequest) -> str:
         ).rstrip()
         for d in request.runs
     )
-    return _template("diagnose.md").substitute(run_count=len(request.runs), runs=runs)
+    return load_prompt("diagnose.md").substitute(run_count=len(request.runs), runs=runs)
 
 
 class TutorError(ProviderError):

@@ -113,3 +113,12 @@ Assumptions taken where the spec leaves a detail open. Deviations from the spec 
   a patch's paths from those headers, and a plain unified diff was refused as changing no
   files. Patches apply with `git apply --recount`, because models miscount hunk lines; the
   context lines must still match exactly. Both came from a live tutor call.
+- **Lessons.** A lesson is labelled with the student model, since the student's context keeps
+  the lessons for its own model (`(model: …)`), and it is stored as one `- ` line: the
+  context takes each such line as one lesson, so a second physical line would be lost. The
+  tutor may write up to two lines; they are joined. A lesson reaches EXPERIENCE.md as a
+  validated proposal that is accepted at once, with no gates, since B13 makes reflection
+  part of every decision. Its evidence must be among the decided proposal's evidence runs,
+  and the reflection prompt carries no held-out results: B10 lets the tutor see held-out
+  aggregates, but a lesson lands in EXPERIENCE.md, which the student reads, and the student
+  may see no held-out data. So lessons cite training numbers only, unlike the example in A9.
