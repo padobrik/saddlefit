@@ -1,5 +1,6 @@
 """``saddlefit report --final``: control once, on a frozen harness, logged and counted (B10)."""
 
+import hashlib
 import json
 import subprocess
 from pathlib import Path
@@ -19,6 +20,8 @@ from saddlefit.providers.base import ModelInfo
 from saddlefit.reports.progress import render_markdown
 from saddlefit.storage.control_log import control_evaluations, load_control_log
 from saddlefit.storage.fit_state import FitState, save_fit_state
+from saddlefit.tasks.splits import add_task
+from saddlefit.tasks.suite import load_lock, save_lock
 
 pytestmark = pytest.mark.integration
 runner = CliRunner()
@@ -53,11 +56,21 @@ def project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Project:
     project.init()
     monkeypatch.chdir(repo)
     monkeypatch.setattr(Project, "tasks", lambda self: CONTROL + TRAIN)
+    register(project, CONTROL + TRAIN)
     model = ModelInfo(provider="fake", model=project.config().student.model, digest="sha256:m")
     monkeypatch.setattr(cli, "_student", lambda p: (model, lambda: None))
     monkeypatch.setattr(cli, "_docker", object)
     fake_baseline(project, project.harness.head())
     return project
+
+
+def register(project: Project, tasks: list[Any]) -> None:
+    """Record the fake tasks in the suite lock, as mining would."""
+    lock = load_lock(project.suite, project.config().splits)
+    for task in tasks:
+        digest = hashlib.sha256(task.id.encode()).hexdigest()
+        lock = add_task(lock, task.id, "history", f"sha256:{digest}")
+    save_lock(project.suite, lock)
 
 
 def use_fake_control(project: Project, monkeypatch: pytest.MonkeyPatch) -> FakeControl:
@@ -271,9 +284,30 @@ def test_tasks_mined_during_control_do_not_reach_the_final_report(
         def outcomes(self, ref: str, tasks: Any) -> tuple[dict[str, bool | None], float]:
             grown = [*CONTROL, *TRAIN, SimpleNamespace(id="t9", split="train", type="docs")]
             monkeypatch.setattr(Project, "tasks", lambda self: grown)
+            register(self.project, grown)
             return super().outcomes(ref, tasks)
 
     monkeypatch.setattr(Project, "_control_runner", lambda self, *args: MiningMeanwhile(project))
     report, _ = project.final_report(docker_client=None, model_client=lambda: None, model_info=LIVE)  # type: ignore[arg-type]
     # the report is built from the suite as it was when control started
     assert report["splits"]["train"]["unmeasured"] == len(TRAIN)
+
+
+def test_a_snapshot_that_does_not_match_the_suite_lock_is_refused(
+    project: Project, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    control = use_fake_control(project, monkeypatch)
+    calls = 0
+
+    def tasks_mined_between_reads(self: Project) -> list[Any]:
+        # the first read sees the suite; the snapshot under the lock sees one more task,
+        # written by mining before the suite lock was updated
+        nonlocal calls
+        calls += 1
+        extra = [SimpleNamespace(id="t9", split="train", type="docs")] if calls >= 2 else []
+        return [*CONTROL, *TRAIN, *extra]
+
+    monkeypatch.setattr(Project, "tasks", tasks_mined_between_reads)
+    with pytest.raises(UserError, match="task suite changed"):
+        project.final_report(docker_client=None, model_client=lambda: None, model_info=LIVE)  # type: ignore[arg-type]
+    assert control.runs == []

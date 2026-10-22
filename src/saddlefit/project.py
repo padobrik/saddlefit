@@ -479,8 +479,16 @@ class Project:
         with fit_lock(self.state):
             # a fit, a new baseline or new tasks may have come while the image was built
             fresh = self._report_basis()
-            # one snapshot of the suite for the whole report: mining takes no fit lock
+            # one snapshot of the suite for the whole report: mining takes no fit lock, so the
+            # snapshot must be exactly the tasks of the suite lock the hash was read from
             snapshot = self.tasks()
+            lock = load_lock(self.suite, fresh.config.splits)
+            if lock.suite_hash() != fresh.suite_hash or {m.id for m in snapshot} != {
+                t.id for t in lock.tasks
+            }:
+                raise UserError(
+                    "the task suite changed while `report --final` was preparing; run it again"
+                )
             fresh_control = [m.id for m in snapshot if m.split == "control"]
             # the runner was built from the old inputs: any change to them refuses the run
             if (fresh.config, fresh.baseline, fresh.suite_hash, fresh_control) != (
