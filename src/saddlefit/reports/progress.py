@@ -61,8 +61,8 @@ def _rate(row: dict[str, Any], n: int) -> str:
 
 def render_markdown(report: dict[str, Any]) -> str:
     lines = [
-        f"<!-- saddlefit progress report, schema_version: {report['schema_version']} -->",
-        "# Progress report",
+        f"<!-- saddlefit {report['kind']} report, schema_version: {report['schema_version']} -->",
+        "# Final report" if report["kind"] == "final" else "# Progress report",
         "",
         f"- Model: `{report['model']['id']}` ({report['model']['digest'] or 'no digest'})",
         f"- Harness: `{report['baseline_harness_commit'][:12]}` (baseline) → "
@@ -97,8 +97,38 @@ def render_markdown(report: dict[str, Any]) -> str:
     lines += ["", "## Failure profile, current harness", "", "| Primary tag | Runs |"]
     lines.append("| --- | --- |")
     lines += [f"| {tag} | {count} |" for tag, count in report["failure_profile"].items()]
+    if "control" in report:
+        lines += _control_lines(report)
     lines.append("")
     return "\n".join(lines)
+
+
+def _control_lines(report: dict[str, Any]) -> list[str]:
+    """Only in ``report --final``: control, context efficiency and the delegation map."""
+    control = report["control"]
+    n = control["tasks"]
+    low, high = control["difference95"]
+    efficiency = control["context_efficiency"]
+    lines = [
+        "",
+        f"## Control, frozen harness `{report['frozen_tag']}`",
+        "",
+        f"- Tasks decided under both harnesses: {n}; not measured: {control['unmeasured']}",
+        f"- Before: {_rate(control['before'], n)}",
+        f"- After: {_rate(control['after'], n)}",
+        f"- Difference (paired bootstrap 95%): {low:+.0%} to {high:+.0%}",
+        "- Context efficiency: "
+        + (
+            "n/a"
+            if efficiency is None
+            else f"{efficiency} control successes per 1,000 harness tokens"
+        ),
+        "",
+        "| Task type | Delegation |",
+        "| --- | --- |",
+    ]
+    lines += [f"| {t} | {verdict} |" for t, verdict in control["delegation"].items()]
+    return lines
 
 
 def write(report: dict[str, Any], reports_dir: Path, report_id: str) -> Path:

@@ -179,3 +179,10 @@ Assumptions taken where the spec leaves a detail open. Deviations from the spec 
   are timezone-aware UTC. `BaselineRunner`
   runs control only when its caller passes the split explicitly, which only `report --final`
   does.
+- **`report --final`.** The only path that runs control: under the fit lock it rereads the
+  fit state, runs the control tasks under the baseline's harness and under the current `main`
+  (once if both hold the same files), then tags that commit `fit-<yyyy-mm-dd>-<n>`, so a
+  failed evaluation leaves no tag, logs the evaluation, and writes the progress
+  report plus control before and after, the delegation map and the context efficiency. The
+  baseline never ran control, so its control numbers come from this run. Control runs go
+  through `ControlRunner`, separate from the `Practice` that `fit` uses.
