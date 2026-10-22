@@ -19,12 +19,12 @@
 * **reports:** report progress since the baseline ([#108](https://github.com/padobrik/saddlefit/issues/108)) ([9f62d56](https://github.com/padobrik/saddlefit/commit/9f62d56f332c6ed5429ea602a086a05c85c340c4))
 * **storage:** add change records for the library ([#102](https://github.com/padobrik/saddlefit/issues/102)) ([2c14ada](https://github.com/padobrik/saddlefit/commit/2c14ada335531ba55345f41e145acfc67f2f5f9e))
 * **tutor:** diagnose failed runs into one proposal per call ([#98](https://github.com/padobrik/saddlefit/issues/98)) ([8a3739f](https://github.com/padobrik/saddlefit/commit/8a3739fdcb620205aab64ab4f6d963cc8b6d7722))
-* **tutor:** reflect on each decision into EXPERIENCE.md ([#99](https://github.com/padobrik/saddlefit/issues/99)) ([d9590ee](https://github.com/padobrik/saddlefit/commit/d9590ee671683207adad520f8cc6bda36be72198))
+* **tutor:** record a reflection on each decision in EXPERIENCE.md ([#99](https://github.com/padobrik/saddlefit/issues/99)) ([d9590ee](https://github.com/padobrik/saddlefit/commit/d9590ee671683207adad520f8cc6bda36be72198))
 
 
 ### Bug Fixes
 
-* **report:** skip run records a crash cut off ([#112](https://github.com/padobrik/saddlefit/issues/112)) ([a3911f9](https://github.com/padobrik/saddlefit/commit/a3911f96edee210ce2132bf956d8c6a1df440d47))
+* **report:** skip run records cut off by a crash ([#112](https://github.com/padobrik/saddlefit/issues/112)) ([a3911f9](https://github.com/padobrik/saddlefit/commit/a3911f96edee210ce2132bf956d8c6a1df440d47))
 
 
 ### Documentation
