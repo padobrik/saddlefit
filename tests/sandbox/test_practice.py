@@ -16,6 +16,7 @@ from saddlefit.harness.store import HarnessStore
 from saddlefit.loops.baseline import RunOutcome
 from saddlefit.loops.practice import DockerPractice, without_control
 from saddlefit.providers.fake import FakeClient
+from saddlefit.tasks import splits as splits_module
 from saddlefit.tasks.mining import mine
 from saddlefit.tasks.splits import new_lock
 from saddlefit.tasks.suite import SuitePaths, materialize, save_lock
@@ -24,8 +25,10 @@ pytestmark = pytest.mark.docker
 
 
 def test_practice_runs_batches_and_compares_held_out(
-    tmp_path: Path, docker_client, sandbox_image: str
+    tmp_path: Path, docker_client, sandbox_image: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # a fixed salt that puts the eight toy tasks into all three splits (3 / 3 / 2)
+    monkeypatch.setattr(splits_module.secrets, "token_hex", lambda n: "01" * 32)
     repo = build(tmp_path / "repo")
     config = Config(
         schema_version=2,
@@ -42,11 +45,11 @@ def test_practice_runs_batches_and_compares_held_out(
         lock, meta = made
         metas.append(meta)
     save_lock(paths, lock)
-    tasks = without_control(metas)
-    train = [m.id for m in tasks if m.split == "train"]
-    held_out = [m.id for m in tasks if m.split == "held_out"]
+    train = [m.id for m in metas if m.split == "train"]
+    held_out = [m.id for m in metas if m.split == "held_out"]
     control = [m.id for m in metas if m.split == "control"]
-    assert train, "the toy suite needs training tasks for this test"
+    assert (len(train), len(held_out), len(control)) == (3, 3, 2)
+    assert {m.id for m in without_control(metas)} == set(train + held_out)
 
     store = HarnessStore(tmp_path / ".saddlefit" / "harness")
     store.init()
@@ -55,7 +58,7 @@ def test_practice_runs_batches_and_compares_held_out(
         repo=repo,
         config=config,
         store=store,
-        tasks=tasks,
+        tasks=metas,  # control included: DockerPractice must never run it
         public_dir=paths.public_dir,
         runs_root=tmp_path / ".saddlefit" / "runs",
         suite_hash=lock.suite_hash(),
@@ -78,8 +81,9 @@ def test_practice_runs_batches_and_compares_held_out(
         assert digest.outcome == "fail"
         assert digest.task_text  # the task the student saw
 
-    with pytest.raises(ValueError, match="not train tasks"):
-        practice.run_batch("main", held_out[:1] or control[:1] or ["no-such-task"])
+    for other in (held_out[:1], control[:1]):
+        with pytest.raises(ValueError, match="not train tasks"):
+            practice.run_batch("main", other)
 
     # the current harness is run once per commit; each comparison reruns only the candidate
     ran.clear()
@@ -89,4 +93,4 @@ def test_practice_runs_batches_and_compares_held_out(
     ran.clear()
     practice.compare_held_out("main", "main")
     assert len(ran) == len(held_out)
-    assert not {r.task_id for r in ran} & set(control)
+    assert {r.task_id for r in ran} == set(held_out)  # never a control task

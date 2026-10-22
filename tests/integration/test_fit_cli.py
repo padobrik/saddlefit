@@ -42,14 +42,27 @@ def test_fit_needs_the_anthropic_tutor(project: Path) -> None:
 
 def test_fit_warns_when_prices_are_unset_and_needs_training_tasks(project: Path) -> None:
     result = runner.invoke(app, ["fit"])
-    assert "tutor prices are 0.0" in result.output
+    assert "tutor prices not set (input, output, cache_write_1h, cache_read)" in result.output
     assert result.exit_code == 1
     assert "no training tasks" in str(result.exception)
 
 
-def test_fit_says_nothing_about_prices_once_they_are_set(project: Path) -> None:
+def set_prices(project: Path, **prices: float) -> None:
     config = project / ".saddlefit" / "saddlefit.yaml"
-    config.write_text(config.read_text().replace("input: 0.0", "input: 4.0"))
+    text = config.read_text()
+    for name, value in prices.items():
+        text = text.replace(f"    {name}: 0.0", f"    {name}: {value}", 1)
+    config.write_text(text)
+
+
+def test_fit_names_each_missing_price(project: Path) -> None:
+    set_prices(project, input=4, cache_write_1h=8, cache_read=0.2)
+    result = runner.invoke(app, ["fit"])
+    assert "tutor prices not set (output)" in result.output
+
+
+def test_fit_says_nothing_about_prices_once_they_are_set(project: Path) -> None:
+    set_prices(project, input=4, output=20, cache_write_1h=8, cache_read=0.2)
     result = runner.invoke(app, ["fit"])
     assert "tutor prices" not in result.output
 

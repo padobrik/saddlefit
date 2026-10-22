@@ -139,3 +139,6 @@ Assumptions taken where the spec leaves a detail open. Deviations from the spec 
   reruns only the candidate. Proposed scripts are linted in `sandbox.image`, which ships the
   linters, not in the project's environment image. `fit` needs the `anthropic` tutor and
   warns when tutor prices are unset, since `max_usd_per_round` cannot stop a round then.
+- **Fit state.** `.saddlefit/fit.json` counts finished middle-loop rounds, so each `fit`
+  continues with the next training batch instead of starting again at the first; a round
+  that fails is not counted.

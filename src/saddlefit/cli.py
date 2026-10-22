@@ -270,10 +270,13 @@ def fit(
     config = project.config()
     if config.tutor.provider != "anthropic":
         raise UserError(f"fit needs the anthropic tutor provider, not {config.tutor.provider!r}")
-    if not any(config.tutor.prices_usd_per_mtok.model_dump().values()):
+    prices = config.tutor.prices_usd_per_mtok.model_dump()
+    # the kinds of tokens a tutor call is billed for; 5-minute cache writes are never made
+    unset = [k for k in ("input", "output", "cache_write_1h", "cache_read") if not prices[k]]
+    if unset:
         typer.echo(
-            "warning: tutor prices are 0.0, so tutor.max_usd_per_round cannot stop a round; "
-            "fill in tutor.prices_usd_per_mtok from your price list",
+            f"warning: tutor prices not set ({', '.join(unset)}), so tutor.max_usd_per_round "
+            "undercounts spending; fill in tutor.prices_usd_per_mtok from your price list",
             err=True,
         )
     model_info, model_client = _student(project)

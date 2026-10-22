@@ -1,0 +1,21 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "rounds_done": {
+      "minimum": 0,
+      "title": "Rounds Done",
+      "type": "integer"
+    },
+    "schema_version": {
+      "const": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "schema_version",
+    "rounds_done"
+  ],
+  "title": "FitState",
+  "type": "object"
+}

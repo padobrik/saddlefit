@@ -36,6 +36,12 @@ from saddlefit.harness.proposals import Proposal, ProposalError, ScriptLinter, a
 from saddlefit.harness.store import MAIN, HarnessStore, HarnessStoreError
 from saddlefit.providers.base import ModelClient, ProviderError, Usage
 from saddlefit.providers.cost import cost_usd
+from saddlefit.storage.fit_state import (
+    FIT_STATE_SCHEMA_VERSION,
+    FitState,
+    load_fit_state,
+    save_fit_state,
+)
 from saddlefit.storage.library import (
     CHANGE_SCHEMA_VERSION,
     ChangeRecord,
@@ -293,3 +299,22 @@ class MiddleLoop:
         except (ProposalError, ProviderError, HarnessStoreError):
             return 0  # a lesson is optional; it never stops the round
         return 0 if recorded is None else 1
+
+
+def run_rounds(
+    loop: MiddleLoop,
+    root: Path,
+    rounds: int,
+    on_round: Callable[[RoundReport], None] | None = None,
+) -> list[RoundReport]:
+    """Run ``rounds`` more rounds, continuing the count saved in ``root`` by the last run."""
+    reports = []
+    start = load_fit_state(root).rounds_done
+    for index in range(start, start + rounds):
+        report = loop.round(index)
+        state = FitState(schema_version=FIT_STATE_SCHEMA_VERSION, rounds_done=index + 1)
+        save_fit_state(root, state)  # only a finished round counts
+        reports.append(report)
+        if on_round is not None:
+            on_round(report)
+    return reports

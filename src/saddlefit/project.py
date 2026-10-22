@@ -32,7 +32,7 @@ from saddlefit.loops.baseline import (
     BaselineRunner,
     RunOutcome,
 )
-from saddlefit.loops.middle import MiddleLoop, RoundReport
+from saddlefit.loops.middle import MiddleLoop, RoundReport, run_rounds
 from saddlefit.loops.practice import DockerPractice, without_control
 from saddlefit.providers.base import ModelClient, ModelInfo
 from saddlefit.providers.retry import LOCAL_TIMEOUT_S
@@ -291,7 +291,10 @@ class Project:
         on_run: Callable[[RunOutcome], None] | None = None,
         on_round: Callable[[RoundReport], None] | None = None,
     ) -> list[RoundReport]:
-        """Run the middle loop for ``rounds`` rounds; control tasks are never run (B10)."""
+        """Run ``rounds`` more middle-loop rounds; control tasks are never run (B10).
+
+        Rounds continue where the last ``fit`` stopped, so each one takes a new batch.
+        """
         config = self.config()
         tasks = without_control(self.tasks())
         train = [m.id for m in tasks if m.split == "train"]
@@ -332,13 +335,7 @@ class Project:
             max_usd_per_round=config.tutor.max_usd_per_round,
             prices=config.tutor.prices_usd_per_mtok,
         )
-        reports = []
-        for index in range(rounds):
-            report = middle.round(index)
-            reports.append(report)
-            if on_round is not None:
-                on_round(report)
-        return reports
+        return run_rounds(middle, self.state, rounds, on_round)
 
     def latest_report(self) -> dict[str, Any]:
         """The newest baseline report's JSON."""
