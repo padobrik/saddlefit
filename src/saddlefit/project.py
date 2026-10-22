@@ -23,6 +23,7 @@ from saddlefit.doctor import DoctorRecord
 from saddlefit.errors import UserError
 from saddlefit.eval.evaluator import Evaluator
 from saddlefit.eval.leak_guard import GuardedClient, guard_for_suite
+from saddlefit.eval.progress import harness_progress
 from saddlefit.harness.lint import SandboxLinter
 from saddlefit.harness.loop_config import LoopConfig, clamp, load_loop_config
 from saddlefit.harness.store import HarnessStore, HarnessStoreError
@@ -41,6 +42,9 @@ from saddlefit.providers.retry import LOCAL_TIMEOUT_S
 from saddlefit.reports.baseline import ReportContext
 from saddlefit.reports.baseline import build as build_report
 from saddlefit.reports.baseline import write as write_report
+from saddlefit.reports.progress import ProgressContext
+from saddlefit.reports.progress import build as build_progress
+from saddlefit.reports.progress import write as write_progress
 from saddlefit.sandbox.environment import ensure_environment
 from saddlefit.storage.fit_state import (
     ensure_unlocked,
@@ -414,6 +418,47 @@ class Project:
             on_run=on_run,
         )
         return practice, train
+
+    def report(self) -> tuple[dict[str, Any], Path]:
+        """Write a progress report: the baseline harness against the current one (B15)."""
+        config = self.config()
+        baseline = self.latest_report()
+        before_tree = self.harness.tree(baseline["harness_commit"])
+        if before_tree is None:
+            raise UserError(
+                f"the baseline's harness commit {baseline['harness_commit'][:12]} is not in the "
+                "harness store; run `saddlefit baseline` again"
+            )
+        head = self.harness.head()
+        after_tree = self.harness.tree(head)
+        if after_tree is None:
+            raise HarnessStoreError(f"main points to {head!r}, which has no tree")
+        progress = harness_progress(
+            self.runs,
+            tree_of=self.harness.tree,
+            before_tree=before_tree,
+            after_tree=after_tree,
+            task_types={m.id: m.type for m in self.tasks()},
+            runs_per_task=config.evaluation.runs_per_task,
+            threshold=config.evaluation.solved_threshold,
+        )
+        state = load_fit_state(self.state)
+        ctx = ProgressContext(
+            model=state.student_model or baseline["model"]["id"],
+            model_digest=state.student_digest or baseline["model"]["digest"],
+            baseline_harness_commit=baseline["harness_commit"],
+            harness_commit=head,
+            suite_hash=load_lock(self.suite, config.splits).suite_hash(),
+            saddlefit_version=__version__,
+            runs_per_task=config.evaluation.runs_per_task,
+            solved_threshold=config.evaluation.solved_threshold,
+            fit_rounds=state.rounds_done,
+            tutor_calls=state.tutor_calls,
+            tutor_usd=state.tutor_usd,
+            control_evaluations=0,  # control runs only through `report --final`
+        )
+        report = build_progress(progress, ctx)
+        return report, write_progress(report, self.reports, report_id("progress"))
 
     def latest_report(self) -> dict[str, Any]:
         """The newest baseline report's JSON."""
