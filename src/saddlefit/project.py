@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 import shutil
 import stat
 import tempfile
@@ -25,6 +26,7 @@ from saddlefit.eval.control import control_summary
 from saddlefit.eval.evaluator import Evaluator
 from saddlefit.eval.leak_guard import GuardedClient, guard_for_suite
 from saddlefit.eval.progress import Comparable, harness_progress
+from saddlefit.export.skill import export_skill
 from saddlefit.harness.lint import SandboxLinter
 from saddlefit.harness.loop_config import LoopConfig, clamp, load_loop_config
 from saddlefit.harness.store import HarnessStore, HarnessStoreError
@@ -558,6 +560,34 @@ class Project:
             tool_mode=self.tool_mode(model_info.digest),
             on_run=on_run,
         )
+
+    def export_skill(self, out: Path | None = None, ref: str = "main") -> list[Path]:
+        """Export the harness at ``ref`` as Agent Skills (B14); return the skill folders."""
+        config = self.config()
+        state = load_fit_state(self.state)
+        dest = out or self._new_export_dir()
+        try:
+            return export_skill(
+                self.harness,
+                ref,
+                dest,
+                project=config.project,
+                model=state.student_model or config.student.model,
+                guard=guard_for_suite(self.suite.sealed_dir, self.incidents),
+            )
+        except FileExistsError as exc:
+            raise UserError(str(exc)) from exc
+        except HarnessStoreError as exc:
+            raise UserError(f"cannot export {ref!r}: {exc}") from exc
+
+    def _new_export_dir(self) -> Path:
+        """A fresh folder under ``exports/``; a random suffix keeps same-second exports apart."""
+        stamp = report_id("skill")
+        for _ in range(16):
+            path = self.state / "exports" / f"{stamp}-{secrets.token_hex(3)}"
+            if not path.exists():
+                return path
+        raise UserError("could not choose a free export folder; pass --out")
 
     def _report_basis(self) -> ReportBasis:
         """The latest baseline, checked to be comparable with the project as it is now."""

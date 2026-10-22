@@ -1,0 +1,50 @@
+{
+  "additionalProperties": false,
+  "description": "``export.json`` at the export's root: what was exported, from where, for whom.",
+  "properties": {
+    "created": {
+      "title": "Created",
+      "type": "string"
+    },
+    "format": {
+      "const": "skill",
+      "title": "Format",
+      "type": "string"
+    },
+    "harness_commit": {
+      "title": "Harness Commit",
+      "type": "string"
+    },
+    "model": {
+      "title": "Model",
+      "type": "string"
+    },
+    "project": {
+      "title": "Project",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "skills": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Skills",
+      "type": "array"
+    }
+  },
+  "required": [
+    "schema_version",
+    "format",
+    "project",
+    "model",
+    "harness_commit",
+    "created",
+    "skills"
+  ],
+  "title": "ExportManifest",
+  "type": "object"
+}
