@@ -186,3 +186,9 @@ Assumptions taken where the spec leaves a detail open. Deviations from the spec 
   report plus control before and after, the delegation map and the context efficiency. The
   baseline never ran control, so its control numbers come from this run. Control runs go
   through `ControlRunner`, separate from the `Practice` that `fit` uses.
+- **Skill export.** The spec names the goal ("the fit as SKILL.md for other agents") but not
+  the layout. `export --format skill` writes Agent Skills: `saddlefit-<project>/SKILL.md`
+  with the system prompt, the tool guidance, the finish-gate rule from `loop.yaml` and the
+  lessons for the student model, its tool scripts in `scripts/`, and each harness skill
+  copied as it is. The export is scanned for canaries before it is kept (a hit exits 2 and
+  writes nothing), and it never overwrites a directory. `agents-md` and `hooks` come later.
