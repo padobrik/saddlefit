@@ -6,19 +6,23 @@ start again at the first batch.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import tempfile
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Final, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from saddlefit.errors import UserError
 from saddlefit.storage.migrations import upgrade
 
 FIT_STATE_SCHEMA_VERSION: Final = 1
 FIT_STATE_KIND: Final = "fit-state"
 FIT_STATE_FILE: Final = "fit.json"
+FIT_LOCK_FILE: Final = "fit.lock"
 
 
 class FitState(BaseModel):
@@ -48,3 +52,30 @@ def save_fit_state(root: Path, state: FitState) -> None:
     except BaseException:
         Path(tmp).unlink(missing_ok=True)
         raise
+
+
+class FitLocked(UserError):
+    """Another ``fit`` is running on this project."""
+
+
+@contextlib.contextmanager
+def fit_lock(root: Path) -> Iterator[None]:
+    """Hold the project's fit lock; parallel fits would share the store and the round count.
+
+    The lock is a file created exclusively and removed on exit. A crash can leave it behind;
+    the error says how to clear it.
+    """
+    root.mkdir(parents=True, exist_ok=True)
+    path = root / FIT_LOCK_FILE
+    try:
+        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except FileExistsError as exc:
+        raise FitLocked(
+            f"another fit is running on this project ({path}); if none is, remove that file"
+        ) from exc
+    try:
+        os.write(fd, f"{os.getpid()}\n".encode())
+        os.close(fd)
+        yield
+    finally:
+        path.unlink(missing_ok=True)

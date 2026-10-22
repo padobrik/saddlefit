@@ -40,6 +40,7 @@ from saddlefit.reports.baseline import ReportContext
 from saddlefit.reports.baseline import build as build_report
 from saddlefit.reports.baseline import write as write_report
 from saddlefit.sandbox.environment import ensure_environment
+from saddlefit.storage.fit_state import fit_lock
 from saddlefit.tasks.mining import STATE_DIR, MiningReport, Runner, mine
 from saddlefit.tasks.models import TaskMeta
 from saddlefit.tasks.splits import new_lock
@@ -300,6 +301,9 @@ class Project:
         train = [m.id for m in tasks if m.split == "train"]
         if not train:
             raise UserError("no training tasks; run `saddlefit tasks mine` first")
+        if not any(m.split == "held_out" for m in tasks):
+            # no candidate could pass the held-out gate, so every tutor call would be wasted
+            raise UserError("no held-out tasks; mine more tasks before running fit")
         sealed = self.suite.sealed_dir
         guard = guard_for_suite(sealed, self.incidents)
         image = self.environment_image(docker_client)
@@ -335,7 +339,8 @@ class Project:
             max_usd_per_round=config.tutor.max_usd_per_round,
             prices=config.tutor.prices_usd_per_mtok,
         )
-        return run_rounds(middle, self.state, rounds, on_round)
+        with fit_lock(self.state):
+            return run_rounds(middle, self.state, rounds, on_round)
 
     def latest_report(self) -> dict[str, Any]:
         """The newest baseline report's JSON."""

@@ -1,6 +1,7 @@
 """The ``fit`` command's checks before any container starts."""
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from tests.fixtures.toyrepo.build import build
@@ -74,3 +75,11 @@ def test_round_line() -> None:
         "round 2: batch solved 1/3; 0 candidates tried, 1 refused; nothing accepted; "
         "1 lessons; tutor 4 calls, $0.12"
     )
+
+
+def test_fit_needs_held_out_tasks(project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    train_only = [SimpleNamespace(id=f"t{i}", split="train") for i in range(3)]
+    monkeypatch.setattr(Project, "tasks", lambda self: train_only)
+    result = runner.invoke(app, ["fit"])
+    assert result.exit_code == 1
+    assert "no held-out tasks" in str(result.exception)

@@ -142,3 +142,8 @@ Assumptions taken where the spec leaves a detail open. Deviations from the spec 
 - **Fit state.** `.saddlefit/fit.json` counts finished middle-loop rounds, so each `fit`
   continues with the next training batch instead of starting again at the first; a round
   that fails is not counted.
+- **One fit at a time.** B3 says parallel fitting sessions never share mutable state. The
+  minimal reading: `fit` holds an exclusive `.saddlefit/fit.lock` for its whole run, so two
+  sessions never run at once on a project. A crash can leave the lock behind; the error names
+  the file to remove. `fit` also refuses a suite without held-out tasks, where no candidate
+  could pass the held-out gate.

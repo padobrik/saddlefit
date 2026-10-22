@@ -4,7 +4,13 @@ import pytest
 from pydantic import ValidationError
 
 from saddlefit.schema_registry import SCHEMA_MODELS
-from saddlefit.storage.fit_state import FitState, load_fit_state, save_fit_state
+from saddlefit.storage.fit_state import (
+    FitLocked,
+    FitState,
+    fit_lock,
+    load_fit_state,
+    save_fit_state,
+)
 
 
 def test_no_state_means_no_rounds(tmp_path: Path) -> None:
@@ -28,3 +34,21 @@ def test_a_bad_state_is_refused(tmp_path: Path, raw: str) -> None:
 
 def test_the_fit_state_schema_is_generated() -> None:
     assert SCHEMA_MODELS["fit-state"] is FitState
+
+
+def test_only_one_fit_holds_the_lock(tmp_path: Path) -> None:
+    with (
+        fit_lock(tmp_path),
+        pytest.raises(FitLocked, match="another fit is running"),
+        fit_lock(tmp_path),
+    ):
+        pass
+    with fit_lock(tmp_path):  # released on exit
+        pass
+    assert not (tmp_path / "fit.lock").exists()
+
+
+def test_the_lock_is_released_when_fit_fails(tmp_path: Path) -> None:
+    with pytest.raises(RuntimeError), fit_lock(tmp_path):
+        raise RuntimeError("round failed")
+    assert not (tmp_path / "fit.lock").exists()
