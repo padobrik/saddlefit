@@ -162,3 +162,13 @@ Assumptions taken where the spec leaves a detail open. Deviations from the spec 
   before and after outcomes together, and takes the 2.5th and 97.5th percentiles of the
   10,000 mean differences; the seed is fixed (20261021). It lives in `saddlefit.eval`, since
   it needs per-task outcomes; callers get only the interval.
+- **Progress report.** `report` compares the harness the latest baseline used with the current
+  `main`. Runs are grouped by the git tree of their harness commit, since a candidate and the
+  merge that accepted it hold the same files; tasks are decided as in the baseline and
+  compared only where decided under both, the rest counted as not measured. The current
+  harness's failure profile comes from its runs. Tutor spending accumulates in `fit.json`,
+  failed rounds included. A task run more than once under a harness is judged on its latest
+  `runs_per_task` runs; every suite task not decided under both counts as not measured.
+  Only runs with the baseline's student model, digest and suite hash count, and `report`
+  refuses when the model, the suite or the evaluation settings changed since the baseline.
+  Control evaluations stay 0 until `report --final` exists.

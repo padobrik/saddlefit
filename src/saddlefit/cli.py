@@ -22,7 +22,6 @@ from saddlefit.project import Project
 from saddlefit.providers.anthropic import AnthropicClient
 from saddlefit.providers.base import ModelClient, ModelInfo
 from saddlefit.providers.openai_compat import OpenAICompatibleClient
-from saddlefit.reports.baseline import render_markdown
 from saddlefit.tasks.mining import Runner, SandboxRunner
 
 
@@ -354,9 +353,10 @@ def prune(ctx: typer.Context) -> None:
 
 @app.command()
 def report(ctx: typer.Context) -> None:
-    """Show the latest baseline report (training and held-out aggregates)."""
-    data = _project().latest_report()
-    _emit(ctx, data, render_markdown(data))
+    """Report progress: the baseline harness against the current one, training and
+    held-out aggregates only; control appears only in ``report --final``."""
+    data, markdown = _project().report()
+    _emit(ctx, data, markdown.read_text(encoding="utf-8"))
 
 
 def main() -> None:

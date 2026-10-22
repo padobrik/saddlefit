@@ -80,14 +80,18 @@ class Budget:
     prices: TokenPrices
     calls: int = 0
     usd: float = 0.0
+    # told of every charge as it happens, so spending survives a round that fails later
+    on_charge: Callable[[float], None] | None = None
 
     def can_call(self) -> bool:
         return self.calls < self.max_calls and self.usd < self.max_usd
 
     def charge(self, usage: Usage | None) -> None:
+        usd = 0.0 if usage is None else cost_usd(usage, self.prices)
         self.calls += 1
-        if usage is not None:
-            self.usd += cost_usd(usage, self.prices)
+        self.usd += usd
+        if self.on_charge is not None:
+            self.on_charge(usd)
 
 
 @dataclass(frozen=True)
@@ -142,10 +146,15 @@ class MiddleLoop:
     batch_size: int = 6
     candidates_per_round: int = 3
     today: Callable[[], date] = date.today
+    # every tutor call this loop has paid for, failed rounds included
+    spent_calls: int = 0
+    spent_usd: float = 0.0
 
     def round(self, index: int) -> RoundReport:
         batch = pick_batch(self.train_tasks, index, self.batch_size)
-        budget = Budget(self.max_calls_per_round, self.max_usd_per_round, self.prices)
+        budget = Budget(
+            self.max_calls_per_round, self.max_usd_per_round, self.prices, on_charge=self._charged
+        )
         before = self.practice.run_batch(MAIN, batch)
         report = RoundReport(batch=batch, train_before=_solved(before))
         tried: list[Tried] = []
@@ -163,6 +172,10 @@ class MiddleLoop:
             report.lessons += self._reflect(t, status, report.train_before, len(batch), budget)
         report.tutor_calls, report.tutor_usd = budget.calls, budget.usd
         return report
+
+    def _charged(self, usd: float) -> None:
+        self.spent_calls += 1
+        self.spent_usd += usd
 
     def _decide(
         self, tried: list[Tried], report: RoundReport

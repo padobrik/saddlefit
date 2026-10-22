@@ -23,6 +23,7 @@ from saddlefit.doctor import DoctorRecord
 from saddlefit.errors import UserError
 from saddlefit.eval.evaluator import Evaluator
 from saddlefit.eval.leak_guard import GuardedClient, guard_for_suite
+from saddlefit.eval.progress import Comparable, harness_progress
 from saddlefit.harness.lint import SandboxLinter
 from saddlefit.harness.loop_config import LoopConfig, clamp, load_loop_config
 from saddlefit.harness.store import HarnessStore, HarnessStoreError
@@ -41,8 +42,12 @@ from saddlefit.providers.retry import LOCAL_TIMEOUT_S
 from saddlefit.reports.baseline import ReportContext
 from saddlefit.reports.baseline import build as build_report
 from saddlefit.reports.baseline import write as write_report
+from saddlefit.reports.progress import ProgressContext
+from saddlefit.reports.progress import build as build_progress
+from saddlefit.reports.progress import write as write_progress
 from saddlefit.sandbox.environment import ensure_environment
 from saddlefit.storage.fit_state import (
+    FitState,
     ensure_unlocked,
     fit_lock,
     load_fit_state,
@@ -414,6 +419,78 @@ class Project:
             on_run=on_run,
         )
         return practice, train
+
+    def report(self) -> tuple[dict[str, Any], Path]:
+        """Write a progress report: the baseline harness against the current one (B15)."""
+        config = self.config()
+        baseline = self.latest_report()
+        before_tree = self.harness.tree(baseline["harness_commit"])
+        if before_tree is None:
+            raise UserError(
+                f"the baseline's harness commit {baseline['harness_commit'][:12]} is not in the "
+                "harness store; run `saddlefit baseline` again"
+            )
+        state = load_fit_state(self.state)
+        suite_hash = load_lock(self.suite, config.splits).suite_hash()
+        self._check_comparable(baseline, config, state, suite_hash)
+        head = self.harness.head()
+        after_tree = self.harness.tree(head)
+        if after_tree is None:
+            raise HarnessStoreError(f"main points to {head!r}, which has no tree")
+        metas = self.tasks()
+        progress = harness_progress(
+            self.runs,
+            tree_of=self.harness.tree,
+            before_tree=before_tree,
+            after_tree=after_tree,
+            tasks={s: [m.id for m in metas if m.split == s] for s in ("train", "held_out")},
+            task_types={m.id: m.type for m in metas},
+            comparable=Comparable(
+                model=baseline["model"]["id"],
+                digest=baseline["model"]["digest"],
+                suite_hash=baseline["suite_hash"],
+            ),
+            runs_per_task=config.evaluation.runs_per_task,
+            threshold=config.evaluation.solved_threshold,
+        )
+        ctx = ProgressContext(
+            model=baseline["model"]["id"],
+            model_digest=baseline["model"]["digest"],
+            baseline_harness_commit=baseline["harness_commit"],
+            harness_commit=head,
+            suite_hash=suite_hash,
+            saddlefit_version=__version__,
+            runs_per_task=config.evaluation.runs_per_task,
+            solved_threshold=config.evaluation.solved_threshold,
+            fit_rounds=state.rounds_done,
+            tutor_calls=state.tutor_calls,
+            tutor_usd=state.tutor_usd,
+            control_evaluations=0,  # control runs only through `report --final`
+        )
+        report = build_progress(progress, ctx)
+        return report, write_progress(report, self.reports, report_id("progress"))
+
+    @staticmethod
+    def _check_comparable(
+        baseline: dict[str, Any], config: Config, state: FitState, suite_hash: str
+    ) -> None:
+        """Refuse a comparison where anything but the harness changed since the baseline."""
+        settings = (config.evaluation.runs_per_task, config.evaluation.solved_threshold)
+        if settings != (baseline["runs_per_task"], baseline["solved_threshold"]):
+            raise UserError(
+                "evaluation settings changed since the baseline (runs per task, solved "
+                "threshold); run `saddlefit baseline` again"
+            )
+        if suite_hash != baseline["suite_hash"]:
+            raise UserError(
+                "the task suite changed since the baseline; run `saddlefit baseline` again"
+            )
+        model = state.student_model or config.student.model
+        digests = {state.student_digest, baseline["model"]["digest"]}
+        if model != baseline["model"]["id"] or (None not in digests and len(digests) > 1):
+            raise UserError(
+                "the student model changed since the baseline; run `saddlefit baseline` again"
+            )
 
     def latest_report(self) -> dict[str, Any]:
         """The newest baseline report's JSON."""

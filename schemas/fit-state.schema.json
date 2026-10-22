@@ -40,6 +40,18 @@
       ],
       "default": null,
       "title": "Student Model"
+    },
+    "tutor_calls": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Tutor Calls",
+      "type": "integer"
+    },
+    "tutor_usd": {
+      "default": 0.0,
+      "minimum": 0.0,
+      "title": "Tutor Usd",
+      "type": "number"
     }
   },
   "required": [

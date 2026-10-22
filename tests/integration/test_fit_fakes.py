@@ -365,3 +365,44 @@ def test_a_failed_round_is_not_counted(tmp_path: Path) -> None:
     with pytest.raises(RuntimeError):
         run_rounds(loop, tmp_path, 1)
     assert load_fit_state(tmp_path).rounds_done == 0
+
+
+def test_tutor_spending_adds_up_across_fits(tmp_path: Path) -> None:
+    loop, _ = make_loop(tmp_path, FakeTutor([USELESS, USELESS]), candidates_per_round=1)
+    first = run_rounds(loop, tmp_path, 1)
+    second = run_rounds(loop, tmp_path, 1)
+    state = load_fit_state(tmp_path)
+    calls = sum(r.tutor_calls for r in first + second)
+    assert calls > 0
+    assert state.tutor_calls == calls
+    assert state.tutor_usd == pytest.approx(sum(r.tutor_usd for r in first + second))
+
+
+def test_a_failed_round_still_records_what_the_tutor_cost(tmp_path: Path) -> None:
+    loop, _ = make_loop(tmp_path, FakeTutor([USELESS, RIGHT]))
+    loop.practice = CrashingPractice(loop.store)
+    with pytest.raises(RuntimeError):
+        run_rounds(loop, tmp_path, 1)
+    state = load_fit_state(tmp_path)
+    assert state.rounds_done == 0
+    assert state.tutor_calls == 2  # both diagnoses were paid for before the crash
+    assert state.tutor_usd > 0
+
+
+class InterruptedPractice(CrashingPractice):
+    """The user presses Ctrl+C during the second candidate's batch run."""
+
+    def run_batch(self, harness_ref: str, task_ids: Sequence[str]) -> BatchResult:
+        try:
+            return super().run_batch(harness_ref, task_ids)
+        except RuntimeError:
+            raise KeyboardInterrupt from None
+
+
+def test_an_interrupted_round_still_records_what_the_tutor_cost(tmp_path: Path) -> None:
+    loop, _ = make_loop(tmp_path, FakeTutor([USELESS, RIGHT]))
+    loop.practice = InterruptedPractice(loop.store)
+    with pytest.raises(KeyboardInterrupt):
+        run_rounds(loop, tmp_path, 1)
+    state = load_fit_state(tmp_path)
+    assert (state.rounds_done, state.tutor_calls) == (0, 2)
