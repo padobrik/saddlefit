@@ -12,10 +12,12 @@ from tests.sandbox.test_baseline import student
 from saddlefit.config import Config, EvaluationConfig, SandboxConfig
 from saddlefit.eval.evaluator import Evaluator
 from saddlefit.eval.leak_guard import GuardedClient, guard_for_suite
+from saddlefit.eval.records import read_any_run
 from saddlefit.harness.store import HarnessStore
 from saddlefit.loops.baseline import RunOutcome
 from saddlefit.loops.practice import DockerPractice, without_control
 from saddlefit.providers.fake import FakeClient
+from saddlefit.storage.runs import find_runs
 from saddlefit.tasks import splits as splits_module
 from saddlefit.tasks.mining import mine
 from saddlefit.tasks.splits import new_lock
@@ -85,12 +87,19 @@ def test_practice_runs_batches_and_compares_held_out(
         with pytest.raises(ValueError, match="not train tasks"):
             practice.run_batch("main", other)
 
+    assert {r.task_id for r in ran} == set(train)  # on_run saw the training runs
+
     # the current harness is run once per commit; each comparison reruns only the candidate
+    runs_root = tmp_path / ".saddlefit" / "runs"
     ran.clear()
+    before = len(find_runs(runs_root))
     first = practice.compare_held_out("main", "main")
     assert (first.wins, first.losses, first.tasks) == (0, 0, len(held_out))
-    assert len(ran) == 2 * len(held_out)
-    ran.clear()
+    assert len(find_runs(runs_root)) - before == 2 * len(held_out)
+    before = len(find_runs(runs_root))
     practice.compare_held_out("main", "main")
-    assert len(ran) == len(held_out)
-    assert {r.task_id for r in ran} == set(held_out)  # never a control task
+    new = find_runs(runs_root)[before:]
+    assert len(new) == len(held_out)
+    # never a control task, and no held-out run reached the caller's callback
+    assert {read_any_run(p)[1].task_id for p in new} == set(held_out)
+    assert ran == []

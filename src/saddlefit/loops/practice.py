@@ -41,6 +41,7 @@ class DockerPractice:
     docker_client: Any
     image: str
     tool_mode: Literal["native", "json"] = "native"
+    # sees training runs only: a held-out run's task ID and outcome stay here (B10)
     on_run: Callable[[RunOutcome], None] | None = None
     _held_out: dict[str, dict[str, bool | None]] = field(default_factory=dict, repr=False)
 
@@ -79,9 +80,13 @@ class DockerPractice:
                 docker_client=self.docker_client,
                 image=self.image,
                 tool_mode=self.tool_mode,
-                on_run=self.on_run,
+                on_run=self._report_training_run,
             )
             return runner.run(metas)
+
+    def _report_training_run(self, run: RunOutcome) -> None:
+        if self.on_run is not None and run.split == "train":
+            self.on_run(run)
 
     def run_batch(self, harness_ref: str, task_ids: Sequence[str]) -> BatchResult:
         metas = self._metas("train", task_ids)
