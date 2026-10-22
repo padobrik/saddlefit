@@ -31,25 +31,33 @@ def run_rounds(
     accepted = state.accepted_since_ablation
     pending: list[str] = []
     model_changed = state.student_model not in {None, loop.student_model}
-    if ablation_due(0, model_changed=model_changed):
+    # also resumes an ablation that a failure interrupted after its round was saved
+    if ablation_due(accepted, model_changed=model_changed):
         pending = [r.proposal_id for r in ablate(loop) if r.pruned]
         accepted = 0
+    done = state.rounds_done
+    save_fit_state(root, _state(done, accepted, loop.student_model))
     reports = []
-    for index in range(state.rounds_done, state.rounds_done + rounds):
+    for index in range(done, done + rounds):
         report = loop.round(index)
         report.pruned, pending = pending, []
         accepted += report.accepted is not None
+        # the round is saved before ablation, so a failing ablation never repeats it
+        save_fit_state(root, _state(index + 1, accepted, loop.student_model))
         if ablation_due(accepted, model_changed=False):
             report.pruned += [r.proposal_id for r in ablate(loop) if r.pruned]
             accepted = 0
-        state = FitState(
-            schema_version=FIT_STATE_SCHEMA_VERSION,
-            rounds_done=index + 1,
-            accepted_since_ablation=accepted,
-            student_model=loop.student_model,
-        )
-        save_fit_state(root, state)  # only a finished round counts
+            save_fit_state(root, _state(index + 1, accepted, loop.student_model))
         reports.append(report)
         if on_round is not None:
             on_round(report)
     return reports
+
+
+def _state(rounds_done: int, accepted: int, student_model: str) -> FitState:
+    return FitState(
+        schema_version=FIT_STATE_SCHEMA_VERSION,
+        rounds_done=rounds_done,
+        accepted_since_ablation=accepted,
+        student_model=student_model,
+    )

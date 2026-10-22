@@ -13,8 +13,9 @@ from tests.integration.test_fit_fakes import (
 )
 
 from saddlefit.harness.store import HarnessStore
-from saddlefit.loops.ablation import ablate, active_changes
+from saddlefit.loops.ablation import AblationResult, ablate, active_changes
 from saddlefit.loops.fit import run_rounds
+from saddlefit.loops.middle import MiddleLoop, RoundReport
 from saddlefit.storage.fit_state import FitState, load_fit_state, save_fit_state
 from saddlefit.storage.library import (
     ChangeRecord,
@@ -147,3 +148,44 @@ def test_the_same_or_a_first_model_does_not_trigger_ablation(
     save_fit_state(tmp_path, FitState(schema_version=1, rounds_done=0, student_model=model))
     (report,) = run_rounds(loop, tmp_path, 1)
     assert report.pruned == []
+
+
+def test_an_interrupted_ablation_resumes_without_repeating_the_round(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    loop, _ = make_loop(tmp_path, FakeTutor([RIGHT, USELESS]), candidates_per_round=1)
+    accept_by_noise(loop.store, tmp_path)
+    save_fit_state(
+        tmp_path,
+        FitState(
+            schema_version=1, rounds_done=0, accepted_since_ablation=2, student_model="student"
+        ),
+    )
+
+    def broken(loop: object) -> list[object]:
+        raise RuntimeError("sandbox died during ablation")
+
+    monkeypatch.setattr("saddlefit.loops.fit.ablate", broken)
+    with pytest.raises(RuntimeError, match="during ablation"):
+        run_rounds(loop, tmp_path, 1)
+    state = load_fit_state(tmp_path)
+    assert (state.rounds_done, state.accepted_since_ablation) == (1, 3)  # the round counted
+
+    monkeypatch.undo()
+    calls: list[str] = []
+    real_round = loop.round
+
+    def spy_ablate(loop: MiddleLoop) -> list[AblationResult]:
+        calls.append("ablate")
+        return ablate(loop)
+
+    def spy_round(index: int) -> RoundReport:
+        calls.append(f"round {index}")
+        return real_round(index)
+
+    monkeypatch.setattr("saddlefit.loops.fit.ablate", spy_ablate)
+    monkeypatch.setattr(loop, "round", spy_round)
+    (report,) = run_rounds(loop, tmp_path, 1)
+    assert calls == ["ablate", "round 1"]  # the pending ablation first, then the next round
+    assert report.pruned == [NOISE_ID]  # the pending ablation ran first
+    assert load_fit_state(tmp_path).rounds_done == 2

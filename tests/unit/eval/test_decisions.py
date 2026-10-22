@@ -53,6 +53,11 @@ COMPARISONS = [
 def test_wins_and_losses(current: str, candidate: str, wins: int, losses: int) -> None:
     result = compare_held_out(outcomes(current), outcomes(candidate))
     assert (result.wins, result.losses, result.tasks) == (wins, losses, len(current))
+    decided = sum(
+        a is not None and b is not None
+        for a, b in zip(outcomes(current).values(), outcomes(candidate).values(), strict=True)
+    )
+    assert result.compared == decided
 
 
 REQUIRED_NET = [
@@ -170,6 +175,15 @@ ABLATION_PRUNES = [
     ("net negative over both", (1, 1), (0, 1), False),
     ("wins and losses everywhere, net zero", (2, 1), (1, 2), True),
 ]
+
+
+def test_ablation_keeps_a_change_when_nothing_was_measured() -> None:
+    nothing = compare_held_out(outcomes("??"), outcomes("S?"))
+    assert (nothing.net, nothing.compared) == (0, 0)
+    assert not ablation_prunes(nothing, nothing)
+    # a conclusive held-out comparison alone is enough to decide
+    held_out = HeldOutComparison(wins=0, losses=0, tasks=6, compared=6)
+    assert ablation_prunes(nothing, held_out)
 
 
 @pytest.mark.parametrize(("name", "train", "held_out", "pruned"), ABLATION_PRUNES)
