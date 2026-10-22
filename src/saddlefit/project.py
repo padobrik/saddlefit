@@ -464,14 +464,17 @@ class Project:
             raise UserError("no control tasks; mine more tasks before `report --final`")
         runner = self._control_runner(basis, docker_client, model_client, model_info, on_run)
         with fit_lock(self.state):
-            tag = self.harness.freeze(date.today())
-            frozen = self.harness.head(tag)
+            # a fit may have run while the environment image was built: read the state again
+            basis = self._report_basis()
+            frozen = self.harness.head()  # main cannot move while the fit lock is held
             baseline_commit = basis.baseline["harness_commit"]
             before, before_tokens = runner.outcomes(baseline_commit, control)
             if self.harness.tree(frozen) == basis.before_tree:
                 after, tokens = before, before_tokens  # the same files: one run is enough
             else:
                 after, tokens = runner.outcomes(frozen, control)
+            # tagged only once control has run, so a failed evaluation leaves no tag
+            tag = self.harness.freeze(date.today(), frozen)
             log = log_control_evaluation(
                 self.state,
                 ControlEvaluation(

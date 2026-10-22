@@ -1,6 +1,7 @@
 """``saddlefit report --final``: control once, on a frozen harness, logged and counted (B10)."""
 
 import json
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -14,7 +15,9 @@ from saddlefit import cli
 from saddlefit.cli import app
 from saddlefit.project import Project
 from saddlefit.providers.base import ModelInfo
+from saddlefit.reports.progress import render_markdown
 from saddlefit.storage.control_log import control_evaluations, load_control_log
+from saddlefit.storage.fit_state import FitState, save_fit_state
 
 pytestmark = pytest.mark.integration
 runner = CliRunner()
@@ -134,3 +137,74 @@ def test_final_refuses_an_incomparable_baseline_before_running_control(
     assert result.exit_code == 1
     assert "evaluation settings changed" in str(result.exception)
     assert control.runs == []
+
+
+def test_a_failed_control_run_leaves_no_tag_and_no_log(
+    project: Project, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class Broken(FakeControl):
+        def outcomes(self, ref: str, tasks: Any) -> tuple[dict[str, bool | None], float]:
+            raise RuntimeError("sandbox died")
+
+    monkeypatch.setattr(Project, "_control_runner", lambda self, *args: Broken(project))
+    with pytest.raises(RuntimeError):
+        project.final_report(docker_client=None, model_client=lambda: None, model_info=None)  # type: ignore[arg-type]
+    assert (
+        subprocess.run(
+            ["git", "tag", "--list", "fit-*"],
+            cwd=project.harness.path,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+        == ""
+    )
+    assert control_evaluations(project.state) == 0
+    assert not (project.state / "fit.lock").exists()
+
+
+def test_the_final_report_reads_the_fit_state_under_the_lock(
+    project: Project, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    control = FakeControl(project)
+
+    def runner_while_a_fit_finishes(self: Project, *args: Any) -> FakeControl:
+        # building the environment image takes minutes; a fit finishes meanwhile
+        save_fit_state(self.state, FitState(schema_version=1, rounds_done=7, tutor_calls=9))
+        return control
+
+    monkeypatch.setattr(Project, "_control_runner", runner_while_a_fit_finishes)
+    report = json.loads(runner.invoke(app, ["--json", "report", "--final"]).output)
+    assert report["fit_rounds"] == 7
+    assert report["tutor"]["calls"] == 9
+
+
+def test_zero_context_efficiency_is_shown_as_zero() -> None:
+    report: dict[str, Any] = {
+        "schema_version": 1,
+        "kind": "final",
+        "model": {"id": "m", "digest": None},
+        "baseline_harness_commit": "a" * 12,
+        "harness_commit": "b" * 12,
+        "suite_hash": "sha256:x",
+        "runs_per_task": 3,
+        "solved_threshold": 2,
+        "fit_rounds": 1,
+        "tutor": {"calls": 0, "usd": 0.0},
+        "control_evaluations": 1,
+        "splits": {},
+        "failure_profile": {},
+        "frozen_tag": "fit-2026-10-22-1",
+        "control": {
+            "tasks": 6,
+            "unmeasured": 0,
+            "before": {"solved": 0, "wilson95": [0.0, 0.39]},
+            "after": {"solved": 0, "wilson95": [0.0, 0.39]},
+            "difference95": [0.0, 0.0],
+            "delegation": {"bugfix": "cloud"},
+            "context_efficiency": 0.0,
+        },
+    }
+    text = render_markdown(report)
+    assert "Context efficiency: 0.0 control successes per 1,000 harness tokens" in text
+    assert "n/a" not in text

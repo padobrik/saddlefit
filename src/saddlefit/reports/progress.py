@@ -118,7 +118,11 @@ def _control_lines(report: dict[str, Any]) -> list[str]:
         f"- After: {_rate(control['after'], n)}",
         f"- Difference (paired bootstrap 95%): {low:+.0%} to {high:+.0%}",
         "- Context efficiency: "
-        + (f"{efficiency} control successes per 1,000 harness tokens" if efficiency else "n/a"),
+        + (
+            "n/a"
+            if efficiency is None
+            else f"{efficiency} control successes per 1,000 harness tokens"
+        ),
         "",
         "| Task type | Delegation |",
         "| --- | --- |",
