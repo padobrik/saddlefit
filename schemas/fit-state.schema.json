@@ -1,6 +1,12 @@
 {
   "additionalProperties": false,
   "properties": {
+    "accepted_since_ablation": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Accepted Since Ablation",
+      "type": "integer"
+    },
     "rounds_done": {
       "minimum": 0,
       "title": "Rounds Done",
@@ -10,6 +16,18 @@
       "const": 1,
       "title": "Schema Version",
       "type": "integer"
+    },
+    "student_model": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Student Model"
     }
   },
   "required": [

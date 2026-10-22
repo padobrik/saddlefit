@@ -30,6 +30,9 @@ class FitState(BaseModel):
 
     schema_version: Literal[1]
     rounds_done: int = Field(ge=0)
+    # ablation runs after every 3 accepted changes and after a change of student model
+    accepted_since_ablation: int = Field(default=0, ge=0)
+    student_model: str | None = None
 
 
 def load_fit_state(root: Path) -> FitState:
