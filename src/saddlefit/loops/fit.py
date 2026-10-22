@@ -36,20 +36,28 @@ def run_rounds(
         pending = [r.proposal_id for r in ablate(loop) if r.pruned]
         accepted = 0
     done = state.rounds_done
-    spent = (state.tutor_calls, state.tutor_usd)
-    save_fit_state(root, _state(done, accepted, loop, spent))
+    base = (state.tutor_calls - loop.spent_calls, state.tutor_usd - loop.spent_usd)
+
+    def spent() -> tuple[int, float]:
+        return (base[0] + loop.spent_calls, base[1] + loop.spent_usd)
+
+    save_fit_state(root, _state(done, accepted, loop, spent()))
     reports = []
     for index in range(done, done + rounds):
-        report = loop.round(index)
+        try:
+            report = loop.round(index)
+        except Exception:
+            # the round does not count, but what its tutor calls cost does
+            save_fit_state(root, _state(index, accepted, loop, spent()))
+            raise
         report.pruned, pending = pending, []
         accepted += report.accepted is not None
-        spent = (spent[0] + report.tutor_calls, spent[1] + report.tutor_usd)
         # the round is saved before ablation, so a failing ablation never repeats it
-        save_fit_state(root, _state(index + 1, accepted, loop, spent))
+        save_fit_state(root, _state(index + 1, accepted, loop, spent()))
         if ablation_due(accepted, model_changed=False):
             report.pruned += [r.proposal_id for r in ablate(loop) if r.pruned]
             accepted = 0
-            save_fit_state(root, _state(index + 1, accepted, loop, spent))
+            save_fit_state(root, _state(index + 1, accepted, loop, spent()))
         reports.append(report)
         if on_round is not None:
             on_round(report)

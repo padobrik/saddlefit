@@ -376,3 +376,14 @@ def test_tutor_spending_adds_up_across_fits(tmp_path: Path) -> None:
     assert calls > 0
     assert state.tutor_calls == calls
     assert state.tutor_usd == pytest.approx(sum(r.tutor_usd for r in first + second))
+
+
+def test_a_failed_round_still_records_what_the_tutor_cost(tmp_path: Path) -> None:
+    loop, _ = make_loop(tmp_path, FakeTutor([USELESS, RIGHT]))
+    loop.practice = CrashingPractice(loop.store)
+    with pytest.raises(RuntimeError):
+        run_rounds(loop, tmp_path, 1)
+    state = load_fit_state(tmp_path)
+    assert state.rounds_done == 0
+    assert state.tutor_calls == 2  # both diagnoses were paid for before the crash
+    assert state.tutor_usd > 0
