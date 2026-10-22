@@ -1105,7 +1105,12 @@ reviews:
           for an optional field is not a format change when the serializer writes that
           field out: a value present in a file keeps its meaning, and only a file that
           omits the field resolves to the new default. Nor is removing a JSON Schema
-          `default` annotation. Pass otherwise.
+          `default` annotation. Free-text harness files (systemprompt.md,
+          tool_guidance.md, EXPERIENCE.md, skills/**, tools/**) carry no schema_version,
+          model or JSON Schema; they are content, not persisted formats, so changing or
+          appending their content needs no bump (ADR 0005). A change to how Saddlefit
+          reads such a file must keep reading what released versions wrote, with a test.
+          Pass otherwise.
   tools:
     ruff:
       enabled: true
