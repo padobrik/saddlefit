@@ -1,3 +1,4 @@
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
@@ -91,5 +92,20 @@ def test_a_lock_being_deleted_on_windows_is_waited_for(
         return real_open(path, flags, *args)
 
     monkeypatch.setattr("saddlefit.storage.control_log.os.open", windows_open)
+    monkeypatch.setattr("saddlefit.storage.control_log._WINDOWS", True)
     log_control_evaluation(tmp_path, evaluation())
     assert control_evaluations(tmp_path) == 1
+
+
+def test_a_permission_problem_elsewhere_is_reported_at_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def denied(path: str, flags: int, *args: Any) -> int:
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr("saddlefit.storage.control_log.os.open", denied)
+    monkeypatch.setattr("saddlefit.storage.control_log._WINDOWS", False)
+    started = time.monotonic()
+    with pytest.raises(EnvironmentFailure, match="cannot create the control-log lock"):
+        log_control_evaluation(tmp_path, evaluation())
+    assert time.monotonic() - started < 1  # no ten-second wait for a lock that is not there

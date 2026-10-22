@@ -26,6 +26,8 @@ CONTROL_LOG_KIND: Final = "control-log"
 CONTROL_LOG_FILE: Final = "control.json"
 CONTROL_LOG_LOCK: Final = "control.lock"
 LOCK_WAIT_S: Final = 10.0
+# Windows answers PermissionError while a released lock file is still being deleted
+_WINDOWS: Final = os.name == "nt"
 
 
 class _Strict(BaseModel):
@@ -69,8 +71,17 @@ def _locked(root: Path) -> Iterator[None]:
         try:
             fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
             break
-        except (FileExistsError, PermissionError):
-            # Windows answers PermissionError while a released lock is still being deleted
+        except PermissionError as exc:
+            if not _WINDOWS:
+                raise EnvironmentFailure(
+                    f"cannot create the control-log lock {path}: {exc}"
+                ) from exc
+            if time.monotonic() >= deadline:
+                raise EnvironmentFailure(
+                    f"the control log is locked or not writable ({path}): {exc}"
+                ) from exc
+            time.sleep(0.05)
+        except FileExistsError:
             if time.monotonic() >= deadline:
                 raise EnvironmentFailure(
                     f"the control log is locked ({path}); if no saddlefit runs, remove that file"
