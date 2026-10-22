@@ -378,3 +378,9 @@ def test_a_hunk_whose_context_does_not_match_is_refused(store: HarnessStore) -> 
     )
     with pytest.raises(HarnessStoreError, match="git apply failed"):
         store.propose("p9", patch, "more retries")
+
+
+def test_texts_are_the_allowlisted_files(store: HarnessStore) -> None:
+    texts = store.texts()
+    assert set(texts) == {"systemprompt.md", "tool_guidance.md", "EXPERIENCE.md", "loop.yaml"}
+    assert texts["EXPERIENCE.md"] == "# Lessons\n"

@@ -269,6 +269,16 @@ class HarnessStore:
         """Tag ``ref``, for example the harness a release was measured with."""
         self._git("tag", _checked(_REF, name, "tag name"), _checked(_REF, ref, "ref"))
 
+    def texts(self, ref: str = MAIN) -> dict[str, str]:
+        """Every allowlisted harness file at ``ref`` as text, keyed by path."""
+        _checked(_REF, ref, "ref")
+        names = self._git("ls-tree", "-r", "-z", "--name-only", "--full-tree", ref).split("\0")
+        return {
+            name: self.read(name, ref)
+            for name in sorted(n for n in names if n and not disallowed([n]))
+            if not name.endswith("/.gitkeep")
+        }
+
     def read(self, path: str, ref: str = MAIN) -> str:
         """One harness file's committed text at ``ref``."""
         _checked(_REF, ref, "ref")
