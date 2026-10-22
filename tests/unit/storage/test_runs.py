@@ -19,6 +19,7 @@ from saddlefit.storage.runs import (
     RunEvent,
     RunSummary,
     RunWriter,
+    UnfinishedRun,
     find_runs,
     new_run_id,
     read_run,
@@ -113,11 +114,29 @@ def test_reader_requires_a_summary_last(tmp_path: Path) -> None:
         + "\n",
         encoding="utf-8",
     )
-    with pytest.raises(ValueError, match="no summary"):
+    with pytest.raises(UnfinishedRun, match="before its summary"):
         read_run(path)
     path.write_text("", encoding="utf-8")
     with pytest.raises(ValueError, match="empty"):
         read_run(path)
+
+
+def test_a_record_cut_off_mid_line_is_unfinished(tmp_path: Path) -> None:
+    run_id = new_run_id()
+    writer = RunWriter(tmp_path, run_id, now=NOW)
+    writer.event("error", {"kind": "x", "message": "y"})
+    writer.finish(summary(run_id))
+    whole = writer.path.read_text(encoding="utf-8")
+    writer.path.write_text(whole[:-10], encoding="utf-8")  # the summary line, cut off
+    with pytest.raises(UnfinishedRun):
+        read_run(writer.path)
+    writer.path.write_text(whole.splitlines()[0][:-10], encoding="utf-8")  # the only line
+    with pytest.raises(UnfinishedRun):
+        read_run(writer.path)
+    # a broken line that was written out whole is corruption, not an interruption
+    writer.path.write_text(whole[:20] + "\n" + whole, encoding="utf-8")
+    with pytest.raises(json.JSONDecodeError):
+        read_run(writer.path)
 
 
 @pytest.mark.usefixtures("isolated_registry")

@@ -16,7 +16,7 @@ from typing import Any
 
 from saddlefit.eval.records import read_any_run
 from saddlefit.eval.statistics import paired_bootstrap, wilson
-from saddlefit.storage.runs import RunSummary, find_runs
+from saddlefit.storage.runs import RunSummary, UnfinishedRun, find_runs
 
 SPLITS = ("train", "held_out")
 
@@ -74,7 +74,10 @@ def harness_progress(
     runs: dict[tuple[str, str, str], list[RunSummary]] = defaultdict(list)
     trees: dict[str, str | None] = {}
     for path in find_runs(runs_root):  # oldest first: ULIDs sort by time
-        _, summary = read_any_run(path)
+        try:
+            _, summary = read_any_run(path)
+        except UnfinishedRun:
+            continue  # a run cut off by a crash has no outcome to compare
         if summary.split not in SPLITS or not comparable.admits(summary):
             continue  # control runs are reported only by `report --final`
         commit = summary.harness_commit
