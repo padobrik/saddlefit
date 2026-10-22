@@ -13,6 +13,7 @@ from typer.testing import CliRunner
 
 from saddlefit import cli
 from saddlefit.cli import app
+from saddlefit.errors import UserError
 from saddlefit.project import Project
 from saddlefit.providers.base import ModelInfo
 from saddlefit.reports.progress import render_markdown
@@ -22,6 +23,7 @@ from saddlefit.storage.fit_state import FitState, save_fit_state
 pytestmark = pytest.mark.integration
 runner = CliRunner()
 
+LIVE = ModelInfo(provider="fake", model="qwen3:8b", digest="sha256:m")
 CONTROL = [SimpleNamespace(id=f"c{i}", split="control", type="bugfix") for i in range(6)]
 TRAIN = [SimpleNamespace(id="t0", split="train", type="bugfix")]
 LESSON = (
@@ -51,9 +53,8 @@ def project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Project:
     project.init()
     monkeypatch.chdir(repo)
     monkeypatch.setattr(Project, "tasks", lambda self: CONTROL + TRAIN)
-    monkeypatch.setattr(
-        cli, "_student", lambda p: (ModelInfo(provider="fake", model="m"), lambda: None)
-    )
+    model = ModelInfo(provider="fake", model=project.config().student.model, digest="sha256:m")
+    monkeypatch.setattr(cli, "_student", lambda p: (model, lambda: None))
     monkeypatch.setattr(cli, "_docker", object)
     fake_baseline(project, project.harness.head())
     return project
@@ -148,7 +149,7 @@ def test_a_failed_control_run_leaves_no_tag_and_no_log(
 
     monkeypatch.setattr(Project, "_control_runner", lambda self, *args: Broken(project))
     with pytest.raises(RuntimeError):
-        project.final_report(docker_client=None, model_client=lambda: None, model_info=None)  # type: ignore[arg-type]
+        project.final_report(docker_client=None, model_client=lambda: None, model_info=LIVE)  # type: ignore[arg-type]
     assert (
         subprocess.run(
             ["git", "tag", "--list", "fit-*"],
@@ -208,3 +209,35 @@ def test_zero_context_efficiency_is_shown_as_zero() -> None:
     text = render_markdown(report)
     assert "Context efficiency: 0.0 control successes per 1,000 harness tokens" in text
     assert "n/a" not in text
+
+
+@pytest.mark.parametrize(
+    "live",
+    [
+        ModelInfo(provider="fake", model="llama3:8b", digest="sha256:m"),
+        ModelInfo(provider="fake", model="qwen3:8b", digest="sha256:new-weights"),
+    ],
+)
+def test_final_refuses_a_live_model_other_than_the_baseline(
+    project: Project, monkeypatch: pytest.MonkeyPatch, live: ModelInfo
+) -> None:
+    control = use_fake_control(project, monkeypatch)
+    with pytest.raises(UserError, match="not the baseline's"):
+        project.final_report(docker_client=None, model_client=lambda: None, model_info=live)  # type: ignore[arg-type]
+    assert control.runs == []
+
+
+def test_final_refuses_a_suite_that_changed_while_preparing(
+    project: Project, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    control = FakeControl(project)
+
+    def runner_while_tasks_are_mined(self: Project, *args: Any) -> FakeControl:
+        monkeypatch.setattr(Project, "tasks", lambda self: CONTROL[:3] + TRAIN)
+        return control
+
+    monkeypatch.setattr(Project, "_control_runner", runner_while_tasks_are_mined)
+    with pytest.raises(UserError, match="changed while"):
+        project.final_report(docker_client=None, model_client=lambda: None, model_info=LIVE)  # type: ignore[arg-type]
+    assert control.runs == []
+    assert control_evaluations(project.state) == 0

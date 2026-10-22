@@ -67,6 +67,16 @@ from saddlefit.tasks.splits import new_lock
 from saddlefit.tasks.suite import SuitePaths, load_lock, load_meta, materialize, save_lock
 
 
+def _check_live_model(baseline: dict[str, Any], model_info: ModelInfo) -> None:
+    """Control must run on the baseline's model: same name, and same digest when both known."""
+    digests = {model_info.digest, baseline["model"]["digest"]}
+    if model_info.model != baseline["model"]["id"] or (None not in digests and len(digests) > 1):
+        raise UserError(
+            f"the student model is {model_info.model} ({model_info.digest or 'no digest'}), "
+            f"not the baseline's {baseline['model']['id']}; run `saddlefit baseline` again"
+        )
+
+
 @dataclass(frozen=True)
 class ReportBasis:
     """What a report compares against: the latest baseline, checked as still comparable."""
@@ -459,13 +469,24 @@ class Project:
         and the evaluation is logged and counted. Holds the fit lock throughout.
         """
         basis = self._report_basis()  # refuse an incomparable baseline before running anything
+        _check_live_model(basis.baseline, model_info)  # the model that will actually run
         control = [m for m in self.tasks() if m.split == "control"]
         if not control:
             raise UserError("no control tasks; mine more tasks before `report --final`")
         runner = self._control_runner(basis, docker_client, model_client, model_info, on_run)
         with fit_lock(self.state):
-            # a fit may have run while the environment image was built: read the state again
-            basis = self._report_basis()
+            # a fit, a new baseline or new tasks may have come while the image was built
+            fresh = self._report_basis()
+            fresh_control = [m for m in self.tasks() if m.split == "control"]
+            if (fresh.suite_hash, fresh.baseline["harness_commit"]) != (
+                basis.suite_hash,
+                basis.baseline["harness_commit"],
+            ) or [m.id for m in fresh_control] != [m.id for m in control]:
+                raise UserError(
+                    "the task suite or the baseline changed while `report --final` was "
+                    "preparing; run it again"
+                )
+            basis = fresh
             frozen = self.harness.head()  # main cannot move while the fit lock is held
             baseline_commit = basis.baseline["harness_commit"]
             before, before_tokens = runner.outcomes(baseline_commit, control)
