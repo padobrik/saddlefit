@@ -62,6 +62,15 @@ class FitLocked(UserError):
     """Another ``fit`` is running on this project."""
 
 
+def ensure_unlocked(root: Path) -> None:
+    """Raise ``FitLocked`` while a fit holds the lock; takes nothing itself."""
+    path = root / FIT_LOCK_FILE
+    if path.exists():
+        raise FitLocked(
+            f"another fit is running on this project ({path}); if none is, remove that file"
+        )
+
+
 @contextlib.contextmanager
 def fit_lock(root: Path) -> Iterator[None]:
     """Hold the project's fit lock; parallel fits would share the store and the round count.

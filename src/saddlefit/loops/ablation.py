@@ -9,12 +9,15 @@ as ``pruned``. Held-out results arrive as aggregates only, as in a round (B10).
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from dataclasses import dataclass
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, field
+from datetime import date
+from pathlib import Path
+from typing import Protocol
 
 from saddlefit.eval.decisions import HeldOutComparison, ablation_prunes, compare_held_out
-from saddlefit.harness.store import MAIN, HarnessStoreError
-from saddlefit.loops.middle import BatchResult, MiddleLoop
+from saddlefit.harness.store import MAIN, HarnessStore, HarnessStoreError
+from saddlefit.loops.middle import BatchResult, Practice
 from saddlefit.storage.library import (
     CHANGE_SCHEMA_VERSION,
     ChangeRecord,
@@ -24,6 +27,38 @@ from saddlefit.storage.library import (
     read_records,
     write_record,
 )
+
+
+class Ablatable(Protocol):
+    """What ablation needs; a ``MiddleLoop`` has it, and ``prune`` builds it without a tutor."""
+
+    @property
+    def store(self) -> HarnessStore: ...
+    @property
+    def practice(self) -> Practice: ...
+    @property
+    def root(self) -> Path: ...
+    @property
+    def train_tasks(self) -> Sequence[str]: ...
+    @property
+    def student_model(self) -> str: ...
+    @property
+    def student_digest(self) -> str | None: ...
+    @property
+    def today(self) -> Callable[[], date]: ...
+
+
+@dataclass
+class AblationTarget:
+    """The project as ablation sees it, for ``prune``: no tutor, no API key."""
+
+    store: HarnessStore
+    practice: Practice
+    root: Path
+    train_tasks: Sequence[str]
+    student_model: str
+    student_digest: str | None
+    today: Callable[[], date] = field(default=date.today)
 
 
 @dataclass(frozen=True)
@@ -45,7 +80,7 @@ def _solved(result: BatchResult) -> int:
     return sum(v is True for v in result.solved.values())
 
 
-def ablate(loop: MiddleLoop) -> list[AblationResult]:
+def ablate(loop: Ablatable) -> list[AblationResult]:
     """Test every active change, newest first, and prune those that do not help."""
     train = sorted(loop.train_tasks)
     results = []
@@ -91,7 +126,7 @@ def ablate(loop: MiddleLoop) -> list[AblationResult]:
 
 
 def _pruned_record(
-    loop: MiddleLoop,
+    loop: Ablatable,
     *,
     accepted: ChangeRecord,
     commit: str,

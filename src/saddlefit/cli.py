@@ -15,6 +15,7 @@ from saddlefit import __version__
 from saddlefit.config import ConfigError, SandboxConfig, StudentConfig, load_config
 from saddlefit.doctor import doctor_for, render
 from saddlefit.errors import EnvironmentFailure, SaddlefitError, UserError
+from saddlefit.loops.ablation import AblationResult
 from saddlefit.loops.baseline import RunOutcome
 from saddlefit.loops.middle import RoundReport
 from saddlefit.project import Project
@@ -311,6 +312,44 @@ def fit(
         for r in reports
     ]
     _emit(ctx, data, f"{len(reports)} rounds; {sum(bool(r.accepted) for r in reports)} accepted")
+
+
+def ablation_line(result: AblationResult) -> str:
+    """One tested change, as the console shows it."""
+    if result.skipped is not None:
+        return f"skipped {result.proposal_id}: {result.skipped}"
+    verdict = "pruned" if result.pruned else "kept"
+    train = result.train.net if result.train else 0
+    held_out = result.held_out.net if result.held_out else 0
+    return (
+        f"{verdict} {result.proposal_id} "
+        f"(without it: training net {train:+d}, held-out net {held_out:+d})"
+    )
+
+
+@app.command()
+def prune(ctx: typer.Context) -> None:
+    """Ablate now: test every accepted change and drop those that do not help."""
+    project = _project()
+    if project.nothing_to_prune():
+        _emit(ctx, [], "no accepted changes to test")  # no model runner or Docker needed
+        return
+    model_info, model_client = _student(project)
+    results = project.prune(
+        docker_client=_docker(), model_client=model_client, model_info=model_info
+    )
+    lines = [ablation_line(r) for r in results] or ["no accepted changes to test"]
+    data = [
+        {
+            "proposal_id": r.proposal_id,
+            "pruned": r.pruned,
+            "skipped": r.skipped,
+            "train_net": r.train.net if r.train else None,
+            "held_out_net": r.held_out.net if r.held_out else None,
+        }
+        for r in results
+    ]
+    _emit(ctx, data, "\n".join(lines))
 
 
 @app.command()

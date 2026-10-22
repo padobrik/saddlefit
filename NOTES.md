@@ -155,3 +155,6 @@ Assumptions taken where the spec leaves a detail open. Deviations from the spec 
   counts are with (before) and without (after) it. The trigger state, accepted changes since
   the last ablation and the student model and digest of the last fit, lives in `fit.json`;
   a new digest under the same model name counts as a model change when both are known.
+- **`prune`.** Ablation on demand, as `fit` would run it: only the student runs, so `prune`
+  needs no tutor and no API key. It holds the fit lock and resets the count of accepted
+  changes since the last ablation; the round count and student model stay as they are.
