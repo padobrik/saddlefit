@@ -69,7 +69,8 @@ def _locked(root: Path) -> Iterator[None]:
         try:
             fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
             break
-        except FileExistsError:
+        except (FileExistsError, PermissionError):
+            # Windows answers PermissionError while a released lock is still being deleted
             if time.monotonic() >= deadline:
                 raise EnvironmentFailure(
                     f"the control log is locked ({path}); if no saddlefit runs, remove that file"

@@ -75,3 +75,21 @@ def test_malformed_evaluations_are_refused(changes: dict[str, Any]) -> None:
 
 def test_the_control_log_schema_is_generated() -> None:
     assert SCHEMA_MODELS["control-log"] is ControlLog
+
+
+def test_a_lock_being_deleted_on_windows_is_waited_for(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import os  # noqa: PLC0415
+
+    real_open = os.open
+    refusals = [PermissionError(13, "Permission denied")]
+
+    def windows_open(path: str, flags: int, *args: Any) -> int:
+        if refusals and str(path).endswith("control.lock"):
+            raise refusals.pop()
+        return real_open(path, flags, *args)
+
+    monkeypatch.setattr("saddlefit.storage.control_log.os.open", windows_open)
+    log_control_evaluation(tmp_path, evaluation())
+    assert control_evaluations(tmp_path) == 1
