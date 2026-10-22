@@ -241,3 +241,24 @@ def test_final_refuses_a_suite_that_changed_while_preparing(
         project.final_report(docker_client=None, model_client=lambda: None, model_info=LIVE)  # type: ignore[arg-type]
     assert control.runs == []
     assert control_evaluations(project.state) == 0
+
+
+@pytest.mark.parametrize("change", ["settings", "baseline digest"])
+def test_final_refuses_a_config_or_baseline_that_changed_while_preparing(
+    project: Project, monkeypatch: pytest.MonkeyPatch, change: str
+) -> None:
+    control = FakeControl(project)
+
+    def runner_while_things_change(self: Project, *args: Any) -> FakeControl:
+        if change == "settings":  # new settings and a new baseline that matches them
+            config = self.config_path
+            config.write_text(config.read_text().replace("runs_per_task: 3", "runs_per_task: 5"))
+            fake_baseline(self, self.harness.head(), runs_per_task=5)
+        else:
+            fake_baseline(self, self.harness.head(), model={"id": "qwen3:8b", "digest": "sha256:z"})
+        return control
+
+    monkeypatch.setattr(Project, "_control_runner", runner_while_things_change)
+    with pytest.raises(UserError, match="changed while"):
+        project.final_report(docker_client=None, model_client=lambda: None, model_info=LIVE)  # type: ignore[arg-type]
+    assert control.runs == []

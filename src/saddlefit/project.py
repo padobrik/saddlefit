@@ -477,15 +477,19 @@ class Project:
         with fit_lock(self.state):
             # a fit, a new baseline or new tasks may have come while the image was built
             fresh = self._report_basis()
-            fresh_control = [m for m in self.tasks() if m.split == "control"]
-            if (fresh.suite_hash, fresh.baseline["harness_commit"]) != (
+            fresh_control = [m.id for m in self.tasks() if m.split == "control"]
+            # the runner was built from the old inputs: any change to them refuses the run
+            if (fresh.config, fresh.baseline, fresh.suite_hash, fresh_control) != (
+                basis.config,
+                basis.baseline,
                 basis.suite_hash,
-                basis.baseline["harness_commit"],
-            ) or [m.id for m in fresh_control] != [m.id for m in control]:
+                [m.id for m in control],
+            ):
                 raise UserError(
-                    "the task suite or the baseline changed while `report --final` was "
-                    "preparing; run it again"
+                    "the configuration, the task suite or the baseline changed while "
+                    "`report --final` was preparing; run it again"
                 )
+            _check_live_model(fresh.baseline, model_info)
             basis = fresh
             frozen = self.harness.head()  # main cannot move while the fit lock is held
             baseline_commit = basis.baseline["harness_commit"]
