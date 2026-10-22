@@ -46,7 +46,7 @@ def run_rounds(
     for index in range(done, done + rounds):
         try:
             report = loop.round(index)
-        except Exception:
+        except BaseException:  # Ctrl+C included
             # the round does not count, but what its tutor calls cost does
             save_fit_state(root, _state(index, accepted, loop, spent()))
             raise

@@ -387,3 +387,22 @@ def test_a_failed_round_still_records_what_the_tutor_cost(tmp_path: Path) -> Non
     assert state.rounds_done == 0
     assert state.tutor_calls == 2  # both diagnoses were paid for before the crash
     assert state.tutor_usd > 0
+
+
+class InterruptedPractice(CrashingPractice):
+    """The user presses Ctrl+C during the second candidate's batch run."""
+
+    def run_batch(self, harness_ref: str, task_ids: Sequence[str]) -> BatchResult:
+        try:
+            return super().run_batch(harness_ref, task_ids)
+        except RuntimeError:
+            raise KeyboardInterrupt from None
+
+
+def test_an_interrupted_round_still_records_what_the_tutor_cost(tmp_path: Path) -> None:
+    loop, _ = make_loop(tmp_path, FakeTutor([USELESS, RIGHT]))
+    loop.practice = InterruptedPractice(loop.store)
+    with pytest.raises(KeyboardInterrupt):
+        run_rounds(loop, tmp_path, 1)
+    state = load_fit_state(tmp_path)
+    assert (state.rounds_done, state.tutor_calls) == (0, 2)
