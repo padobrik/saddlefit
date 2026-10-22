@@ -41,7 +41,12 @@ def test_the_spec_example_validates() -> None:
 def test_write_then_read_in_order(tmp_path: Path) -> None:
     write_record(tmp_path, record(id="2026-10-22-001"))
     write_record(tmp_path, record(id="2026-10-21-002", status="rejected", held_out=None))
-    assert [r.id for r in read_records(tmp_path)] == ["2026-10-21-002", "2026-10-22-001"]
+    write_record(tmp_path, record(id="2026-10-21-003", status="pruned", held_out=None))
+    assert [r.id for r in read_records(tmp_path)] == [
+        "2026-10-21-002",
+        "2026-10-21-003",
+        "2026-10-22-001",
+    ]
 
 
 def test_a_record_is_never_overwritten(tmp_path: Path) -> None:
@@ -49,6 +54,19 @@ def test_a_record_is_never_overwritten(tmp_path: Path) -> None:
     with pytest.raises(FileExistsError):
         write_record(tmp_path, record(status="pruned"))
     assert read_records(tmp_path)[0].status == "accepted"
+
+
+def test_a_failed_write_leaves_no_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def broken_fsync(fd: int) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr("saddlefit.storage.library.os.fsync", broken_fsync)
+    with pytest.raises(OSError, match="disk full"):
+        write_record(tmp_path, record())
+    assert list((tmp_path / "library").iterdir()) == []
+    monkeypatch.undo()
+    write_record(tmp_path, record())  # the ID is still free
+    assert len(read_records(tmp_path)) == 1
 
 
 def test_ids_count_per_day(tmp_path: Path) -> None:
@@ -77,6 +95,11 @@ def test_the_last_id_of_a_day_is_999(tmp_path: Path) -> None:
         {"train": {"before": -1, "after": 0, "tasks": 6, "runs_per_task": 3}},
         {"held_out": {"wins": 1, "losses": 0, "tasks": 6, "runs_per_task": 3, "task_ids": ["x"]}},
         {"extra": 1},
+        {"id": "2026-99-99-001"},
+        {"id": "2026-10-22-000"},
+        {"train": {"before": 7, "after": 8, "tasks": 6, "runs_per_task": 3}},
+        {"held_out": {"wins": 4, "losses": 3, "tasks": 6, "runs_per_task": 3}},
+        {"status": "accepted", "held_out": None},
     ],
 )
 def test_malformed_records_are_refused(changes: dict[str, Any]) -> None:
