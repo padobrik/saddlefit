@@ -42,7 +42,12 @@ from saddlefit.reports.baseline import ReportContext
 from saddlefit.reports.baseline import build as build_report
 from saddlefit.reports.baseline import write as write_report
 from saddlefit.sandbox.environment import ensure_environment
-from saddlefit.storage.fit_state import fit_lock, load_fit_state, save_fit_state
+from saddlefit.storage.fit_state import (
+    ensure_unlocked,
+    fit_lock,
+    load_fit_state,
+    save_fit_state,
+)
 from saddlefit.storage.library import ChangeRecord, read_records
 from saddlefit.tasks.mining import STATE_DIR, MiningReport, Runner, mine
 from saddlefit.tasks.models import TaskMeta
@@ -338,7 +343,7 @@ class Project:
         Only the student runs, so no tutor and no API key are needed. Holds the fit lock and
         resets the count of accepted changes since the last ablation.
         """
-        if not self.active_changes():
+        if self.nothing_to_prune():
             return []  # nothing to test, so no tasks, model or Docker are needed
         practice, train = self._practice(
             docker_client=docker_client,
@@ -359,6 +364,13 @@ class Project:
             state = load_fit_state(self.state)
             save_fit_state(self.state, state.model_copy(update={"accepted_since_ablation": 0}))
         return results
+
+    def nothing_to_prune(self) -> bool:
+        """True when no accepted change is left to test; an uninitialised project or a
+        running fit is an error, not "nothing to do"."""
+        self.config()  # raises with a pointer to `saddlefit init`
+        ensure_unlocked(self.state)
+        return not self.active_changes()
 
     def active_changes(self) -> list[ChangeRecord]:
         """Accepted changes not pruned since, oldest first."""

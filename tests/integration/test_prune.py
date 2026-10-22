@@ -17,7 +17,7 @@ from saddlefit.eval.decisions import HeldOutComparison
 from saddlefit.loops.ablation import AblationResult
 from saddlefit.project import Project
 from saddlefit.providers.base import ModelInfo
-from saddlefit.storage.fit_state import FitState, load_fit_state, save_fit_state
+from saddlefit.storage.fit_state import FitLocked, FitState, load_fit_state, save_fit_state
 from saddlefit.storage.library import read_records
 
 pytestmark = pytest.mark.integration
@@ -138,3 +138,24 @@ def test_project_prune_with_nothing_accepted_needs_no_tasks(project: Project) ->
 )
 def test_ablation_line(result: AblationResult, line: str) -> None:
     assert ablation_line(result) == line
+
+
+def test_prune_with_nothing_accepted_still_respects_a_running_fit(
+    project: Project, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (project.state / "fit.lock").write_text("123\n")
+    result = runner.invoke(app, ["prune"])
+    assert result.exit_code == 1
+    assert "another fit is running" in str(result.exception)
+    with pytest.raises(FitLocked):
+        project.prune(docker_client=None, model_client=lambda: None, model_info=None)  # type: ignore[arg-type]
+
+
+def test_prune_in_an_uninitialised_project_points_to_init(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = build(tmp_path / "plain")
+    monkeypatch.chdir(repo)
+    result = runner.invoke(app, ["prune"])
+    assert result.exit_code == 1
+    assert "saddlefit init" in str(result.exception)
