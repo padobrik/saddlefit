@@ -30,7 +30,9 @@ from saddlefit.harness.store import HarnessStore
 from saddlefit.providers.base import Message
 
 _NAME: Final = re.compile(r"[^a-z0-9]+")
-MAX_NAME: Final = 64
+MAX_NAME: Final = 64  # Agent Skills limits
+MAX_DESCRIPTION: Final = 1024
+MAX_PROJECT_IN_DESCRIPTION: Final = 200
 EXPORT_SCHEMA_VERSION: Final = 1
 MANIFEST: Final = "export.json"
 
@@ -60,9 +62,12 @@ def _free_name(name: str, taken: set[str]) -> str:
     if name not in taken:
         return name
     number = 2
-    while f"{name}-{number}" in taken:
+    while True:
+        suffix = f"-{number}"
+        candidate = name[: MAX_NAME - len(suffix)].rstrip("-") + suffix  # stays within 64
+        if candidate not in taken:
+            return candidate
         number += 1
-    return f"{name}-{number}"
 
 
 def _main_skill(name: str, harness: Path, project: str, model: str, commit: str) -> str:
@@ -77,12 +82,13 @@ def _main_skill(name: str, harness: Path, project: str, model: str, commit: str)
     if gate.run:
         rules.append(f"- Before you finish, run `{gate.run}`; finish only when it passes.")
     lessons = rank_lessons(read("EXPERIENCE.md"), model, "")
+    shown = project[:MAX_PROJECT_IN_DESCRIPTION]
+    description = (
+        f"Working rules for {shown}, fitted by Saddlefit for {model}. "
+        f"Use it when solving coding tasks in {shown}."
+    )[:MAX_DESCRIPTION]
     frontmatter = yaml.safe_dump(
-        {
-            "name": name,
-            "description": f"Working rules for {project}, fitted by Saddlefit for {model}. "
-            f"Use it when solving coding tasks in {project}.",
-        },
+        {"name": name, "description": description},
         sort_keys=False,
         allow_unicode=True,
         width=1000,

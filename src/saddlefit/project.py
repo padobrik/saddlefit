@@ -565,8 +565,7 @@ class Project:
         """Export the harness at ``ref`` as Agent Skills (B14); return the skill folders."""
         config = self.config()
         state = load_fit_state(self.state)
-        # a random suffix keeps two exports in the same second apart; nothing is overwritten
-        dest = out or self.state / "exports" / f"{report_id('skill')}-{secrets.token_hex(3)}"
+        dest = out or self._new_export_dir()
         try:
             return export_skill(
                 self.harness,
@@ -580,6 +579,15 @@ class Project:
             raise UserError(str(exc)) from exc
         except HarnessStoreError as exc:
             raise UserError(f"cannot export {ref!r}: {exc}") from exc
+
+    def _new_export_dir(self) -> Path:
+        """A fresh folder under ``exports/``; a random suffix keeps same-second exports apart."""
+        stamp = report_id("skill")
+        for _ in range(16):
+            path = self.state / "exports" / f"{stamp}-{secrets.token_hex(3)}"
+            if not path.exists():
+                return path
+        raise UserError("could not choose a free export folder; pass --out")
 
     def _report_basis(self) -> ReportBasis:
         """The latest baseline, checked to be comparable with the project as it is now."""

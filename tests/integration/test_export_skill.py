@@ -120,14 +120,17 @@ def test_a_canary_stops_the_export(
     assert not out.exists()
 
 
-def test_default_export_location(project: Project) -> None:
+def test_default_export_location(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
+    # the same second for both exports, and a suffix that repeats once
+    monkeypatch.setattr("saddlefit.project.report_id", lambda kind: f"{kind}-20261022T120000Z")
+    suffixes = iter(["aaaaaa", "aaaaaa", "bbbbbb"])
+    monkeypatch.setattr("saddlefit.project.secrets.token_hex", lambda n: next(suffixes))
     assert runner.invoke(app, ["export"]).exit_code == 0
-    assert runner.invoke(app, ["export"]).exit_code == 0  # in the same second
-    folders = sorted((project.state / "exports").iterdir())
-    assert len(folders) == 2
+    assert runner.invoke(app, ["export"]).exit_code == 0
+    folders = sorted(p.name for p in (project.state / "exports").iterdir())
+    assert folders == ["skill-20261022T120000Z-aaaaaa", "skill-20261022T120000Z-bbbbbb"]
     for folder in folders:
-        assert folder.name.startswith("skill-")
-        assert (folder / "saddlefit-repo" / "SKILL.md").exists()
+        assert (project.state / "exports" / folder / "saddlefit-repo" / "SKILL.md").exists()
 
 
 def frontmatter(text: str) -> dict[str, object]:
@@ -182,3 +185,19 @@ def test_a_harness_skill_with_the_generated_name_is_kept(project: Project, tmp_p
 )
 def test_skill_names(project_name: str, name: str) -> None:
     assert skill_name(project_name) == name
+
+
+def test_long_names_stay_within_the_skill_limits(project: Project, tmp_path: Path) -> None:
+    long_project = "x" * 2000
+    name = skill_name(long_project)
+    clash = new_file(f"skills/{name}/SKILL.md", ["---", f"name: {name}", "description: x", "---"])
+    project.harness.propose("p4", clash, "clash")
+    project.harness.accept("p4")
+    out = tmp_path / "out"
+    export_skill(project.harness, "main", out, project=long_project, model="m", guard=LeakGuard({}))
+    generated = [p for p in out.iterdir() if p.name.startswith("saddlefit-") and p.name != name]
+    (main,) = generated
+    meta = frontmatter((main / "SKILL.md").read_text(encoding="utf-8"))
+    assert len(str(meta["name"])) <= 64
+    assert str(meta["name"]).endswith("-2")
+    assert len(str(meta["description"])) <= 1024
