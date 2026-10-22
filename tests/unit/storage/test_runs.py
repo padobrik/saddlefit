@@ -133,9 +133,16 @@ def test_a_record_cut_off_mid_line_is_unfinished(tmp_path: Path) -> None:
     writer.path.write_text(whole.splitlines()[0][:-10], encoding="utf-8")  # the only line
     with pytest.raises(UnfinishedRun):
         read_run(writer.path)
+    # cut inside a multibyte character, after a complete event
+    writer.path.write_bytes(whole.splitlines(keepends=True)[0].encode() + "{\"é".encode()[:-1])
+    with pytest.raises(UnfinishedRun):
+        read_run(writer.path)
     # a broken line that was written out whole is corruption, not an interruption
     writer.path.write_text(whole[:20] + "\n" + whole, encoding="utf-8")
     with pytest.raises(json.JSONDecodeError):
+        read_run(writer.path)
+    writer.path.write_text('{"schema_version": 1, "type": "bogus"}\n', encoding="utf-8")
+    with pytest.raises(ValidationError):
         read_run(writer.path)
 
 
