@@ -93,3 +93,17 @@ def tie_break(candidates: Iterable[Candidate]) -> Candidate | None:
         key=lambda c: (-c.held_out.net, c.context_tokens_added, c.order),
         default=None,
     )
+
+
+ABLATION_EVERY: Final = 3
+
+
+def ablation_due(accepted_since_last: int, model_changed: bool) -> bool:
+    """Ablate after every 3 accepted changes and after any change of the student model."""
+    return model_changed or accepted_since_last >= ABLATION_EVERY
+
+
+def ablation_prunes(train: HeldOutComparison, held_out: HeldOutComparison) -> bool:
+    """Drop a change when removing it loses nothing: ``wins - losses >= 0`` over training
+    plus held-out tasks, comparing the harness without the change against the current one."""
+    return train.net + held_out.net >= 0
