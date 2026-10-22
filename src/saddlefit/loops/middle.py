@@ -277,7 +277,11 @@ class MiddleLoop:
             return 0
         decision = Decision(t.proposal, status, before, t.train_after, tasks)
         try:
-            result = reflect(self.tutor, decision, self.store.read("EXPERIENCE.md"))
+            experience = self.store.read("EXPERIENCE.md")
+        except HarnessStoreError:
+            return 0  # an accepted change may have removed the file; no lesson then
+        try:
+            result = reflect(self.tutor, decision, experience)
         except ProviderError as exc:
             budget.charge(exc.usage)
             return 0

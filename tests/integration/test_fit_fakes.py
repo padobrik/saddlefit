@@ -330,3 +330,17 @@ def test_a_failed_lesson_does_not_stop_the_round(
     assert report.accepted is not None
     assert len(report.records) == 2
     assert report.lessons == 0
+
+
+DROP_EXPERIENCE = RIGHT + (
+    "diff --git a/EXPERIENCE.md b/EXPERIENCE.md\ndeleted file mode 100644\n"
+    "--- a/EXPERIENCE.md\n+++ /dev/null\n@@ -1 +0,0 @@\n-# Lessons\n"
+)
+
+
+def test_a_round_survives_a_winner_that_removes_experience_md(tmp_path: Path) -> None:
+    loop, _ = make_loop(tmp_path, FakeTutor([DROP_EXPERIENCE]), candidates_per_round=1)
+    report = loop.round(0)
+    assert report.accepted == report.records[0].proposal_id
+    assert report.lessons == 0
+    assert "EXPERIENCE.md" not in loop.store.texts()
