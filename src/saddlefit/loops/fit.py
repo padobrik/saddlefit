@@ -30,34 +30,44 @@ def run_rounds(
     state = load_fit_state(root)
     accepted = state.accepted_since_ablation
     pending: list[str] = []
-    model_changed = state.student_model not in {None, loop.student_model}
+    model_changed = _model_changed(state, loop.student_model, loop.student_digest)
     # also resumes an ablation that a failure interrupted after its round was saved
     if ablation_due(accepted, model_changed=model_changed):
         pending = [r.proposal_id for r in ablate(loop) if r.pruned]
         accepted = 0
     done = state.rounds_done
-    save_fit_state(root, _state(done, accepted, loop.student_model))
+    save_fit_state(root, _state(done, accepted, loop))
     reports = []
     for index in range(done, done + rounds):
         report = loop.round(index)
         report.pruned, pending = pending, []
         accepted += report.accepted is not None
         # the round is saved before ablation, so a failing ablation never repeats it
-        save_fit_state(root, _state(index + 1, accepted, loop.student_model))
+        save_fit_state(root, _state(index + 1, accepted, loop))
         if ablation_due(accepted, model_changed=False):
             report.pruned += [r.proposal_id for r in ablate(loop) if r.pruned]
             accepted = 0
-            save_fit_state(root, _state(index + 1, accepted, loop.student_model))
+            save_fit_state(root, _state(index + 1, accepted, loop))
         reports.append(report)
         if on_round is not None:
             on_round(report)
     return reports
 
 
-def _state(rounds_done: int, accepted: int, student_model: str) -> FitState:
+def _model_changed(state: FitState, model: str, digest: str | None) -> bool:
+    """A new name, or the same name with new weights; unknown on a first fit."""
+    if state.student_model is None:
+        return False
+    if state.student_model != model:
+        return True
+    return None not in {state.student_digest, digest} and state.student_digest != digest
+
+
+def _state(rounds_done: int, accepted: int, loop: MiddleLoop) -> FitState:
     return FitState(
         schema_version=FIT_STATE_SCHEMA_VERSION,
         rounds_done=rounds_done,
         accepted_since_ablation=accepted,
-        student_model=student_model,
+        student_model=loop.student_model,
+        student_digest=loop.student_digest,
     )

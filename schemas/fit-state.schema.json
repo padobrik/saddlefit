@@ -17,6 +17,18 @@
       "title": "Schema Version",
       "type": "integer"
     },
+    "student_digest": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Student Digest"
+    },
     "student_model": {
       "anyOf": [
         {

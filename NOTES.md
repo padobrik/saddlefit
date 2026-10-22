@@ -153,4 +153,5 @@ Assumptions taken where the spec leaves a detail open. Deviations from the spec 
   alone; it is skipped and stays until the later one goes. A pruned change is reverted on
   `main` with the reason in the commit message and gets a `pruned` record whose training
   counts are with (before) and without (after) it. The trigger state, accepted changes since
-  the last ablation and the student model of the last fit, lives in `fit.json`.
+  the last ablation and the student model and digest of the last fit, lives in `fit.json`;
+  a new digest under the same model name counts as a model change when both are known.

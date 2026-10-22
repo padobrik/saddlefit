@@ -189,3 +189,30 @@ def test_an_interrupted_ablation_resumes_without_repeating_the_round(
     assert calls == ["ablate", "round 1"]  # the pending ablation first, then the next round
     assert report.pruned == [NOISE_ID]  # the pending ablation ran first
     assert load_fit_state(tmp_path).rounds_done == 2
+
+
+@pytest.mark.parametrize(
+    ("saved_digest", "digest", "ablated"),
+    [
+        ("sha256:old", "sha256:new", True),  # same name, new weights
+        ("sha256:old", "sha256:old", False),
+        (None, "sha256:new", False),  # nothing to compare against
+        ("sha256:old", None, False),
+    ],
+)
+def test_a_new_digest_for_the_same_model_triggers_ablation(
+    tmp_path: Path, saved_digest: str | None, digest: str | None, ablated: bool
+) -> None:
+    loop, _ = make_loop(
+        tmp_path, FakeTutor([USELESS]), candidates_per_round=1, student_digest=digest
+    )
+    accept_by_noise(loop.store, tmp_path)
+    save_fit_state(
+        tmp_path,
+        FitState(
+            schema_version=1, rounds_done=0, student_model="student", student_digest=saved_digest
+        ),
+    )
+    (report,) = run_rounds(loop, tmp_path, 1)
+    assert (report.pruned == [NOISE_ID]) is ablated
+    assert load_fit_state(tmp_path).student_digest == digest
