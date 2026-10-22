@@ -1,6 +1,6 @@
 [project]
 name = "saddlefit"
-version = "0.1.3"
+version = "0.2.0"
 description = "A self-improving harness that fits itself to your compact local model"
 readme = "README.md"
 license = "Apache-2.0"

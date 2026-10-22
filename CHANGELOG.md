@@ -1,5 +1,36 @@
 # Changelog
 
+## [0.2.0](https://github.com/padobrik/saddlefit/compare/v0.1.3...v0.2.0) (2026-10-22)
+
+
+### Features
+
+* **cli:** add export --format skill ([#111](https://github.com/padobrik/saddlefit/issues/111)) ([62c68b8](https://github.com/padobrik/saddlefit/commit/62c68b86f64843220e1c496f07536d0883c60b17))
+* **cli:** add report --final ([#110](https://github.com/padobrik/saddlefit/issues/110)) ([bce0280](https://github.com/padobrik/saddlefit/commit/bce02805f48b627281875d17183c4e816c2f50c8))
+* **cli:** add the fit command ([#104](https://github.com/padobrik/saddlefit/issues/104)) ([e2048cc](https://github.com/padobrik/saddlefit/commit/e2048cccf50d4ffc4d961ecd45f2482fde9b99f3))
+* **cli:** add the prune command ([#106](https://github.com/padobrik/saddlefit/issues/106)) ([41fe8c2](https://github.com/padobrik/saddlefit/commit/41fe8c28544146823a45ef0575f4a1c17f497ac1))
+* **eval:** add batch and held-out gates and the tie-break ([#94](https://github.com/padobrik/saddlefit/issues/94)) ([dd70d0d](https://github.com/padobrik/saddlefit/commit/dd70d0df61deb00016ef971b45da2053d3415be4))
+* **eval:** add report statistics and the delegation map ([#107](https://github.com/padobrik/saddlefit/issues/107)) ([8669cac](https://github.com/padobrik/saddlefit/commit/8669cac69470eb4b3d493d7f4e588a69bd531ddf))
+* **eval:** log control evaluations and freeze the harness ([#109](https://github.com/padobrik/saddlefit/issues/109)) ([a12a88b](https://github.com/padobrik/saddlefit/commit/a12a88b4de78751b8ba0f57b04d95683601b74f1))
+* **harness:** validate and apply proposals ([#95](https://github.com/padobrik/saddlefit/issues/95)) ([8eb1a43](https://github.com/padobrik/saddlefit/commit/8eb1a43d1268544f5cc59f0fc435d872bddf36b2))
+* **loops:** ablate accepted changes and prune the useless ([#105](https://github.com/padobrik/saddlefit/issues/105)) ([1d6fe40](https://github.com/padobrik/saddlefit/commit/1d6fe40f7d9c8dff8f36d589f865beb10914d899))
+* **loops:** add the middle loop round ([#103](https://github.com/padobrik/saddlefit/issues/103)) ([96b2f85](https://github.com/padobrik/saddlefit/commit/96b2f85feefd93dd29f2922891b6912d016e6e6b))
+* **providers:** add the Messages API provider for the tutor ([#97](https://github.com/padobrik/saddlefit/issues/97)) ([2e7050a](https://github.com/padobrik/saddlefit/commit/2e7050a94034c0b610c2bf197dc78daa69ae1a01))
+* **reports:** report progress since the baseline ([#108](https://github.com/padobrik/saddlefit/issues/108)) ([9f62d56](https://github.com/padobrik/saddlefit/commit/9f62d56f332c6ed5429ea602a086a05c85c340c4))
+* **storage:** add change records for the library ([#102](https://github.com/padobrik/saddlefit/issues/102)) ([2c14ada](https://github.com/padobrik/saddlefit/commit/2c14ada335531ba55345f41e145acfc67f2f5f9e))
+* **tutor:** diagnose failed runs into one proposal per call ([#98](https://github.com/padobrik/saddlefit/issues/98)) ([8a3739f](https://github.com/padobrik/saddlefit/commit/8a3739fdcb620205aab64ab4f6d963cc8b6d7722))
+* **tutor:** record a reflection on each decision in EXPERIENCE.md ([#99](https://github.com/padobrik/saddlefit/issues/99)) ([d9590ee](https://github.com/padobrik/saddlefit/commit/d9590ee671683207adad520f8cc6bda36be72198))
+
+
+### Bug Fixes
+
+* **report:** skip run records cut off by a crash ([#112](https://github.com/padobrik/saddlefit/issues/112)) ([a3911f9](https://github.com/padobrik/saddlefit/commit/a3911f96edee210ce2132bf956d8c6a1df440d47))
+
+
+### Documentation
+
+* **adr:** free-text harness files are content, not formats ([#101](https://github.com/padobrik/saddlefit/issues/101)) ([6535d50](https://github.com/padobrik/saddlefit/commit/6535d50948aaa294534ce7f679588256659dbcc6))
+
 ## [0.1.3](https://github.com/padobrik/saddlefit/compare/v0.1.2...v0.1.3) (2026-10-21)
 
 
