@@ -14,7 +14,8 @@ import yaml
 from saddlefit.config import TokenPrices
 from saddlefit.eval.decisions import HeldOutComparison
 from saddlefit.harness.store import HarnessStore, HarnessStoreError
-from saddlefit.loops.middle import BatchResult, MiddleLoop, pick_batch, run_rounds
+from saddlefit.loops.fit import run_rounds
+from saddlefit.loops.middle import BatchResult, MiddleLoop, pick_batch
 from saddlefit.providers.base import (
     GenParams,
     Message,

@@ -1,10 +1,12 @@
-"""Required test 5 (gates and tie-break): table-driven tests of the B12 decision rules."""
+"""Required test 5 (gates, tie-break, ablation): table-driven tests of the B12 rules."""
 
 import pytest
 
 from saddlefit.eval.decisions import (
     Candidate,
     HeldOutComparison,
+    ablation_due,
+    ablation_prunes,
     batch_gate,
     compare_held_out,
     held_out_gate,
@@ -51,6 +53,11 @@ COMPARISONS = [
 def test_wins_and_losses(current: str, candidate: str, wins: int, losses: int) -> None:
     result = compare_held_out(outcomes(current), outcomes(candidate))
     assert (result.wins, result.losses, result.tasks) == (wins, losses, len(current))
+    decided = sum(
+        a is not None and b is not None
+        for a, b in zip(outcomes(current).values(), outcomes(candidate).values(), strict=True)
+    )
+    assert result.compared == decided
 
 
 REQUIRED_NET = [
@@ -140,3 +147,51 @@ def test_tie_break(name: str, specs: list[tuple[int, int, int, int]], winner: in
 
 def test_tie_break_without_candidates() -> None:
     assert tie_break([]) is None
+
+
+ABLATION_DUE = [
+    # (accepted since the last ablation, student model changed, due)
+    (0, False, False),
+    (2, False, False),
+    (3, False, True),
+    (4, False, True),
+    (0, True, True),
+    (1, True, True),
+]
+
+
+@pytest.mark.parametrize(("accepted", "changed", "due"), ABLATION_DUE)
+def test_ablation_due(accepted: int, changed: bool, due: bool) -> None:
+    assert ablation_due(accepted, changed) is due
+
+
+ABLATION_PRUNES = [
+    # (name, train wins/losses without the change, held-out wins/losses, pruned)
+    ("removing it changes nothing", (0, 0), (0, 0), True),
+    ("removing it helps", (1, 0), (0, 0), True),
+    ("removing it costs a training task", (0, 1), (0, 0), False),
+    ("removing it costs a held-out task", (0, 0), (0, 1), False),
+    ("a training loss offset by a held-out win", (0, 1), (1, 0), True),
+    ("net negative over both", (1, 1), (0, 1), False),
+    ("wins and losses everywhere, net zero", (2, 1), (1, 2), True),
+]
+
+
+def test_ablation_keeps_a_change_when_nothing_was_measured() -> None:
+    nothing = compare_held_out(outcomes("??"), outcomes("S?"))
+    assert (nothing.net, nothing.compared) == (0, 0)
+    assert not ablation_prunes(nothing, nothing)
+    # a conclusive held-out comparison alone is enough to decide
+    held_out = HeldOutComparison(wins=0, losses=0, tasks=6, compared=6)
+    assert ablation_prunes(nothing, held_out)
+
+
+@pytest.mark.parametrize(("name", "train", "held_out", "pruned"), ABLATION_PRUNES)
+def test_ablation_prunes(
+    name: str, train: tuple[int, int], held_out: tuple[int, int], pruned: bool
+) -> None:
+    result = ablation_prunes(
+        HeldOutComparison(wins=train[0], losses=train[1], tasks=6),
+        HeldOutComparison(wins=held_out[0], losses=held_out[1], tasks=6),
+    )
+    assert result is pruned, name

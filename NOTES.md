@@ -147,3 +147,11 @@ Assumptions taken where the spec leaves a detail open. Deviations from the spec 
   sessions never run at once on a project. A crash can leave the lock behind; the error names
   the file to remove. `fit` also refuses a suite without held-out tasks, where no candidate
   could pass the held-out gate.
+- **Ablation.** Each active change (accepted, not pruned since) is tested newest first on a
+  branch that reverts its accept merge from `main`, against `main` on every training task and
+  on the held-out tasks. A change that a later accepted change builds on cannot be reverted
+  alone; it is skipped and stays until the later one goes. A pruned change is reverted on
+  `main` with the reason in the commit message and gets a `pruned` record whose training
+  counts are with (before) and without (after) it. The trigger state, accepted changes since
+  the last ablation and the student model and digest of the last fit, lives in `fit.json`;
+  a new digest under the same model name counts as a model change when both are known.

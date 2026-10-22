@@ -41,23 +41,32 @@ class HeldOutComparison:
     wins: int
     losses: int
     tasks: int
+    # tasks decided under both harnesses; None when the count came as an aggregate without it
+    compared: int | None = None
 
     @property
     def net(self) -> int:
         return self.wins - self.losses
 
+    @property
+    def conclusive(self) -> bool:
+        return (self.tasks if self.compared is None else self.compared) > 0
+
 
 def compare_held_out(current: Outcomes, candidate: Outcomes) -> HeldOutComparison:
     """Count wins and losses; a task inconclusive under either harness is neither."""
     _check_same_tasks(current, candidate)
-    wins = losses = 0
+    wins = losses = compared = 0
     for task, before in current.items():
         after = candidate[task]
+        if before is None or after is None:
+            continue
+        compared += 1
         if before is False and after is True:
             wins += 1
         elif before is True and after is False:
             losses += 1
-    return HeldOutComparison(wins=wins, losses=losses, tasks=len(current))
+    return HeldOutComparison(wins=wins, losses=losses, tasks=len(current), compared=compared)
 
 
 def required_net(tasks: int, margin: float = HELD_OUT_MARGIN) -> int:
@@ -93,3 +102,23 @@ def tie_break(candidates: Iterable[Candidate]) -> Candidate | None:
         key=lambda c: (-c.held_out.net, c.context_tokens_added, c.order),
         default=None,
     )
+
+
+ABLATION_EVERY: Final = 3
+
+
+def ablation_due(accepted_since_last: int, model_changed: bool) -> bool:
+    """Ablate after every 3 accepted changes and after any change of the student model."""
+    return model_changed or accepted_since_last >= ABLATION_EVERY
+
+
+def ablation_prunes(train: HeldOutComparison, held_out: HeldOutComparison) -> bool:
+    """Drop a change when removing it loses nothing: ``wins - losses >= 0`` over training
+    plus held-out tasks, comparing the harness without the change against the current one.
+
+    With no task decided under both harnesses anywhere, nothing was measured, so nothing is
+    dropped: environment errors must not remove a change that may help.
+    """
+    if not (train.conclusive or held_out.conclusive):
+        return False
+    return train.net + held_out.net >= 0

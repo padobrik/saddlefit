@@ -265,6 +265,49 @@ class HarnessStore:
         self._git("commit", "--quiet", "-m", f"prune {commit[:12]}\n\nreason: {reason}")
         return self.head()
 
+    def accept_commit(self, proposal_id: str) -> str:
+        """The merge commit on ``main`` that accepted ``proposal_id``."""
+        _checked(_PROPOSAL_ID, proposal_id, "proposal id")
+        found = self._git(
+            "log",
+            MAIN,
+            "--merges",
+            "--format=%H",
+            "--fixed-strings",
+            f"--grep=accept {proposal_id}",
+        ).split()
+        if len(found) != 1:
+            raise HarnessStoreError(f"no single accept commit for {proposal_id}: {found}")
+        return found[0]
+
+    def without(self, commit: str, name: str) -> str:
+        """Commit ``main`` minus an accepted change on ``ablation/<name>``; return its SHA.
+
+        A revert that conflicts leaves no branch behind and ``main`` untouched.
+        """
+        _checked(_COMMIT, commit, "commit")
+        branch = f"ablation/{_checked(_PROPOSAL_ID, name, 'name')}"
+        self._check_format()
+        self._git("switch", "--quiet", "-c", branch, MAIN)
+        try:
+            self._git("revert", "--no-commit", "-m", "1", commit)
+            self._git("commit", "--quiet", "-m", f"without {commit[:12]}")
+            sha = self.head(branch)
+        except HarnessStoreError:
+            with contextlib.suppress(HarnessStoreError):
+                self._git("revert", "--abort")
+                self._git("reset", "--quiet", "--hard")
+            with contextlib.suppress(HarnessStoreError):
+                self._git("switch", "--quiet", "--force", MAIN)
+                self._git("branch", "-D", branch)
+            raise
+        self._git("switch", "--quiet", MAIN)
+        return sha
+
+    def drop_ablation(self, name: str) -> None:
+        """Delete ``ablation/<name>``; ``main`` is untouched."""
+        self._git("branch", "-D", f"ablation/{_checked(_PROPOSAL_ID, name, 'name')}")
+
     def tag(self, name: str, ref: str = MAIN) -> None:
         """Tag ``ref``, for example the harness a release was measured with."""
         self._git("tag", _checked(_REF, name, "tag name"), _checked(_REF, ref, "ref"))

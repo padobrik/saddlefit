@@ -384,3 +384,39 @@ def test_texts_are_the_allowlisted_files(store: HarnessStore) -> None:
     texts = store.texts()
     assert set(texts) == {"systemprompt.md", "tool_guidance.md", "EXPERIENCE.md", "loop.yaml"}
     assert texts["EXPERIENCE.md"] == "# Lessons\n"
+
+
+def accept_lesson_change(store: HarnessStore, pid: str, old: str, new: str) -> str:
+    store.propose(pid, patch_for("EXPERIENCE.md", old, new), pid)
+    store.accept(pid)
+    return store.accept_commit(pid)
+
+
+def test_without_reverts_one_accepted_change_on_a_branch(store: HarnessStore) -> None:
+    a = accept_lesson_change(store, "pa", "# Lessons", "# Lessons A")
+    b = accept_lesson_change(store, "pb", "# Lessons A", "# Lessons B")
+    assert a != b
+    before = store.head()
+    sha = store.without(b, "pb")
+    assert store.read("EXPERIENCE.md", sha) == "# Lessons A\n"
+    assert store.head() == before  # main untouched
+    store.drop_ablation("pb")
+    with pytest.raises(HarnessStoreError):
+        store.head("ablation/pb")
+
+
+def test_a_conflicting_ablation_leaves_nothing_behind(store: HarnessStore) -> None:
+    a = accept_lesson_change(store, "pa", "# Lessons", "# Lessons A")
+    accept_lesson_change(store, "pb", "# Lessons A", "# Lessons B")
+    before = store.head()
+    with pytest.raises(HarnessStoreError):
+        store.without(a, "pa")  # pb changed the same line since
+    assert store.head() == before
+    assert store.read("EXPERIENCE.md") == "# Lessons B\n"
+    with pytest.raises(HarnessStoreError):
+        store.head("ablation/pa")
+
+
+def test_accept_commit_needs_an_accepted_proposal(store: HarnessStore) -> None:
+    with pytest.raises(HarnessStoreError, match="no single accept commit"):
+        store.accept_commit("never-accepted")

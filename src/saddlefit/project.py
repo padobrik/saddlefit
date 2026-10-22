@@ -32,7 +32,8 @@ from saddlefit.loops.baseline import (
     BaselineRunner,
     RunOutcome,
 )
-from saddlefit.loops.middle import MiddleLoop, RoundReport, run_rounds
+from saddlefit.loops.fit import run_rounds
+from saddlefit.loops.middle import MiddleLoop, RoundReport
 from saddlefit.loops.practice import DockerPractice, without_control
 from saddlefit.providers.base import ModelClient, ModelInfo
 from saddlefit.providers.retry import LOCAL_TIMEOUT_S
