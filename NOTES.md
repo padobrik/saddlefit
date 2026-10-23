@@ -199,7 +199,7 @@ Assumptions taken where the spec leaves a detail open. Deviations from the spec 
   raises `UnfinishedRun`; `report` leaves such runs out, since they have no outcome. Any
   other malformed record still fails the read.
 - **Served context window.** Ollama's OpenAI endpoint ignores a requested window, so the
-  server's `OLLAMA_CONTEXT_LENGTH` decides it, 4096 by default; longer prompts are cut without
-  an error. `doctor` and every command that starts the student read the loaded model's window
+  server's `OLLAMA_CONTEXT_LENGTH` decides it, with a default that depends on the Ollama
+  version and the memory available; longer prompts are cut without an error. `doctor` and every command that starts the student read the loaded model's window
   from `/api/ps` (loading it with a one-token reply when needed) and exit 3 when it is smaller
   than `student.context_length`. Runners that do not report it pass unchecked.
