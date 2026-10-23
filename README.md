@@ -86,6 +86,8 @@ An open-weight model that runs on one consumer machine and meets all four condit
 ## Quickstart
 
 Requires Python 3.12+, Docker and a local model runner such as [Ollama](https://ollama.com).
+Ollama serves models with a 4096-token window unless the server is started with
+`OLLAMA_CONTEXT_LENGTH=32768`; `doctor` checks it.
 
 ```bash
 uv tool install saddlefit
