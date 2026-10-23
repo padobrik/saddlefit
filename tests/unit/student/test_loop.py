@@ -21,7 +21,13 @@ from saddlefit.providers.base import (
 )
 from saddlefit.providers.fake import FakeClient
 from saddlefit.storage.runs import EVENT_DATA
-from saddlefit.student.loop import NUDGE, StudentLoop, call_signature
+from saddlefit.student.loop import (
+    LOGGED_ARGUMENT_CHARS,
+    NUDGE,
+    StudentLoop,
+    call_signature,
+    logged_arguments,
+)
 from saddlefit.tools.builtin import ToolResult
 
 CONTEXT = AssembledContext(system="be careful", task="fix parse_iso", harness_tokens=3)
@@ -117,6 +123,45 @@ def test_happy_path_runs_tools_then_the_finish_gate() -> None:
         "finish_gate",
     ]
     assert result.transcript[0].content == "be careful"
+
+
+def test_tool_call_event_carries_the_arguments() -> None:
+    student, _, recorder = make(
+        [
+            call("edit_file", 1, path="src/dates.py", old="  12\tdef parse(", new="x"),
+            call("finish", 2, summary="done"),
+        ]
+    )
+    student.run(CONTEXT)
+    tool_events = [data for type, data in recorder.events if type == "tool_call"]
+    assert tool_events[0]["arguments"] == {
+        "path": "src/dates.py",
+        "old": "  12\tdef parse(",
+        "new": "x",
+    }
+
+
+def test_logged_arguments_shorten_text_and_keep_scalars() -> None:
+    logged = logged_arguments(
+        {
+            "content": "a" * 5000,
+            "start": 3,
+            "check": True,
+            "end": None,
+            "ratio": 0.5,
+            "bad": float("nan"),
+            "nested": {"b": 1, "a": [2]},
+        }
+    )
+    content = logged["content"]
+    assert isinstance(content, str)
+    assert len(content) <= LOGGED_ARGUMENT_CHARS
+    assert content.startswith("aaa")
+    assert content.endswith("aaa")
+    scalars = (logged["start"], logged["check"], logged["end"], logged["ratio"])
+    assert scalars == (3, True, None, 0.5)
+    assert logged["bad"] == "NaN"
+    assert logged["nested"] == '{"a": [2], "b": 1}'
 
 
 def test_failed_gate_returns_output_once_with_the_task() -> None:

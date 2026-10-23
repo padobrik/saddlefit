@@ -198,3 +198,8 @@ Assumptions taken where the spec leaves a detail open. Deviations from the spec 
   line, or with its last line cut off (every complete line ends in a newline). Reading one
   raises `UnfinishedRun`; `report` leaves such runs out, since they have no outcome. Any
   other malformed record still fails the read.
+- **Tool call arguments in run records.** Run records v2 keep each tool call's arguments,
+  so a failed `edit_file` can be read back. Strings longer than 300 characters keep their
+  head and tail with a note on the cut; numbers, booleans and nulls are kept as they are,
+  and anything else is written as JSON text. The tool's output stays out, as before: only
+  its size is recorded. The tutor's digest of a run does not show the arguments yet.

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -25,9 +26,10 @@ from saddlefit.providers.base import (
     ToolCall,
     ToolSpec,
 )
-from saddlefit.tools.builtin import TOOL_SPECS, ToolResult
+from saddlefit.tools.builtin import TOOL_SPECS, ToolResult, truncate
 
 COMPACTION_RATIO = 0.8
+LOGGED_ARGUMENT_CHARS = 300
 NUDGE = "Use a tool to make progress, or call finish when the task is done."
 
 StopReason = Literal[
@@ -70,6 +72,22 @@ def call_signature(call: ToolCall) -> str:
     """Tool name plus a hash of normalized arguments (B6 loop detection)."""
     args = json.dumps(call.arguments, sort_keys=True, separators=(",", ":"))
     return f"{call.name}:{hashlib.sha256(args.encode()).hexdigest()[:16]}"
+
+
+def logged_arguments(arguments: dict[str, object]) -> dict[str, str | int | float | bool | None]:
+    """The arguments for the run record: scalars kept, everything else as shortened text."""
+    logged: dict[str, str | int | float | bool | None] = {}
+    for key, value in arguments.items():
+        if (
+            value is None
+            or isinstance(value, bool | int)
+            or (isinstance(value, float) and math.isfinite(value))
+        ):
+            logged[key] = value
+        else:
+            text = value if isinstance(value, str) else json.dumps(value, sort_keys=True)
+            logged[key] = truncate(text, LOGGED_ARGUMENT_CHARS)
+    return logged
 
 
 @dataclass
@@ -200,7 +218,13 @@ class StudentLoop:
             state.result.max_failing_tool_streak, state.failing_streak
         )
         self.recorder.event(
-            "tool_call", {"name": call.name, "ok": outcome.ok, "output_chars": len(outcome.output)}
+            "tool_call",
+            {
+                "name": call.name,
+                "ok": outcome.ok,
+                "output_chars": len(outcome.output),
+                "arguments": logged_arguments(call.arguments),
+            },
         )
         state.messages.append(Message(role="tool", tool_call_id=call.id, content=outcome.output))
         return None
