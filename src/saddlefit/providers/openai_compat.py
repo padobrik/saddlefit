@@ -66,6 +66,11 @@ def _native_root(base_url: str) -> str:
     return urlunsplit((parts.scheme, parts.netloc, path, "", ""))
 
 
+def _ollama_name(name: str) -> str:
+    """``name`` with Ollama's implied ``latest`` tag when it has none."""
+    return name if ":" in name.rsplit("/", 1)[-1] else f"{name}:latest"
+
+
 def context_window_problem(served: int | None, configured: int) -> str | None:
     """Why the served window cannot hold the configured context, or ``None`` when it can."""
     if served is None or served >= configured:
@@ -217,20 +222,26 @@ class OpenAICompatibleClient:
             return None
         served = self._loaded_context()
         if served is None:
-            try:
-                self._sdk.chat.completions.create(
-                    model=self.model, messages=[{"role": "user", "content": "hi"}], max_tokens=1
-                )
-            except openai.OpenAIError as exc:
-                raise map_error(exc) from exc
+
+            def load() -> Any:
+                try:
+                    return self._sdk.chat.completions.create(
+                        model=self.model, messages=[{"role": "user", "content": "hi"}], max_tokens=1
+                    )
+                except openai.OpenAIError as exc:
+                    raise map_error(exc) from exc
+
+            call_with_retries(load, sleep=self._sleep)
             served = self._loaded_context()
         return served
 
     def _loaded_context(self) -> int | None:
+        wanted = _ollama_name(self.model)
         try:
             loaded = self._fetch_json(f"{_native_root(self.base_url)}/api/ps", None)
             for entry in loaded.get("models", []):
-                if entry.get("name") == self.model or entry.get("model") == self.model:
+                names = {entry.get("name"), entry.get("model")} - {None}
+                if wanted in {_ollama_name(str(name)) for name in names}:
                     value = entry.get("context_length")
                     return value if isinstance(value, int) else None
         except (OSError, ValueError, AttributeError):

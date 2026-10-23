@@ -286,6 +286,24 @@ def test_served_context_loads_the_model_first() -> None:
     assert sdk.requests[0]["max_tokens"] == 1
 
 
+def test_served_context_retries_a_transient_load_error() -> None:
+    sdk = StubSDK(connection_error(), response("h"))
+    fetch = ollama_serving([[], [{"model": "qwen3:8b", "context_length": 32768}]])
+    assert client(sdk, fetch).served_context_length() == 32768
+    assert len(sdk.requests) == 2
+
+
+def test_served_context_matches_an_untagged_model_name() -> None:
+    untagged = OpenAICompatibleClient(
+        base_url="http://localhost:11434/v1",
+        model="mistral",
+        sdk=StubSDK(),
+        fetch_json=ollama_serving([[{"name": "mistral:latest", "context_length": 8192}]]),
+        sleep=lambda _: None,
+    )
+    assert untagged.served_context_length() == 8192
+
+
 def test_served_context_is_unknown_without_ollama() -> None:
     assert client(StubSDK()).served_context_length() is None
 
