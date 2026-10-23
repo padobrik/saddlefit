@@ -14,11 +14,13 @@ from saddlefit.storage import migrations
 from saddlefit.storage.migrations import MigrationError, register, upgrade
 from saddlefit.storage.runs import (
     RUN_KIND,
+    RUN_SCHEMA_VERSION,
     ErrorData,
     RestrictedRunError,
     RunEvent,
     RunSummary,
     RunWriter,
+    ToolCallData,
     UnfinishedRun,
     find_runs,
     new_run_id,
@@ -30,7 +32,7 @@ NOW = datetime(2026, 10, 21, 3, 0, tzinfo=UTC)
 
 def summary(run_id: str, **overrides: Any) -> RunSummary:
     data: dict[str, Any] = {
-        "schema_version": 1,
+        "schema_version": RUN_SCHEMA_VERSION,
         "type": "summary",
         "run_id": run_id,
         "task_id": "fix-date-parser-0042",
@@ -154,22 +156,36 @@ def test_a_record_cut_off_mid_line_is_unfinished(tmp_path: Path) -> None:
         read_run(writer.path)
 
 
-@pytest.mark.usefixtures("isolated_registry")
-def test_previous_version_is_upgraded(tmp_path: Path) -> None:
-    @register(RUN_KIND, 0)
-    def v0_to_v1(record: dict[str, Any]) -> dict[str, Any]:
-        if record.get("type") == "summary":
-            record["harness_tokens"] = record.pop("context_tokens")
-        return {**record, "schema_version": 1}
-
+def test_v1_record_is_upgraded_with_empty_arguments(tmp_path: Path) -> None:
     run_id = new_run_id()
-    old = summary(run_id).model_dump(mode="json")
-    old["schema_version"] = 0
-    old["context_tokens"] = old.pop("harness_tokens")
+    event = {
+        "schema_version": 1,
+        "type": "tool_call",
+        "time": NOW.isoformat(),
+        "data": {"name": "edit_file", "ok": False, "output_chars": 57},
+    }
+    old = summary(run_id).model_dump(mode="json") | {"schema_version": 1}
     path = tmp_path / "old.jsonl"
-    path.write_text(json.dumps(old) + "\n", encoding="utf-8")
-    _, result = read_run(path)
+    path.write_text(json.dumps(event) + "\n" + json.dumps(old) + "\n", encoding="utf-8")
+    events, result = read_run(path)
+    assert events[0].schema_version == RUN_SCHEMA_VERSION
+    assert events[0].data == ToolCallData(name="edit_file", ok=False, output_chars=57)
     assert result.harness_tokens == 3120
+
+
+def test_tool_call_keeps_its_arguments(tmp_path: Path) -> None:
+    run_id = new_run_id()
+    writer = RunWriter(tmp_path, run_id, now=NOW)
+    arguments = {"path": "src/x.py", "start": 3, "end": None}
+    writer.event(
+        "tool_call",
+        {"name": "read_file", "ok": True, "output_chars": 12, "arguments": arguments},
+    )
+    writer.finish(summary(run_id))
+    events, _ = read_run(writer.path)
+    assert events[0].data == ToolCallData(
+        name="read_file", ok=True, output_chars=12, arguments=arguments
+    )
 
 
 @pytest.mark.usefixtures("isolated_registry")
@@ -240,7 +256,7 @@ def test_event_payloads_are_typed(
 
 def test_payload_must_match_the_event_type() -> None:
     record = {
-        "schema_version": 1,
+        "schema_version": RUN_SCHEMA_VERSION,
         "type": "compaction",
         "time": NOW.isoformat(),
         "data": {"kind": "x", "message": "y"},
@@ -249,7 +265,10 @@ def test_payload_must_match_the_event_type() -> None:
         RunEvent.model_validate(record)
     with pytest.raises(ValidationError, match="needs a CompactionData"):
         RunEvent(
-            schema_version=1, type="compaction", time=NOW, data=ErrorData(kind="x", message="y")
+            schema_version=RUN_SCHEMA_VERSION,
+            type="compaction",
+            time=NOW,
+            data=ErrorData(kind="x", message="y"),
         )
 
 
@@ -309,7 +328,7 @@ def test_generated_schema_binds_each_event_type_to_its_payload() -> None:
     schema = RunEvent.model_json_schema()
     validator = jsonschema.Draft202012Validator(schema)
     good = {
-        "schema_version": 1,
+        "schema_version": RUN_SCHEMA_VERSION,
         "type": "compaction",
         "time": NOW.isoformat(),
         "data": {"dropped_outputs": 2},
