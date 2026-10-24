@@ -6,6 +6,7 @@ import hashlib
 import os
 import shutil
 import stat
+import subprocess
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Final
@@ -39,8 +40,8 @@ def repo_files(
             continue
         try:
             text = _git_bytes(repo, "show", f"{ref}:{path}").decode("utf-8")
-        except UnicodeDecodeError:
-            continue
+        except (UnicodeDecodeError, subprocess.CalledProcessError):
+            continue  # binary, or a gitlink (submodule) that has no blob to show
         if text.strip() and len(text) <= MAX_FILE_CHARS:
             files.append(RepoFile(path, text))
     return files

@@ -6,7 +6,7 @@ from typing import Any
 import pytest
 
 from saddlefit.config import GeneratorConfig, TokenPrices
-from saddlefit.loops.generate import Generation, task_id_for, worst_case_usd
+from saddlefit.loops.generate import CalibrationError, Generation, task_id_for, worst_case_usd
 from saddlefit.providers.base import ProviderError, Usage
 from saddlefit.tasks.acceptance import Acceptance
 from saddlefit.tasks.generator import (
@@ -39,6 +39,7 @@ class World:
         self.sealed: list[str] = []
         self.kept: list[str] = []
         self.discarded: list[str] = []
+        self.existing: set[str] = set()
 
     def call(self, request: GeneratorRequest) -> GeneratorResult:
         self.calls += 1
@@ -59,6 +60,7 @@ class World:
             "seal": lambda task_id, task: self.sealed.append(task_id),
             "accept": self.accept,
             "calibrate": lambda task_id, task: self.passes.pop(0),
+            "exists": lambda task_id: task_id in self.existing,
             "keep": lambda task_id, task: self.kept.append(task_id),
             "discard": self.discarded.append,
             "prompt_chars": lambda request: 4_000,
@@ -140,4 +142,39 @@ def test_task_ids_are_readable_and_unique_per_text() -> None:
 def test_worst_case_counts_a_full_reply() -> None:
     budget = GeneratorConfig(prices_usd_per_mtok=PRICES)
     assert worst_case_usd(4_000, budget) == pytest.approx((1_000 * 5 + 8_192 * 25) / 1e6)
-    assert random.Random(7).random() == random.Random(7).random()
+
+
+def test_the_same_seed_shows_the_same_files() -> None:
+    seen: list[list[float]] = []
+
+    def request(rng: random.Random) -> GeneratorRequest:
+        seen[-1].append(rng.random())
+        return GeneratorRequest(TASK_KINDS["feature"], "s", [], [], ("tests/**",), frozenset())
+
+    for _ in range(2):
+        seen.append([])
+        World(passes=[0, 2]).generation(request=request).run(count=1)
+    assert seen[0] == seen[1]
+    assert len(seen[0]) == 2
+
+
+def test_a_task_already_in_the_suite_is_left_alone() -> None:
+    world = World(passes=[2])
+    world.existing.add(task_id_for("feature", generated(1)))
+    report = world.generation().run(count=1)
+    assert report.attempts[0].reason == "the same task is already in the suite"
+    assert world.sealed == [report.attempts[1].task_id]
+    assert world.discarded == []
+
+
+def test_a_calibration_without_five_real_runs_is_discarded() -> None:
+    world = World(passes=[2])
+
+    def flaky(task_id: str, task: GeneratedTask) -> int:
+        raise CalibrationError("only 3 of 5 calibration runs counted")
+
+    report = world.generation(
+        budget=GeneratorConfig(max_calls=1, prices_usd_per_mtok=PRICES), calibrate=flaky
+    ).run(count=1)
+    assert report.attempts[0].reason == "only 3 of 5 calibration runs counted"
+    assert world.discarded == world.sealed

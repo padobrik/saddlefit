@@ -41,6 +41,7 @@ from saddlefit.loops.final import ControlRunner
 from saddlefit.loops.fit import run_rounds
 from saddlefit.loops.generate import (
     CALIBRATION_RUNS,
+    CalibrationError,
     Generation,
     GenerationReport,
 )
@@ -233,6 +234,7 @@ class Project:
         docker_client: Any,
         generator_client: ModelClient,
         model_client: Callable[[], ModelClient],
+        model_info: ModelInfo,
     ) -> GenerationReport:
         """Generate ``count`` kept tasks of ``kind``, within the generator's budget (B13)."""
         if kind not in TASK_KINDS:
@@ -308,10 +310,16 @@ class Project:
                     evaluator=evaluator,
                     docker_client=docker_client,
                     image=image,
-                    tool_mode=self.tool_mode(),
+                    tool_mode=self.tool_mode(model_info.digest),
                 )
                 result = runner.run([meta])
-            return sum(run.passed for run in result.runs)
+            counted = [run for run in result.runs if run.classification.counts_in_statistics]
+            if len(counted) < CALIBRATION_RUNS:
+                raise CalibrationError(
+                    f"only {len(counted)} of {CALIBRATION_RUNS} calibration runs counted; "
+                    "the others were environment errors"
+                )
+            return sum(run.passed for run in counted)
 
         def keep(task_id: str, task: GeneratedTask) -> None:
             lock = load_lock(self.suite, config.splits)
@@ -333,6 +341,7 @@ class Project:
                 seal=lambda task_id, task: seal_generated(sealed, task_id, task),
                 accept=lambda task_id, task: accept(evaluator, task_id, base, task),
                 calibrate=calibrate,
+                exists=lambda task_id: any(t.id == task_id for t in self.tasks()),
                 keep=keep,
                 discard=lambda task_id: generated_files.discard(self.suite, task_id),
                 prompt_chars=lambda req: len(render_system(req)) + len(render_user(req)),

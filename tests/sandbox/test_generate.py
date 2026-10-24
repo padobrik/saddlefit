@@ -75,6 +75,7 @@ def test_a_task_the_student_sometimes_solves_is_kept(
         docker_client=docker_client,
         generator_client=FakeClient([ANSWER]),
         model_client=lambda: FakeClient(student),
+        model_info=FakeClient(student).info(),
     )
     assert report.calls == 1
     assert [a.passes for a in report.attempts] == [2]

@@ -42,6 +42,10 @@ def worst_case_usd(prompt_chars: int, prices: GeneratorConfig) -> float:
     return (prompt_chars / 4 * p.input + MAX_REPLY_TOKENS * p.output) / PER_MTOK
 
 
+class CalibrationError(Exception):
+    """Calibration could not count five real runs, so the task cannot be judged."""
+
+
 @dataclass(frozen=True)
 class Attempt:
     task_id: str | None
@@ -73,6 +77,7 @@ class Generation:
     seal: Callable[[str, GeneratedTask], None]
     accept: Callable[[str, GeneratedTask], Acceptance]
     calibrate: Callable[[str, GeneratedTask], int]
+    exists: Callable[[str], bool]
     keep: Callable[[str, GeneratedTask], None]
     discard: Callable[[str], None]
     prompt_chars: Callable[[GeneratorRequest], int]
@@ -106,13 +111,19 @@ class Generation:
             return Attempt(None, False, f"generator: {exc}")
         report.usd += cost_usd(result.usage, self.budget.prices_usd_per_mtok)
         task_id = task_id_for(self.kind, result.task)
-        self.seal(task_id, result.task)
+        if self.exists(task_id):
+            # sealing would overwrite the existing task, and discarding would delete it
+            return Attempt(task_id, False, "the same task is already in the suite")
         try:
+            self.seal(task_id, result.task)
             acceptance = self.accept(task_id, result.task)
             if not acceptance.accepted:
                 self.discard(task_id)
                 return Attempt(task_id, False, acceptance.reason)
             passes = self.calibrate(task_id, result.task)
+        except CalibrationError as exc:
+            self.discard(task_id)
+            return Attempt(task_id, False, str(exc))
         except BaseException:
             self.discard(task_id)
             raise

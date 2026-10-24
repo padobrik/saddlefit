@@ -161,13 +161,14 @@ def tasks_generate(
             "generator prices are not set; fill in generator.prices_usd_per_mtok "
             "(input and output) from your price list"
         )
-    _, model_client = _student(project)
+    model_info, model_client = _student(project)
     report = project.generate_tasks(
         kind=type_,
         count=count,
         docker_client=_docker(),
         generator_client=AnthropicClient(config.generator.model),
         model_client=model_client,
+        model_info=model_info,
     )
     data = {
         "kept": report.kept,
