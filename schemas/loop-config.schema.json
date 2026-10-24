@@ -2,7 +2,7 @@
   "$defs": {
     "ContextConfig": {
       "additionalProperties": false,
-      "description": "Token budgets for the whole prompt and for the harness share of it.",
+      "description": "Token budgets for the whole prompt and for the harness share of it.\n\n``repo_map`` adds the repository's file list to the task message at the first step.",
       "properties": {
         "budget_tokens": {
           "default": 24000,
@@ -15,6 +15,11 @@
           "exclusiveMinimum": 0,
           "title": "Harness Budget Tokens",
           "type": "integer"
+        },
+        "repo_map": {
+          "default": false,
+          "title": "Repo Map",
+          "type": "boolean"
         }
       },
       "title": "ContextConfig",
@@ -51,6 +56,59 @@
       "title": "FinishGateConfig",
       "type": "object"
     },
+    "HookConfig": {
+      "additionalProperties": false,
+      "description": "One fixed step the loop adds; it runs in the sandbox like any tool call.\n\n``event``: ``post_tool`` runs after a successful call of one of ``tools`` (any tool when empty);\n``before_finish`` runs when the student calls ``finish``, before the finish gate.\n``run`` is a shell command whose output the student sees; ``inject`` is a fixed note.",
+      "properties": {
+        "event": {
+          "enum": [
+            "post_tool",
+            "before_finish"
+          ],
+          "title": "Event",
+          "type": "string"
+        },
+        "inject": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Inject"
+        },
+        "run": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Run"
+        },
+        "tools": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Tools",
+          "type": "array"
+        }
+      },
+      "required": [
+        "event"
+      ],
+      "title": "HookConfig",
+      "type": "object"
+    },
     "LoopDetectionConfig": {
       "additionalProperties": false,
       "description": "Stop after this many identical calls with no workspace change.",
@@ -67,7 +125,7 @@
     },
     "ReasoningConfig": {
       "additionalProperties": false,
-      "description": "Reasoning language, amount and latent depth (looped models only).",
+      "description": "How much the student reasons; sent to the runner with every request.",
       "properties": {
         "effort": {
           "default": "low",
@@ -78,29 +136,6 @@
           ],
           "title": "Effort",
           "type": "string"
-        },
-        "language": {
-          "default": "mixed",
-          "enum": [
-            "english",
-            "user",
-            "mixed"
-          ],
-          "title": "Language",
-          "type": "string"
-        },
-        "latent_depth": {
-          "anyOf": [
-            {
-              "minimum": 1,
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Latent Depth"
         }
       },
       "title": "ReasoningConfig",
@@ -119,6 +154,39 @@
       },
       "title": "ToolOutputConfig",
       "type": "object"
+    },
+    "ToolsConfig": {
+      "additionalProperties": false,
+      "description": "Which tools the student gets, and the shape of two of them.\n\n``read_line_numbers`` prefixes ``read_file`` output with line numbers, as ``cat -n``\ndoes. ``edit_strips_line_numbers`` lets ``edit_file`` take ``old`` text the student\ncopied with those prefixes: when every line of ``old`` has one, they are removed from\n``old`` and from ``new`` before matching.",
+      "properties": {
+        "edit_strips_line_numbers": {
+          "default": false,
+          "title": "Edit Strips Line Numbers",
+          "type": "boolean"
+        },
+        "enabled": {
+          "default": [
+            "read_file",
+            "list_dir",
+            "search",
+            "edit_file",
+            "write_file",
+            "bash"
+          ],
+          "items": {
+            "type": "string"
+          },
+          "title": "Enabled",
+          "type": "array"
+        },
+        "read_line_numbers": {
+          "default": true,
+          "title": "Read Line Numbers",
+          "type": "boolean"
+        }
+      },
+      "title": "ToolsConfig",
+      "type": "object"
     }
   },
   "additionalProperties": false,
@@ -128,7 +196,8 @@
       "$ref": "#/$defs/ContextConfig",
       "default": {
         "budget_tokens": 24000,
-        "harness_budget_tokens": 4000
+        "harness_budget_tokens": 4000,
+        "repo_map": false
       }
     },
     "finish_gate": {
@@ -138,6 +207,15 @@
         "reread_task": true,
         "run": "pytest -q"
       }
+    },
+    "hooks": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/HookConfig"
+      },
+      "maxItems": 4,
+      "title": "Hooks",
+      "type": "array"
     },
     "loop_detection": {
       "$ref": "#/$defs/LoopDetectionConfig",
@@ -154,13 +232,11 @@
     "reasoning": {
       "$ref": "#/$defs/ReasoningConfig",
       "default": {
-        "effort": "low",
-        "language": "mixed",
-        "latent_depth": null
+        "effort": "low"
       }
     },
     "schema_version": {
-      "const": 1,
+      "const": 2,
       "title": "Schema Version",
       "type": "integer"
     },
@@ -168,6 +244,21 @@
       "$ref": "#/$defs/ToolOutputConfig",
       "default": {
         "max_chars": 4000
+      }
+    },
+    "tools": {
+      "$ref": "#/$defs/ToolsConfig",
+      "default": {
+        "edit_strips_line_numbers": false,
+        "enabled": [
+          "read_file",
+          "list_dir",
+          "search",
+          "edit_file",
+          "write_file",
+          "bash"
+        ],
+        "read_line_numbers": true
       }
     }
   },
