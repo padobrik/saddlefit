@@ -87,6 +87,12 @@ def test_round_trip(tmp_path: Path) -> None:
             "cannot exceed",
         ),
         ("schema_version: 2\nproject: p\nsandbox: {memory: lots}\n", "sandbox.memory"),
+        ("schema_version: 3\nproject: p\ngenerator: {max_calls: 0}\n", "generator.max_calls"),
+        ("schema_version: 3\nproject: p\ngenerator: {max_usd: -1}\n", "generator.max_usd"),
+        (
+            "schema_version: 3\nproject: p\ngenerator: {prices_usd_per_mtok: {output: -2}}\n",
+            "generator.prices_usd_per_mtok.output",
+        ),
         ("- a\n- b\n", "must be a mapping"),
         ("project: [unclosed\n", "not valid YAML"),
     ],
@@ -112,6 +118,8 @@ def test_dump_is_safe_yaml() -> None:
         "schema_version: 2\nproject: p\ntutor: {max_usd_per_round: .inf}\n",
         "schema_version: 2\nproject: p\nstudent: {temperature: .nan}\n",
         "schema_version: 2\nproject: p\nfast_loop: {time_budget_minutes: .inf}\n",
+        "schema_version: 3\nproject: p\ngenerator: {max_usd: .inf}\n",
+        "schema_version: 3\nproject: p\ngenerator: {prices_usd_per_mtok: {input: .nan}}\n",
     ],
 )
 def test_non_finite_limits_are_rejected(tmp_path: Path, text: str) -> None:
