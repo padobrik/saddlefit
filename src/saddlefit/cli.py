@@ -20,8 +20,8 @@ from saddlefit.loops.baseline import RunOutcome
 from saddlefit.loops.middle import RoundReport
 from saddlefit.project import Project
 from saddlefit.providers.anthropic import AnthropicClient
-from saddlefit.providers.base import ModelClient, ModelInfo
-from saddlefit.providers.openai_compat import OpenAICompatibleClient
+from saddlefit.providers.base import ModelClient, ModelInfo, ProviderError
+from saddlefit.providers.openai_compat import OpenAICompatibleClient, context_window_problem
 from saddlefit.tasks.mining import Runner, SandboxRunner
 
 
@@ -236,6 +236,14 @@ def _student(project: Project) -> tuple[ModelInfo, Callable[[], ModelClient]]:
     # the running model's digest decides whether doctor's measurements still apply
     probe = OpenAICompatibleClient(base_url=config.student.base_url, model=config.student.model)
     model_info = probe.info()  # read once: timeout, tool mode and report use the same model
+    try:
+        problem = context_window_problem(
+            probe.served_context_length(), config.student.context_length
+        )
+    except ProviderError as exc:
+        raise EnvironmentFailure(f"the student model could not be loaded: {exc}") from exc
+    if problem is not None:
+        raise EnvironmentFailure(problem)
     timeout_s = project.student_timeout(model_info.digest)
 
     def model_client() -> ModelClient:

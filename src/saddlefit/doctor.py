@@ -30,10 +30,11 @@ from saddlefit.providers.base import (
     Message,
     ModelClient,
     ModelInfo,
+    ProviderError,
     ToolMode,
     ToolSpec,
 )
-from saddlefit.providers.openai_compat import OpenAICompatibleClient
+from saddlefit.providers.openai_compat import OpenAICompatibleClient, context_window_problem
 
 log = logging.getLogger(__name__)
 
@@ -150,6 +151,18 @@ def probe_tools(client: ModelClient, mode: ToolMode) -> int:
     return successes
 
 
+def served_context_check(served_context: Callable[[], int | None], context_length: int) -> Check:
+    """Whether the window the runner actually serves holds the configured context."""
+    try:
+        served = served_context()
+    except ProviderError as exc:
+        return Check("context window", False, f"the model did not load: {exc}")
+    if served is None:
+        return Check("context window", None, "the runner does not report it")
+    problem = context_window_problem(served, context_length)
+    return Check("context window", problem is None, problem or f"served {served}")
+
+
 def run_doctor(
     client: ModelClient,
     *,
@@ -157,6 +170,7 @@ def run_doctor(
     facts: Callable[[], ModelFacts | None],
     context_length: int,
     now: Callable[[], datetime],
+    served_context: Callable[[], int | None] = lambda: None,
 ) -> DoctorReport:
     """Every check B5 lists, in order; stops after the runner if it cannot be reached."""
     report = DoctorReport()
@@ -191,6 +205,9 @@ def run_doctor(
                     f"model {model_facts.max_context}, configured {context_length}",
                 )
             )
+
+    report.checks.append(served_context_check(served_context, context_length))
+    report.environment_ok = report.environment_ok and report.checks[-1].ok is not False
 
     native = probe_tools(client, "native")
     json_probes = None if native >= PROBES_NEEDED else probe_tools(client, "json")
@@ -256,6 +273,7 @@ def doctor_for(student: StudentConfig, sandbox: SandboxConfig) -> DoctorReport:
         facts=lambda: fetch_ollama_facts(student.base_url, student.model),
         context_length=student.context_length,
         now=lambda: datetime.now(UTC),
+        served_context=client.served_context_length,
     )
 
 
