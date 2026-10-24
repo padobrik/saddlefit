@@ -66,6 +66,24 @@ def _native_root(base_url: str) -> str:
     return urlunsplit((parts.scheme, parts.netloc, path, "", ""))
 
 
+def _ollama_name(name: str) -> str:
+    """``name`` in Ollama's shortest form: default registry and namespace dropped, tag added."""
+    for prefix in ("registry.ollama.ai/", "library/"):
+        name = name.removeprefix(prefix)
+    return name if ":" in name.rsplit("/", 1)[-1] else f"{name}:latest"
+
+
+def context_window_problem(served: int | None, configured: int) -> str | None:
+    """Why the served window cannot hold the configured context, or ``None`` when it can."""
+    if served is None or served >= configured:
+        return None
+    return (
+        f"the runner serves the model with a {served}-token context window, but "
+        f"student.context_length is {configured}; longer prompts would be cut silently. "
+        f"For Ollama, restart the server with OLLAMA_CONTEXT_LENGTH={configured}"
+    )
+
+
 def to_openai_messages(messages: Sequence[Message]) -> list[dict[str, Any]]:
     """Convert to the Chat Completions message format."""
     out: list[dict[str, Any]] = []
@@ -194,6 +212,43 @@ class OpenAICompatibleClient:
             runner=runner,
             runner_version=version,
         )
+
+    def served_context_length(self) -> int | None:
+        """The context window the runner loaded the model with; ``None`` when it does not say.
+
+        Ollama's OpenAI endpoint ignores a requested window, so the server's setting decides
+        it. The model is loaded first with a one-token reply, since only a loaded model reports
+        its window.
+        """
+        if self.info().runner != "ollama":
+            return None
+        served = self._loaded_context()
+        if served is None:
+
+            def load() -> Any:
+                try:
+                    return self._sdk.chat.completions.create(
+                        model=self.model, messages=[{"role": "user", "content": "hi"}], max_tokens=1
+                    )
+                except openai.OpenAIError as exc:
+                    raise map_error(exc) from exc
+
+            call_with_retries(load, sleep=self._sleep)
+            served = self._loaded_context()
+        return served
+
+    def _loaded_context(self) -> int | None:
+        wanted = _ollama_name(self.model)
+        try:
+            loaded = self._fetch_json(f"{_native_root(self.base_url)}/api/ps", None)
+            for entry in loaded.get("models", []):
+                names = {entry.get("name"), entry.get("model")} - {None}
+                if wanted in {_ollama_name(str(name)) for name in names}:
+                    value = entry.get("context_length")
+                    return value if isinstance(value, int) else None
+        except (OSError, ValueError, AttributeError):
+            log.debug("the runner does not report loaded models")
+        return None
 
     def chat(
         self,
