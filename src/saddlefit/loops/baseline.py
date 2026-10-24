@@ -8,6 +8,7 @@ when it passes in at least ``solved_threshold`` of ``runs_per_task`` runs (B12).
 
 from __future__ import annotations
 
+import dataclasses
 import shutil
 import tempfile
 import time
@@ -19,7 +20,7 @@ from typing import Any, Literal
 
 from saddlefit.config import Config
 from saddlefit.context.assembly import Harness, assemble
-from saddlefit.eval.evaluator import Evaluator, Verdict
+from saddlefit.eval.evaluator import Evaluator, Verdict, protected_patterns
 from saddlefit.eval.taxonomy import Classification, classify
 from saddlefit.harness.loop_config import LoopConfig
 from saddlefit.loops.run_record import run_signals, run_summary
@@ -40,6 +41,22 @@ BASELINE_SPLITS: frozenset[str] = frozenset({"train", "held_out"})  # never cont
 ENV_ERROR_RETRIES = 1
 # One reply, reasoning included; bounds the latency of a single model call.
 MAX_REPLY_TOKENS = 4096
+
+
+def with_protected_rule(task_text: str, protected: Sequence[str]) -> str:
+    """The task as the student reads it: its text, then the paths it must leave alone.
+
+    Mined texts often list the tests their commit added, so the rule says to leave them
+    even then: the evaluator fails a run whose diff touches any of these patterns.
+    """
+    patterns = ", ".join(f"`{p}`" for p in protected)
+    rule = (
+        "## Protected files\n\n"
+        "Hidden tests check this change after you finish. Do not create, edit or delete files "
+        f"matching {patterns}, even if the text above asks for tests: a change to any of them "
+        "fails the task."
+    )
+    return f"{task_text.rstrip()}\n\n{rule}\n"
 
 
 @dataclass(frozen=True)
@@ -218,6 +235,9 @@ class BaselineRunner:
             enabled_tools=TOOL_NAMES,
             harness_budget_tokens=self.loop.context.harness_budget_tokens,
         )
+        # after assembly, so skills and lessons are still ranked on the task text alone
+        protected = protected_patterns(self.config.evaluation)
+        context = dataclasses.replace(context, task=with_protected_rule(context.task, protected))
         client = self.client_factory()
         student_result: StudentResult | None = None
         env_error = False
