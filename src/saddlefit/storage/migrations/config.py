@@ -9,7 +9,7 @@ from saddlefit.storage.migrations import Record, register
 CONFIG_KIND: Final = "config"
 
 
-@register(CONFIG_KIND, 1)
-def _v1_to_v2(record: Record) -> Record:
-    """v2 adds the tutor's prompt-cache prices; a v1 file stated none, so they stay 0.0."""
-    return {**record, "schema_version": 2}
+@register(CONFIG_KIND, 2)
+def _v2_to_v3(record: Record) -> Record:
+    """v3 adds the generator's budget and prices; a v2 file stated none, so defaults apply."""
+    return {**record, "schema_version": 3}

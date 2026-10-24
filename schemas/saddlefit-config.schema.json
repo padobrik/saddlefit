@@ -66,12 +66,34 @@
     },
     "GeneratorConfig": {
       "additionalProperties": false,
-      "description": "The strong model that writes new tasks; a separate role from the tutor.",
+      "description": "The strong model that writes new tasks; a separate role from the tutor.\n\nThe budget covers one ``tasks generate`` command: it stops before a call that could go\npast either limit.",
       "properties": {
+        "max_calls": {
+          "default": 10,
+          "exclusiveMinimum": 0,
+          "title": "Max Calls",
+          "type": "integer"
+        },
+        "max_usd": {
+          "default": 5.0,
+          "minimum": 0.0,
+          "title": "Max Usd",
+          "type": "number"
+        },
         "model": {
           "default": "claude-fable-5-1",
           "title": "Model",
           "type": "string"
+        },
+        "prices_usd_per_mtok": {
+          "$ref": "#/$defs/TokenPrices",
+          "default": {
+            "cache_read": 0.0,
+            "cache_write_1h": 0.0,
+            "cache_write_5m": 0.0,
+            "input": 0.0,
+            "output": 0.0
+          }
         },
         "provider": {
           "default": "anthropic",
@@ -216,7 +238,7 @@
     },
     "TokenPrices": {
       "additionalProperties": false,
-      "description": "Tutor prices in USD per million tokens; filled in by the user, never hardcoded.",
+      "description": "Model prices in USD per million tokens; filled in by the user, never hardcoded.",
       "properties": {
         "cache_read": {
           "default": 0.0,
@@ -324,7 +346,16 @@
     "generator": {
       "$ref": "#/$defs/GeneratorConfig",
       "default": {
+        "max_calls": 10,
+        "max_usd": 5.0,
         "model": "claude-fable-5-1",
+        "prices_usd_per_mtok": {
+          "cache_read": 0.0,
+          "cache_write_1h": 0.0,
+          "cache_write_5m": 0.0,
+          "input": 0.0,
+          "output": 0.0
+        },
         "provider": "anthropic"
       }
     },
@@ -337,7 +368,7 @@
       "$ref": "#/$defs/SandboxConfig"
     },
     "schema_version": {
-      "const": 2,
+      "const": 3,
       "title": "Schema Version",
       "type": "integer"
     },

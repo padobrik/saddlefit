@@ -132,7 +132,7 @@ def test_cli_stores_the_record_next_to_the_config(
 ) -> None:
     config = tmp_path / ".saddlefit" / "saddlefit.yaml"
     config.parent.mkdir()
-    config.write_text(dump_config(Config(schema_version=2, project="p")), encoding="utf-8")
+    config.write_text(dump_config(Config(schema_version=3, project="p")), encoding="utf-8")
     monkeypatch.setattr(cli, "doctor_for", lambda student, sandbox: canned("M"))
     result = CliRunner().invoke(app, ["--json", "doctor", "--config", str(config)])
     assert result.exit_code == ExitCode.OK
@@ -235,7 +235,7 @@ def test_a_failed_record_write_shows_the_report_and_exits_3(
 ) -> None:
     config = tmp_path / ".saddlefit" / "saddlefit.yaml"
     config.parent.mkdir()
-    config.write_text(dump_config(Config(schema_version=2, project="p")), encoding="utf-8")
+    config.write_text(dump_config(Config(schema_version=3, project="p")), encoding="utf-8")
     monkeypatch.setattr(cli, "doctor_for", lambda student, sandbox: canned("M"))
     real_write = Path.write_text
 

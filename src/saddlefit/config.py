@@ -18,7 +18,7 @@ from saddlefit.errors import UserError
 from saddlefit.storage.migrations import MigrationError, upgrade
 from saddlefit.storage.migrations.config import CONFIG_KIND
 
-CONFIG_SCHEMA_VERSION: Final = 2
+CONFIG_SCHEMA_VERSION: Final = 3
 CONFIG_FILENAME = "saddlefit.yaml"
 SANDBOX_REPOSITORY: Final = "ghcr.io/padobrik/saddlefit-sandbox"
 
@@ -48,7 +48,7 @@ class StudentConfig(_Strict):
 
 
 class TokenPrices(_Strict):
-    """Tutor prices in USD per million tokens; filled in by the user, never hardcoded."""
+    """Model prices in USD per million tokens; filled in by the user, never hardcoded."""
 
     input: float = Field(default=0.0, ge=0.0)
     output: float = Field(default=0.0, ge=0.0)
@@ -68,10 +68,17 @@ class TutorConfig(_Strict):
 
 
 class GeneratorConfig(_Strict):
-    """The strong model that writes new tasks; a separate role from the tutor."""
+    """The strong model that writes new tasks; a separate role from the tutor.
+
+    The budget covers one ``tasks generate`` command: it stops before a call that could go
+    past either limit.
+    """
 
     provider: Literal["anthropic", "fake"] = "anthropic"
     model: str = "claude-fable-5-1"
+    max_calls: int = Field(default=10, gt=0)
+    max_usd: float = Field(default=5.0, ge=0.0)
+    prices_usd_per_mtok: TokenPrices = TokenPrices()
 
 
 class EvaluationConfig(_Strict):
@@ -130,7 +137,7 @@ class FastLoopConfig(_Strict):
 class Config(_Strict):
     """The whole ``saddlefit.yaml`` file."""
 
-    schema_version: Literal[2]
+    schema_version: Literal[3]
     project: str = Field(min_length=1)
     student: StudentConfig = StudentConfig()
     tutor: TutorConfig = TutorConfig()
