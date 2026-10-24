@@ -6,7 +6,7 @@ from typing import Any
 import pytest
 
 from saddlefit.eval.progress import Comparable, harness_progress
-from saddlefit.storage.runs import RunSummary, RunWriter, new_run_id
+from saddlefit.storage.runs import RUN_SCHEMA_VERSION, RunSummary, RunWriter, new_run_id
 
 # a candidate commit and the merge that accepted it share one tree
 TREES = {"aaaaaaa": "tree-before", "bbbbbbb": "tree-after", "ccccccc": "tree-after"}
@@ -31,7 +31,7 @@ def run(
 ) -> None:
     run_id = new_run_id()
     summary: dict[str, Any] = {
-        "schema_version": 1,
+        "schema_version": RUN_SCHEMA_VERSION,
         "type": "summary",
         "run_id": run_id,
         "task_id": task,

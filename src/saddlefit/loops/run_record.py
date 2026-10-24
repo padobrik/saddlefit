@@ -9,7 +9,7 @@ from saddlefit.config import Config
 from saddlefit.eval.evaluator import Verdict
 from saddlefit.eval.taxonomy import Classification, RunSignals
 from saddlefit.providers.base import ModelInfo
-from saddlefit.storage.runs import CheckResult, DiffStats, ModelRef, RunSummary
+from saddlefit.storage.runs import RUN_SCHEMA_VERSION, CheckResult, DiffStats, ModelRef, RunSummary
 from saddlefit.student.loop import StudentResult
 from saddlefit.tasks.models import TaskMeta
 
@@ -62,7 +62,7 @@ def run_summary(
         else None
     )
     return RunSummary(
-        schema_version=1,
+        schema_version=RUN_SCHEMA_VERSION,
         type="summary",
         run_id=run_id,
         task_id=meta.id,
