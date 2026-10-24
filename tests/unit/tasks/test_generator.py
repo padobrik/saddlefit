@@ -86,6 +86,21 @@ def test_a_good_answer_becomes_a_task() -> None:
         ({"hidden_tests": [{"path": "../tests/t.py", "content": "x"}]}, "stay inside"),
         ({"hidden_tests": [{"path": "tests/test_dates.py", "content": "x"}]}, "already exists"),
         ({"reference_patch": "just prose"}, "unified diff"),
+        ({"reference_patch": "diff --git a/src/dates.py b/src/dates.py\n"}, "unified diff"),
+        (
+            {"hidden_tests": [{"path": "tests/./test_dates.py", "content": "x"}]},
+            "normal form",
+        ),
+        ({"task_md": "# Fix it\n\nSee test_parse_spaces.py."}, "names the hidden test"),
+        (
+            {
+                "hidden_tests": [
+                    {"path": "tests/test_x.py", "content": "assert parse(' a ') == 'a-stripped'"}
+                ],
+                "task_md": "# Fix it\n\nassert parse(' a ') == 'a-stripped'",
+            },
+            "quotes the hidden test",
+        ),
         (
             {"reference_patch": PATCH.replace("src/dates.py", "tests/test_dates.py")},
             "touches protected paths",
@@ -119,3 +134,9 @@ def test_file_sampling_fits_the_budget_and_varies() -> None:
 def test_every_task_kind_has_instructions() -> None:
     assert set(TASK_KINDS) == {"feature", "bugfix"}
     assert all(kind.name == name and kind.instructions for name, kind in TASK_KINDS.items())
+
+
+def test_a_request_over_the_file_budget_is_refused() -> None:
+    big = [RepoFile("src/big.py", "x" * 40_001)]
+    with pytest.raises(ValueError, match="over 40000"):
+        generate(FakeClient([reply()]), request(files=big))

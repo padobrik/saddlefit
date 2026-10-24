@@ -11,6 +11,7 @@ Whether a task is kept is decided later, in a fresh container and then by calibr
 
 from __future__ import annotations
 
+import posixpath
 import random
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -24,6 +25,8 @@ from saddlefit.providers.base import GenParams, Message, ModelClient, ProviderEr
 
 TOOL_NAME: Final = "submit_task"
 MAX_EXAMPLES: Final = 3
+# a hidden-test line this long showing up in the task text gives the test away
+DISCLOSED_LINE_CHARS: Final = 25
 FILE_BUDGET_CHARS: Final = 40_000
 
 
@@ -149,6 +152,37 @@ def render_user(request: GeneratorRequest) -> str:
     return "\n\n".join(parts) + "\n"
 
 
+def _disclosures(task_md: str, tests: list[Any]) -> list[str]:
+    """The hidden tests' names or code in the text the student reads."""
+    found = []
+    for entry in tests:
+        if not isinstance(entry, dict):
+            continue
+        path, content = entry.get("path"), entry.get("content")
+        if isinstance(path, str) and PurePosixPath(path).name in task_md:
+            found.append(f"task_md names the hidden test {path}")
+        if isinstance(content, str) and any(
+            len(line.strip()) >= DISCLOSED_LINE_CHARS and line.strip() in task_md
+            for line in content.splitlines()
+        ):
+            found.append(f"task_md quotes the hidden test {path}")
+    return found
+
+
+def _test_path_problem(path: str, request: GeneratorRequest) -> str | None:
+    rel = PurePosixPath(path)
+    if "\\" in path or rel.is_absolute() or ".." in rel.parts or not rel.parts:
+        return f"hidden test path must be relative and stay inside: {path!r}"
+    # compared in normal form, so tests/./x.py cannot stand in for an existing tests/x.py
+    if posixpath.normpath(path) != path:
+        return f"hidden test path must be in normal form: {path!r}"
+    if not matches_any(path, request.protected):
+        return f"hidden test {path} matches no protected pattern"
+    if path in request.existing_paths:
+        return f"hidden test {path} already exists in the repository"
+    return None
+
+
 def _problems(arguments: Mapping[str, Any], request: GeneratorRequest) -> list[str]:
     problems: list[str] = []
     task_md = arguments.get("task_md")
@@ -161,21 +195,18 @@ def _problems(arguments: Mapping[str, Any], request: GeneratorRequest) -> list[s
         path = entry.get("path") if isinstance(entry, dict) else None
         if not isinstance(path, str) or not isinstance(entry.get("content"), str):
             problems.append("each hidden test needs a path and a content string")
-            continue
-        rel = PurePosixPath(path)
-        if "\\" in path or rel.is_absolute() or ".." in rel.parts or not rel.parts:
-            problems.append(f"hidden test path must be relative and stay inside: {path!r}")
-        elif not matches_any(path, request.protected):
-            problems.append(f"hidden test {path} matches no protected pattern")
-        elif path in request.existing_paths:
-            problems.append(f"hidden test {path} already exists in the repository")
+        elif problem := _test_path_problem(path, request):
+            problems.append(problem)
     patch = arguments.get("reference_patch")
-    if not isinstance(patch, str) or not diff_paths(patch):
+    hunks = isinstance(patch, str) and any(line.startswith("@@ ") for line in patch.splitlines())
+    if not isinstance(patch, str) or not diff_paths(patch) or not hunks:
         problems.append("reference_patch must be a unified diff that changes at least one file")
     else:
         touched = sorted(p for p in diff_paths(patch) if matches_any(p, request.protected))
         if touched:
             problems.append(f"reference_patch touches protected paths: {touched}")
+    if isinstance(task_md, str) and isinstance(tests, list):
+        problems += _disclosures(task_md, tests)
     check = arguments.get("visible_check")
     if not isinstance(check, str) or not check.strip():
         problems.append("visible_check must be a shell command")
@@ -186,6 +217,9 @@ def generate(
     client: ModelClient, request: GeneratorRequest, max_tokens: int | None = None
 ) -> GeneratorResult:
     """One generator call: the request in, exactly one checked task out."""
+    shown = sum(len(f.content) for f in request.files)
+    if shown > FILE_BUDGET_CHARS:
+        raise ValueError(f"the request shows {shown} characters of files, over {FILE_BUDGET_CHARS}")
     messages = [
         Message(role="system", content=render_system(request)),
         Message(role="user", content=render_user(request)),
