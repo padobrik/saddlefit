@@ -214,3 +214,12 @@ Assumptions taken where the spec leaves a detail open. Deviations from the spec 
   `prices_usd_per_mtok`, all for one `tasks generate` command, which stops before a call that
   could pass either limit. A v2 file reads as v3 with these defaults; as for every format,
   only the current and the previous version are read, so a v1 file is refused.
+- **`tasks generate`.** One attempt is one generator call: the task is sealed, must fail
+  without its reference patch and pass with it, then runs five times with the current student
+  and is kept only at one to four passes (20-80%). The generator sees the file list, the
+  README, a random sample of non-protected text files within 40,000 characters and up to
+  three training task texts. The command refuses to start without generator input and output
+  prices, since `generator.max_usd` could not stop anything; it stops before a call whose
+  worst case (the prompt at four characters a token plus a full 8,192-token reply) could pass
+  it. Calibration runs go to `.saddlefit/calibration/`, outside baseline and fit records.
+  Generated tasks start from the repository's current `HEAD`.

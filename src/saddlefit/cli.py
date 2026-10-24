@@ -22,6 +22,7 @@ from saddlefit.project import Project
 from saddlefit.providers.anthropic import AnthropicClient
 from saddlefit.providers.base import ModelClient, ModelInfo, ProviderError
 from saddlefit.providers.openai_compat import OpenAICompatibleClient, context_window_problem
+from saddlefit.tasks.generator import TASK_KINDS
 from saddlefit.tasks.mining import Runner, SandboxRunner
 
 
@@ -135,6 +136,54 @@ def tasks_mine(
         data,
         f"scanned {report.scanned} commits, {len(metas)} tasks; rejected: {dict(report.rejected)}",
     )
+
+
+@tasks_app.command("generate")
+def tasks_generate(
+    ctx: typer.Context,
+    type_: Annotated[str, typer.Option("--type", help="Task type: feature or bugfix.")],
+    count: Annotated[int, typer.Option(min=1, help="How many tasks to keep.")] = 1,
+) -> None:
+    """Write tasks with the generator; keep those the student solves in 20-80% of 5 runs."""
+    if type_ not in TASK_KINDS:
+        raise UserError(f"unknown task type {type_!r}; known: {', '.join(sorted(TASK_KINDS))}")
+    project = _project()
+    config = project.config()
+    if config.generator.provider != "anthropic":
+        raise UserError(
+            f"tasks generate needs the anthropic generator provider, not "
+            f"{config.generator.provider!r}"
+        )
+    prices = config.generator.prices_usd_per_mtok
+    if not (prices.input and prices.output):
+        # without prices, generator.max_usd could not stop anything
+        raise UserError(
+            "generator prices are not set; fill in generator.prices_usd_per_mtok "
+            "(input and output) from your price list"
+        )
+    model_info, model_client = _student(project)
+    report = project.generate_tasks(
+        kind=type_,
+        count=count,
+        docker_client=_docker(),
+        generator_client=AnthropicClient(config.generator.model),
+        model_client=model_client,
+        model_info=model_info,
+    )
+    data = {
+        "kept": report.kept,
+        "attempts": [vars(a) for a in report.attempts],
+        "calls": report.calls,
+        "usd": round(report.usd, 4),
+        "stopped": report.stopped,
+    }
+    lines = [
+        f"{'kept' if a.kept else 'dropped'} {a.task_id or '-'}: {a.reason}" for a in report.attempts
+    ]
+    lines.append(f"kept {len(report.kept)} of {count}; {report.calls} calls, ${report.usd:.2f}")
+    if report.stopped:
+        lines.append(f"stopped: {report.stopped}")
+    _emit(ctx, data, "\n".join(lines))
 
 
 @tasks_app.command("list")
