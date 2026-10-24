@@ -28,7 +28,7 @@ class Probe:
 
 def project() -> Any:
     return SimpleNamespace(
-        config=lambda: Config(schema_version=2, project="p"),
+        config=lambda: Config(schema_version=3, project="p"),
         student_timeout=lambda digest: 60.0,
     )
 

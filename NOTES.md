@@ -210,3 +210,7 @@ Assumptions taken where the spec leaves a detail open. Deviations from the spec 
   nulls are kept as they are, and anything else is written as JSON text. The tool's output
   stays out, as before: only its size is recorded. The tutor's digest of a run does not show
   the arguments yet.
+- **Generator budget.** Config v3 gives the generator `max_calls` (10), `max_usd` (5.0) and
+  `prices_usd_per_mtok`, all for one `tasks generate` command, which stops before a call that
+  could pass either limit. A v2 file reads as v3 with these defaults; as for every format,
+  only the current and the previous version are read, so a v1 file is refused.

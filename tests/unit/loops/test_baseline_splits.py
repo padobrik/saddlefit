@@ -45,7 +45,7 @@ def runner(tmp_path: Path, **changes: Any) -> BaselineRunner:
     store.init()
     fields_: dict[str, Any] = {
         "repo": tmp_path,
-        "config": Config(schema_version=2, project="p"),
+        "config": Config(schema_version=3, project="p"),
         "loop": default_loop_config(),
         "harness_dir": store.path,
         "harness_commit": store.head(),

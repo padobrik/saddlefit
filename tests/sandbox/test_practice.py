@@ -33,7 +33,7 @@ def test_practice_runs_batches_and_compares_held_out(
     monkeypatch.setattr(splits_module.secrets, "token_hex", lambda n: "01" * 32)
     repo = build(tmp_path / "repo")
     config = Config(
-        schema_version=2,
+        schema_version=3,
         project="toy",
         evaluation=EvaluationConfig(runs_per_task=1, solved_threshold=1, timeout_seconds=120),
         sandbox=SandboxConfig(memory="512m", image=sandbox_image),
