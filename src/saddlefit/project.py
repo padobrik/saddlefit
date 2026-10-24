@@ -23,7 +23,7 @@ from saddlefit.config import CONFIG_SCHEMA_VERSION, Config, StudentConfig, dump_
 from saddlefit.doctor import DoctorRecord
 from saddlefit.errors import UserError
 from saddlefit.eval.control import control_summary
-from saddlefit.eval.evaluator import Evaluator
+from saddlefit.eval.evaluator import Evaluator, protected_patterns
 from saddlefit.eval.leak_guard import GuardedClient, guard_for_suite
 from saddlefit.eval.progress import Comparable, harness_progress
 from saddlefit.export.skill import export_skill
@@ -39,6 +39,12 @@ from saddlefit.loops.baseline import (
 )
 from saddlefit.loops.final import ControlRunner
 from saddlefit.loops.fit import run_rounds
+from saddlefit.loops.generate import (
+    CALIBRATION_RUNS,
+    Generation,
+    GenerationReport,
+)
+from saddlefit.loops.generate import MAX_REPLY_TOKENS as GENERATOR_REPLY_TOKENS
 from saddlefit.loops.middle import MiddleLoop, RoundReport
 from saddlefit.loops.practice import DockerPractice, without_control
 from saddlefit.providers.base import ModelClient, ModelInfo
@@ -63,9 +69,21 @@ from saddlefit.storage.fit_state import (
     save_fit_state,
 )
 from saddlefit.storage.library import ChangeRecord, read_records
-from saddlefit.tasks.mining import STATE_DIR, MiningReport, Runner, mine
-from saddlefit.tasks.models import TaskMeta
-from saddlefit.tasks.splits import new_lock
+from saddlefit.tasks import generated as generated_files
+from saddlefit.tasks.acceptance import accept, seal_generated
+from saddlefit.tasks.generator import (
+    MAX_EXAMPLES,
+    TASK_KINDS,
+    GeneratedTask,
+    GeneratorRequest,
+    generate,
+    render_system,
+    render_user,
+    select_files,
+)
+from saddlefit.tasks.mining import STATE_DIR, MiningReport, Runner, _export, _git_bytes, mine
+from saddlefit.tasks.models import TASK_SCHEMA_VERSION, RepoRef, TaskMeta
+from saddlefit.tasks.splits import add_task, new_lock
 from saddlefit.tasks.suite import SuitePaths, load_lock, load_meta, materialize, save_lock
 
 
@@ -206,6 +224,120 @@ class Project:
         if task_id not in {meta.id for meta in self.tasks()}:
             raise UserError(f"no such task: {task_id}")
         return (self.suite.public_dir / task_id / "task.md").read_text(encoding="utf-8")
+
+    def generate_tasks(
+        self,
+        *,
+        kind: str,
+        count: int,
+        docker_client: Any,
+        generator_client: ModelClient,
+        model_client: Callable[[], ModelClient],
+    ) -> GenerationReport:
+        """Generate ``count`` kept tasks of ``kind``, within the generator's budget (B13)."""
+        if kind not in TASK_KINDS:
+            raise UserError(f"unknown task type {kind!r}; known: {', '.join(sorted(TASK_KINDS))}")
+        config = self.config()
+        protected = protected_patterns(config.evaluation)
+        head = _git_bytes(self.root, "rev-parse", "HEAD").decode().strip()
+        paths = generated_files.tracked_paths(self.root, head)
+        files = generated_files.repo_files(self.root, head, paths, protected)
+        if not files:
+            raise UserError("no source files the generator could change")
+        summary = generated_files.repo_summary(self.root, head, paths)
+        train = [m for m in self.tasks() if m.split == "train"][:MAX_EXAMPLES]
+        examples = [self.task_text(m.id) for m in train]
+        sealed = self.suite.sealed_dir
+        guard = guard_for_suite(sealed, self.incidents)
+        image = self.environment_image(docker_client)
+        evaluator = Evaluator.for_suite(
+            sealed, docker_client, image, config.sandbox, config.evaluation
+        )
+        loop, _ = self.effective_loop()
+        calibration = config.model_copy(
+            update={
+                "evaluation": config.evaluation.model_copy(
+                    update={"runs_per_task": CALIBRATION_RUNS, "solved_threshold": 1}
+                )
+            }
+        )
+        metas: dict[str, TaskMeta] = {}
+
+        def request(rng: Any) -> GeneratorRequest:
+            return GeneratorRequest(
+                kind=TASK_KINDS[kind],
+                repo_summary=summary,
+                files=select_files(files, rng),
+                examples=examples,
+                protected=protected,
+                existing_paths=frozenset(paths),
+            )
+
+        def calibrate(task_id: str, task: GeneratedTask) -> int:
+            lock = add_task(
+                load_lock(self.suite, config.splits),
+                task_id,
+                "generated",
+                generated_files.content_hash(task),
+            )
+            meta = TaskMeta(
+                schema_version=TASK_SCHEMA_VERSION,
+                id=task_id,
+                source="generated",
+                type=kind,
+                split=next(t.split for t in lock.tasks if t.id == task_id),
+                repo=RepoRef(base_commit=head),
+                visible_check=task.visible_check,
+                created=date.today(),
+            )
+            metas[task_id] = meta
+            generated_files.publish(self.suite, meta, task)
+            commit = self.harness.head()
+            with tempfile.TemporaryDirectory(prefix="saddlefit-harness-") as tmp:
+                self.harness.export(commit, Path(tmp))
+                runner = BaselineRunner(
+                    repo=self.root,
+                    config=calibration,
+                    loop=loop,
+                    harness_dir=Path(tmp),
+                    harness_commit=commit,
+                    suite_hash=lock.suite_hash(),
+                    public_dir=self.suite.public_dir,
+                    runs_root=self.state / "calibration",
+                    client_factory=lambda: GuardedClient(model_client(), guard),
+                    evaluator=evaluator,
+                    docker_client=docker_client,
+                    image=image,
+                    tool_mode=self.tool_mode(),
+                )
+                result = runner.run([meta])
+            return sum(run.passed for run in result.runs)
+
+        def keep(task_id: str, task: GeneratedTask) -> None:
+            lock = load_lock(self.suite, config.splits)
+            save_lock(
+                self.suite,
+                add_task(lock, task_id, "generated", generated_files.content_hash(task)),
+            )
+
+        with tempfile.TemporaryDirectory(prefix="saddlefit-base-") as tmp:
+            base = Path(tmp) / "base"
+            _export(self.root, head, base)
+            generation = Generation(
+                kind=kind,
+                budget=config.generator,
+                request=request,
+                call=lambda req: generate(
+                    GuardedClient(generator_client, guard), req, GENERATOR_REPLY_TOKENS
+                ),
+                seal=lambda task_id, task: seal_generated(sealed, task_id, task),
+                accept=lambda task_id, task: accept(evaluator, task_id, base, task),
+                calibrate=calibrate,
+                keep=keep,
+                discard=lambda task_id: generated_files.discard(self.suite, task_id),
+                prompt_chars=lambda req: len(render_system(req)) + len(render_user(req)),
+            )
+            return generation.run(count)
 
     def environment_image(self, docker_client: Any) -> str:
         """The image this repository's tests run in: the sandbox plus its dependencies (B11).
