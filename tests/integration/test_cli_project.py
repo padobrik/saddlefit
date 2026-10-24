@@ -439,3 +439,34 @@ def test_the_environment_image_is_recorded_for_the_project(tmp_path: Path) -> No
     (repo / "pyproject.toml").unlink()  # the dependencies are gone: back to the base image
     assert project.environment_image(FakeDocker(FakeImages({base}))) == base
     assert not (project.state / "environment.json").exists()
+
+
+@pytest.mark.parametrize(
+    ("args", "config_extra", "message"),
+    [
+        (["--type", "poem"], "", "unknown task type 'poem'"),
+        (["--type", "feature"], "", "generator prices are not set"),
+        (
+            ["--type", "feature"],
+            "generator:\n  provider: fake\n",
+            "needs the anthropic generator provider",
+        ),
+    ],
+)
+def test_tasks_generate_refuses_before_spending(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    args: list[str],
+    config_extra: str,
+    message: str,
+) -> None:
+    repo = build(tmp_path / "repo")
+    invoke(repo, "init", "--model", "qwen3:8b", monkeypatch=monkeypatch)
+    config = repo / ".saddlefit" / "saddlefit.yaml"
+    text = config.read_text(encoding="utf-8")
+    if config_extra:
+        text = text.replace("generator:\n  provider: anthropic\n", config_extra)
+    config.write_text(text, encoding="utf-8")
+    result = runner.invoke(app, ["tasks", "generate", *args])
+    assert isinstance(result.exception, UserError)
+    assert message in str(result.exception)
