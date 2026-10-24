@@ -35,7 +35,7 @@ from saddlefit.storage.runs import (
 from saddlefit.student.loop import StudentLoop, StudentResult
 from saddlefit.tasks.mining import _export as export_tree
 from saddlefit.tasks.models import TaskMeta
-from saddlefit.tools.builtin import TOOL_NAMES, Toolbox
+from saddlefit.tools.builtin import Toolbox, specs_for
 
 BASELINE_SPLITS: frozenset[str] = frozenset({"train", "held_out"})  # never control (B10)
 ENV_ERROR_RETRIES = 1
@@ -214,6 +214,14 @@ class BaselineRunner:
             )
         return outcome
 
+    def _enabled_tools(self) -> frozenset[str]:
+        return frozenset({*self.loop.tools.enabled, "finish"})
+
+    def _scripts(self) -> list[Path]:
+        """The harness's tool scripts, which the sandbox mounts read-only."""
+        tools = self.harness_dir / "tools"
+        return sorted(p for p in tools.iterdir() if p.is_file()) if tools.is_dir() else []
+
     def _run_once(
         self,
         *,
@@ -232,8 +240,9 @@ class BaselineRunner:
             task_text=task_text,
             task_type=meta.type,
             model=self.config.student.model,
-            enabled_tools=TOOL_NAMES,
+            enabled_tools=self._enabled_tools(),
             harness_budget_tokens=self.loop.context.harness_budget_tokens,
+            scripts=[p.name for p in self._scripts()],
         )
         # after assembly, so skills and lessons are still ranked on the task text alone
         protected = protected_patterns(self.config.evaluation)
@@ -255,10 +264,18 @@ class BaselineRunner:
                     self.config.sandbox,
                     run_timeout_s=self.config.evaluation.timeout_seconds,
                     labels={"saddlefit.role": "student", "saddlefit.run": run_id},
+                    harness_tools=self.harness_dir / "tools" if self._scripts() else None,
                 ) as box:
                     student = StudentLoop(
                         client=client,
-                        tools=Toolbox(box, max_chars=self.loop.tool_output.max_chars),
+                        tools=Toolbox(
+                            box,
+                            max_chars=self.loop.tool_output.max_chars,
+                            enabled=self._enabled_tools(),
+                            line_numbers=self.loop.tools.read_line_numbers,
+                            strip_line_numbers=self.loop.tools.edit_strips_line_numbers,
+                        ),
+                        tool_specs=specs_for(self._enabled_tools()),
                         loop=self.loop,
                         params=GenParams(
                             temperature=self.config.student.temperature,

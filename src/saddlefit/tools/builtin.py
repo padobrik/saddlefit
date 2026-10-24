@@ -10,10 +10,11 @@ from __future__ import annotations
 
 import base64
 import posixpath
+import re
 import shlex
 import uuid
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from saddlefit.providers.base import ToolSpec
@@ -118,6 +119,25 @@ INLINE_LIMIT = 100_000
 STAGE_CHUNK = 60_000
 
 
+# the prefix `cat -n` writes: the line number right-aligned, then a tab
+_LINE_NUMBER = re.compile(r"^ *\d+\t", re.MULTILINE)
+
+
+def _numbered(text: str) -> bool:
+    """Every non-empty line starts with a `cat -n` line number: text copied from read_file."""
+    lines = [line for line in text.split("\n") if line]
+    return bool(lines) and all(_LINE_NUMBER.match(line) for line in lines)
+
+
+def _unnumber(text: str) -> str:
+    return _LINE_NUMBER.sub("", text)
+
+
+def specs_for(enabled: frozenset[str]) -> tuple[ToolSpec, ...]:
+    """The tool specs the student is offered: the enabled tools, and finish always."""
+    return tuple(spec for spec in TOOL_SPECS if spec.name in enabled or spec.name == "finish")
+
+
 def _python(op: str, *args: str) -> str:
     return " ".join(["python3", "-c", shlex.quote(_HELPER), op, *args])
 
@@ -128,6 +148,9 @@ class Toolbox:
 
     sandbox: Executor
     max_chars: int = 4000
+    enabled: frozenset[str] = field(default_factory=lambda: TOOL_NAMES)
+    line_numbers: bool = True
+    strip_line_numbers: bool = False
 
     def _run(
         self, command: str, timeout_s: float = 30, ok_codes: tuple[int, ...] = (0,)
@@ -162,14 +185,15 @@ class Toolbox:
 
     def read_file(self, path: str, start: int | None = None, end: int | None = None) -> ToolResult:
         target = shlex.quote(confine(path))
+        cat = "cat -n" if self.line_numbers else "cat"
         if start is None and end is None:
-            return self._run(f"cat -n -- {target}")
+            return self._run(f"{cat} -- {target}")
         first = max(1, start or 1)
         if end is not None and end < first:
             raise ToolError("end must not be before start")
         last = str(end) if end is not None else "$"
         # pipefail: a missing file must fail, not look like an empty range
-        return self._run(f"set -o pipefail; cat -n -- {target} | sed -n '{first},{last}p'")
+        return self._run(f"set -o pipefail; {cat} -- {target} | sed -n '{first},{last}p'")
 
     def list_dir(self, path: str = ".") -> ToolResult:
         return self._run(f"ls -1Ap -- {shlex.quote(confine(path))}")
@@ -185,6 +209,8 @@ class Toolbox:
     def edit_file(self, path: str, old: str, new: str) -> ToolResult:
         if not old:
             raise ToolError("old text must not be empty; use write_file to create a file")
+        if self.strip_line_numbers and _numbered(old):
+            old, new = _unnumber(old), _unnumber(new)
         return self._helper("edit", confine(path), old, new)
 
     def write_file(self, path: str, content: str) -> ToolResult:
@@ -203,11 +229,19 @@ class Toolbox:
     def finish(self, summary: str) -> ToolResult:
         return ToolResult(ok=True, output=truncate(summary, self.max_chars), finished=True)
 
-    def call(self, name: str, arguments: Mapping[str, Any]) -> ToolResult:
-        """Dispatch a validated tool call; bad arguments come back as a failed result."""
+    def call(
+        self, name: str, arguments: Mapping[str, Any], *, internal: bool = False
+    ) -> ToolResult:
+        """Dispatch a validated tool call; bad arguments come back as a failed result.
+
+        ``internal`` calls (the finish gate, hooks) are the loop's own, so a tool the harness
+        switched off for the student still runs for them.
+        """
         handler: Callable[..., ToolResult] | None = getattr(self, name, None)
         if name not in TOOL_NAMES or handler is None:
             return ToolResult(ok=False, output=f"unknown tool: {name}")
+        if name not in self.enabled and not internal:
+            return ToolResult(ok=False, output=f"tool not available in this harness: {name}")
         try:
             # types and required arguments from TOOL_SPECS; this also rejects bools for integers
             validate_tool_call(name, dict(arguments), TOOL_SPECS)

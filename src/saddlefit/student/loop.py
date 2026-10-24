@@ -32,6 +32,10 @@ from saddlefit.tools.builtin import TOOL_SPECS, ToolResult, truncate
 COMPACTION_RATIO = 0.8
 LOGGED_ARGUMENT_CHARS = 300
 NUDGE = "Use a tool to make progress, or call finish when the task is done."
+REPO_MAP_COMMAND = (
+    "find . -type f -not -path '*/.*' -not -path '*/__pycache__/*' | sed 's|^./||' | sort"
+    " | head -n 300"
+)
 
 StopReason = Literal[
     "finished", "step_limit", "time_limit", "loop", "context_overflow", "provider_error"
@@ -39,7 +43,9 @@ StopReason = Literal[
 
 
 class Tools(Protocol):
-    def call(self, name: str, arguments: dict[str, object]) -> ToolResult: ...
+    def call(
+        self, name: str, arguments: dict[str, object], *, internal: bool = False
+    ) -> ToolResult: ...
 
 
 class Recorder(Protocol):
@@ -125,7 +131,7 @@ class StudentLoop:
             context=context,
             messages=[
                 Message(role="system", content=context.system),
-                Message(role="user", content=context.task),
+                Message(role="user", content=context.task + self._repo_map()),
             ],
             result=StudentResult(stop_reason="step_limit"),
             gate_retries=self.loop.finish_gate.max_retries,
@@ -144,6 +150,15 @@ class StudentLoop:
         state.result.stop_reason = reason
         state.result.transcript = state.messages
         return state.result
+
+    def _repo_map(self) -> str:
+        """The repository's files, for the first message, when loop.yaml asks for them."""
+        if not self.loop.context.repo_map:
+            return ""
+        listing = self.tools.call("bash", {"command": REPO_MAP_COMMAND}, internal=True)
+        if not listing.ok or not listing.output.strip():
+            return ""
+        return f"\n\n## Files in the repository\n\n{listing.output.rstrip()}\n"
 
     def _step(self, state: _RunState, step: int) -> StopReason | None:
         result = state.result
@@ -228,7 +243,10 @@ class StudentLoop:
                 "arguments": logged_arguments(call.arguments),
             },
         )
-        state.messages.append(Message(role="tool", tool_call_id=call.id, content=outcome.output))
+        notes = self._hooks(state, "post_tool", call.name) if outcome.ok else ""
+        state.messages.append(
+            Message(role="tool", tool_call_id=call.id, content=outcome.output + notes)
+        )
         return None
 
     def _loop_check(self, state: _RunState, call: ToolCall) -> Literal["ok", "warn", "stop"]:
@@ -248,11 +266,36 @@ class StudentLoop:
         self.recorder.event("loop_warning", {"signature": signature, "stop": False})
         return "warn"
 
+    def _hooks(self, state: _RunState, event: str, tool: str) -> str:
+        """Run the loop.yaml hooks for ``event``; their output goes back with the tool result."""
+        notes = []
+        for hook in self.loop.hooks:
+            if hook.event != event or (hook.tools and tool not in hook.tools):
+                continue
+            if hook.inject is not None:
+                notes.append(f"\n\n[note] {hook.inject}")
+                continue
+            command = str(hook.run)
+            result = self.tools.call("bash", {"command": command}, internal=True)
+            self.recorder.event(
+                "tool_call",
+                {
+                    "name": f"hook:{event}",
+                    "ok": result.ok,
+                    "output_chars": len(result.output),
+                    "arguments": logged_arguments({"command": command}),
+                },
+            )
+            status = "ok" if result.ok else "failed"
+            notes.append(f"\n\n[hook `{command}` {status}]\n{result.output}")
+        return "".join(notes)
+
     def _finish_gate(self, state: _RunState, call: ToolCall) -> StopReason | None:
         """Run the visible check on finish; on failure return its output to the model once."""
         if state.check is None:
             return "finished"
-        gate = self.tools.call("bash", {"command": state.check})
+        notes = self._hooks(state, "before_finish", call.name)
+        gate = self.tools.call("bash", {"command": state.check}, internal=True)
         state.result.ran_visible_check = True
         state.result.finish_gate_passed = gate.ok
         self.recorder.event("finish_gate", {"passed": gate.ok, "output": gate.output})
@@ -268,7 +311,7 @@ class StudentLoop:
             Message(
                 role="tool",
                 tool_call_id=call.id,
-                content=f"The check `{state.check}` failed:\n{gate.output}{reminder}",
+                content=f"The check `{state.check}` failed:\n{gate.output}{notes}{reminder}",
             )
         )
         return None
@@ -288,17 +331,27 @@ class StudentLoop:
         if size(messages) <= budget:
             return messages
         compacted = list(messages)
+        calls = {c.id: c for m in compacted for c in m.tool_calls}
         tool_indexes = [i for i, m in enumerate(compacted) if m.role == "tool"]
         dropped = 0
         for i in tool_indexes[:-1]:  # the latest tool output (often the latest error) stays
             if size(compacted) <= budget:
                 break
             original = compacted[i]
-            if original.content.startswith("[output dropped"):
+            if original.content.startswith("[output") and "dropped to save context" in (
+                original.content
+            ):
                 continue
             stub = (
                 f"[output dropped to save context; {len(original.content)} chars; re-run if needed]"
             )
+            source = calls.get(original.tool_call_id or "")
+            if source is not None:
+                target = source.arguments.get("path") or source.arguments.get("command") or ""
+                stub = (
+                    f"[output of {source.name} {str(target)[:80]} dropped to save context; "
+                    f"{len(original.content)} chars; re-run if needed]"
+                )
             compacted[i] = Message(role="tool", tool_call_id=original.tool_call_id, content=stub)
             dropped += 1
         if dropped:

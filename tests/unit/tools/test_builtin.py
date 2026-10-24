@@ -13,6 +13,7 @@ from saddlefit.tools.builtin import (
     Toolbox,
     ToolError,
     confine,
+    specs_for,
     truncate,
 )
 
@@ -236,3 +237,55 @@ def test_strings_that_are_not_utf8_come_back_as_a_failed_result(
     assert not result.ok
     assert "UTF-8" in result.output
     assert box.sandbox.commands == []  # type: ignore[attr-defined]
+
+
+def helper_values(command: str) -> list[str]:
+    """The base64 arguments of an in-sandbox helper call, decoded."""
+    return [base64.b64decode(arg).decode("utf-8") for arg in shlex.split(command)[4:]]
+
+
+def test_read_file_can_leave_out_line_numbers() -> None:
+    box = FakeSandbox()
+    Toolbox(box, line_numbers=False).call("read_file", {"path": "a.py", "start": 2, "end": 3})
+    Toolbox(box).call("read_file", {"path": "a.py"})
+    assert box.commands[0][0] == "set -o pipefail; cat -- /work/a.py | sed -n '2,3p'"
+    assert box.commands[1][0] == "cat -n -- /work/a.py"
+
+
+def test_edit_file_can_strip_copied_line_numbers() -> None:
+    box = FakeSandbox()
+    old, new = "    12\tdef parse(s):\n    13\t    return s\n", "    12\tdef parse(s):\n"
+    Toolbox(box, strip_line_numbers=True).call(
+        "edit_file", {"path": "a.py", "old": old, "new": new}
+    )
+    Toolbox(box).call("edit_file", {"path": "a.py", "old": old, "new": new})
+    assert helper_values(box.commands[0][0])[1:] == [
+        "def parse(s):\n    return s\n",
+        "def parse(s):\n",
+    ]
+    assert helper_values(box.commands[1][0])[1:] == [old, new]  # off: taken as written
+
+
+def test_edit_file_leaves_text_alone_unless_every_line_is_numbered() -> None:
+    box = FakeSandbox()
+    old = "    12\tdef parse(s):\nreturn s\n"
+    Toolbox(box, strip_line_numbers=True).call(
+        "edit_file", {"path": "a.py", "old": old, "new": "x"}
+    )
+    assert helper_values(box.commands[0][0])[1] == old
+
+
+def test_a_disabled_tool_is_refused_but_runs_for_the_loop_itself() -> None:
+    box = FakeSandbox()
+    tools = Toolbox(box, enabled=frozenset({"read_file", "finish"}))
+    refused = tools.call("bash", {"command": "ls"})
+    assert not refused.ok
+    assert refused.output == "tool not available in this harness: bash"
+    assert box.commands == []
+    assert tools.call("bash", {"command": "pytest -q"}, internal=True).ok
+    assert box.commands[0][0] == "pytest -q"
+
+
+def test_specs_for_keeps_finish() -> None:
+    names = [spec.name for spec in specs_for(frozenset({"bash"}))]
+    assert names == ["bash", "finish"]
