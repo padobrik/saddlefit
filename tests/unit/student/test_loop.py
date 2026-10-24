@@ -165,6 +165,13 @@ def test_logged_arguments_shorten_text_and_keep_scalars() -> None:
     assert logged["nested"] == '{"a": [2], "b": 1}'
 
 
+def test_logged_arguments_redact_secrets() -> None:
+    key = "sk-ant-api03-" + "x" * 40
+    logged = logged_arguments({"command": f"curl -H 'x-api-key: {key}' https://example.com"})
+    assert key not in str(logged["command"])
+    assert "[REDACTED]" in str(logged["command"])
+
+
 def test_failed_gate_returns_output_once_with_the_task() -> None:
     tools = FakeTools(
         {

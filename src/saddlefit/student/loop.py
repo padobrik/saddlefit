@@ -17,6 +17,7 @@ from typing import Literal, Protocol
 
 from saddlefit.context.assembly import AssembledContext, estimate_tokens
 from saddlefit.harness.loop_config import LoopConfig
+from saddlefit.logs import redact
 from saddlefit.providers.base import (
     ContextLengthError,
     GenParams,
@@ -75,7 +76,7 @@ def call_signature(call: ToolCall) -> str:
 
 
 def logged_arguments(arguments: dict[str, object]) -> dict[str, str | int | float | bool | None]:
-    """The arguments for the run record: scalars kept, everything else as shortened text."""
+    """The arguments for the run record: scalars kept, the rest as redacted, shortened text."""
     logged: dict[str, str | int | float | bool | None] = {}
     for key, value in arguments.items():
         if (
@@ -86,7 +87,8 @@ def logged_arguments(arguments: dict[str, object]) -> dict[str, str | int | floa
             logged[key] = value
         else:
             text = value if isinstance(value, str) else json.dumps(value, sort_keys=True)
-            logged[key] = truncate(text, LOGGED_ARGUMENT_CHARS, hint="")
+            # redacted before the cut, so a key cut in half is never half-kept
+            logged[key] = truncate(redact(text), LOGGED_ARGUMENT_CHARS, hint="")
     return logged
 
 
