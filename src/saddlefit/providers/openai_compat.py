@@ -67,7 +67,9 @@ def _native_root(base_url: str) -> str:
 
 
 def _ollama_name(name: str) -> str:
-    """``name`` with Ollama's implied ``latest`` tag when it has none."""
+    """``name`` in Ollama's shortest form: default registry and namespace dropped, tag added."""
+    for prefix in ("registry.ollama.ai/", "library/"):
+        name = name.removeprefix(prefix)
     return name if ":" in name.rsplit("/", 1)[-1] else f"{name}:latest"
 
 

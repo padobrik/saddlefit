@@ -293,10 +293,13 @@ def test_served_context_retries_a_transient_load_error() -> None:
     assert len(sdk.requests) == 2
 
 
-def test_served_context_matches_an_untagged_model_name() -> None:
+@pytest.mark.parametrize(
+    "configured", ["mistral", "library/mistral", "registry.ollama.ai/library/mistral:latest"]
+)
+def test_served_context_matches_the_short_model_name(configured: str) -> None:
     untagged = OpenAICompatibleClient(
         base_url="http://localhost:11434/v1",
-        model="mistral",
+        model=configured,
         sdk=StubSDK(),
         fetch_json=ollama_serving([[{"name": "mistral:latest", "context_length": 8192}]]),
         sleep=lambda _: None,
