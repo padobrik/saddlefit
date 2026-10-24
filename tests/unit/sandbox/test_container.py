@@ -310,3 +310,16 @@ def test_no_notice_no_flag() -> None:
     buf = _CappedOutput(20)
     buf.add(b"timeout: sending nothing\n")
     assert not buf.timeout_notice_seen
+
+
+def test_harness_tools_are_mounted_read_only_on_path(tmp_path: Path) -> None:
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    work = tmp_path / "work"
+    work.mkdir()
+    opts = container_options(work, LIMITS, harness_tools=tools)
+    assert opts["volumes"][str(tools)] == {"bind": "/harness/tools", "mode": "ro"}
+    assert opts["environment"]["PATH"].startswith("/harness/tools:")
+    assert "/harness" not in container_options(work, LIMITS)["environment"]["PATH"]
+    with pytest.raises(SandboxError, match="absolute directory"):
+        container_options(work, LIMITS, harness_tools=tmp_path / "missing")

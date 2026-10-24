@@ -179,3 +179,10 @@ def test_general_sections_after_a_tool_section_survive() -> None:
     assert sections == []
     _, enabled = guidance_for(guidance, ["bash"])
     assert enabled == ["## bash\nRun tests.\n"]
+
+
+def test_harness_scripts_are_listed_for_the_student() -> None:
+    ctx = build(scripts=["run_one_test.sh", "lint.py"])
+    assert "## Harness scripts" in ctx.system
+    assert "- /harness/tools/lint.py\n- /harness/tools/run_one_test.sh" in ctx.system
+    assert "Harness scripts" not in build().system

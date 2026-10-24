@@ -123,3 +123,28 @@ def test_a_term_handler_exiting_zero_still_counts_as_timeout(sandbox: Sandbox) -
     assert result.exit_code == 0
     assert result.timed_out
     assert "sending signal" not in result.output
+
+
+def test_harness_tools_run_from_path_and_stay_read_only(
+    docker_client, sandbox_image: str, tmp_path: Path
+) -> None:
+    work, tools = tmp_path / "work", tmp_path / "tools"
+    work.mkdir()
+    tools.mkdir()
+    script = tools / "say_hi.sh"
+    script.write_text("#!/usr/bin/env bash\necho hi from the harness\n", encoding="utf-8")
+    script.chmod(0o755)
+    with Sandbox(
+        docker_client,
+        sandbox_image,
+        work,
+        LIMITS,
+        run_timeout_s=120,
+        labels={"saddlefit.test": "1"},
+        harness_tools=tools,
+    ) as box:
+        ran = box.exec("say_hi.sh", timeout_s=30)
+        assert (ran.exit_code, ran.output.strip()) == (0, "hi from the harness")
+        written = box.exec("echo x > /harness/tools/say_hi.sh", timeout_s=30)
+        assert written.exit_code != 0
+    assert list(work.iterdir()) == []  # nothing of the harness lands in the workspace
