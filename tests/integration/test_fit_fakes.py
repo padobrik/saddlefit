@@ -27,7 +27,7 @@ from saddlefit.providers.base import (
 )
 from saddlefit.storage.fit_state import load_fit_state
 from saddlefit.storage.library import read_records
-from saddlefit.storage.runs import RunEvent, RunSummary
+from saddlefit.storage.runs import RUN_SCHEMA_VERSION, RunEvent, RunSummary
 from saddlefit.tutor.diagnose import digest_run
 
 TRAIN = [f"t{i}" for i in range(6)]
@@ -74,7 +74,7 @@ class FakePractice:
     def _failure(self, task: str) -> Any:
         event = RunEvent.model_validate(
             {
-                "schema_version": 1,
+                "schema_version": RUN_SCHEMA_VERSION,
                 "type": "finish_gate",
                 "time": datetime(2026, 10, 22, tzinfo=UTC),
                 "data": {"passed": False, "output": "1 failed"},
@@ -82,7 +82,7 @@ class FakePractice:
         )
         summary = RunSummary.model_validate(
             {
-                "schema_version": 1,
+                "schema_version": RUN_SCHEMA_VERSION,
                 "type": "summary",
                 "run_id": RUN_IDS[task],
                 "task_id": task,
