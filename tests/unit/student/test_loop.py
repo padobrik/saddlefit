@@ -158,6 +158,7 @@ def test_logged_arguments_shorten_text_and_keep_scalars() -> None:
     assert len(content) <= LOGGED_ARGUMENT_CHARS
     assert content.startswith("aaa")
     assert content.endswith("aaa")
+    assert "characters cut ...]" in content
     scalars = (logged["start"], logged["check"], logged["end"], logged["ratio"])
     assert scalars == (3, True, None, 0.5)
     assert logged["bad"] == "NaN"

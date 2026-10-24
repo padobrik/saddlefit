@@ -86,7 +86,7 @@ def logged_arguments(arguments: dict[str, object]) -> dict[str, str | int | floa
             logged[key] = value
         else:
             text = value if isinstance(value, str) else json.dumps(value, sort_keys=True)
-            logged[key] = truncate(text, LOGGED_ARGUMENT_CHARS)
+            logged[key] = truncate(text, LOGGED_ARGUMENT_CHARS, hint="")
     return logged
 
 
