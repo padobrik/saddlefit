@@ -210,9 +210,6 @@ Assumptions taken where the spec leaves a detail open. Deviations from the spec 
   nulls are kept as they are, and anything else is written as JSON text. The tool's output
   stays out, as before: only its size is recorded. The tutor's digest of a run does not show
   the arguments yet.
-  version and the memory available; longer prompts are cut without an error. `doctor` and every command that starts the student read the loaded model's window
-  from `/api/ps` (loading it with a one-token reply when needed) and exit 3 when it is smaller
-  than `student.context_length`. Runners that do not report it pass unchecked.
 - **Generator budget.** Config v3 gives the generator `max_calls` (10), `max_usd` (5.0) and
   `prices_usd_per_mtok`, all for one `tasks generate` command, which stops before a call that
   could pass either limit. A v2 file reads as v3 with these defaults; as for every format,
