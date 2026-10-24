@@ -20,8 +20,17 @@ from saddlefit.doctor import (
     probe_tools,
     render,
     run_doctor,
+    served_context_check,
 )
-from saddlefit.providers.base import GenParams, Message, ModelReply, ToolCall, ToolSpec, Usage
+from saddlefit.providers.base import (
+    GenParams,
+    Message,
+    ModelReply,
+    ProviderError,
+    ToolCall,
+    ToolSpec,
+    Usage,
+)
 from saddlefit.providers.fake import FakeClient
 
 NOW = datetime(2026, 10, 21, tzinfo=UTC)
@@ -240,3 +249,32 @@ def test_a_failed_record_write_shows_the_report_and_exits_3(
     assert "tier: M (compact)" in result.output
     assert isinstance(result.exception, cli.EnvironmentFailure)
     assert result.exception.exit_code == ExitCode.ENVIRONMENT_ERROR
+
+
+@pytest.mark.parametrize(
+    ("served", "ok", "environment_ok"),
+    [(32768, True, True), (4096, False, False), (None, None, True)],
+)
+def test_the_served_context_window_must_hold_the_configured_one(
+    served: int | None, ok: bool | None, environment_ok: bool
+) -> None:
+    report = run_doctor(
+        weather_client(9, 0),
+        docker_status=lambda: [Check("docker", True, "Docker 28")],
+        facts=lambda: parse_ollama_show(QWEN3_8B),
+        context_length=32768,
+        now=lambda: NOW,
+        served_context=lambda: served,
+    )
+    check = next(c for c in report.checks if c.name == "context window")
+    assert check.ok is ok
+    assert report.environment_ok is environment_ok
+
+
+def test_a_model_that_does_not_load_fails_the_context_check() -> None:
+    def fail() -> int | None:
+        raise ProviderError("model not found")
+
+    check = served_context_check(fail, 32768)
+    assert check.ok is False
+    assert "did not load" in check.detail

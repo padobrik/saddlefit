@@ -17,6 +17,7 @@ from saddlefit.providers.base import (
 )
 from saddlefit.providers.openai_compat import (
     OpenAICompatibleClient,
+    context_window_problem,
     map_error,
     to_openai_messages,
 )
@@ -253,3 +254,75 @@ def test_the_reasoning_warning_never_logs_the_runner_url(caplog: pytest.LogCaptu
     assert caplog.records
     assert "sk-secret-123" not in caplog.text
     assert "proxy.example" not in caplog.text
+
+
+def ollama_serving(loaded: list[list[dict[str, Any]]]) -> Any:
+    """An Ollama native API whose ``/api/ps`` answers come from ``loaded`` in turn."""
+
+    def fetch(url: str, payload: Any) -> Any:
+        if url.endswith("/api/version"):
+            return {"version": "0.40.6"}
+        if url.endswith("/api/tags"):
+            return {"models": []}
+        assert url == "http://localhost:11434/api/ps"
+        return {"models": loaded.pop(0)}
+
+    return fetch
+
+
+def test_served_context_is_read_from_the_loaded_model() -> None:
+    sdk = StubSDK()
+    fetch = ollama_serving(
+        [[{"name": "other", "context_length": 8192}, {"name": "qwen3:8b", "context_length": 4096}]]
+    )
+    assert client(sdk, fetch).served_context_length() == 4096
+    assert sdk.requests == []  # already loaded: nothing generated
+
+
+def test_served_context_loads_the_model_first() -> None:
+    sdk = StubSDK(response("h"))
+    fetch = ollama_serving([[], [{"model": "qwen3:8b", "context_length": 32768}]])
+    assert client(sdk, fetch).served_context_length() == 32768
+    assert sdk.requests[0]["max_tokens"] == 1
+
+
+def test_served_context_retries_a_transient_load_error() -> None:
+    sdk = StubSDK(connection_error(), response("h"))
+    fetch = ollama_serving([[], [{"model": "qwen3:8b", "context_length": 32768}]])
+    assert client(sdk, fetch).served_context_length() == 32768
+    assert len(sdk.requests) == 2
+
+
+@pytest.mark.parametrize(
+    "configured", ["mistral", "library/mistral", "registry.ollama.ai/library/mistral:latest"]
+)
+def test_served_context_matches_the_short_model_name(configured: str) -> None:
+    untagged = OpenAICompatibleClient(
+        base_url="http://localhost:11434/v1",
+        model=configured,
+        sdk=StubSDK(),
+        fetch_json=ollama_serving([[{"name": "mistral:latest", "context_length": 8192}]]),
+        sleep=lambda _: None,
+    )
+    assert untagged.served_context_length() == 8192
+
+
+def test_served_context_is_unknown_without_ollama() -> None:
+    assert client(StubSDK()).served_context_length() is None
+
+
+def test_a_model_that_cannot_load_is_a_provider_error() -> None:
+    sdk = StubSDK(status_error(openai.NotFoundError, 404, "model not found"))
+    with pytest.raises(ProviderError, match="not found"):
+        client(sdk, ollama_serving([[]])).served_context_length()
+
+
+@pytest.mark.parametrize(
+    ("served", "configured", "ok"),
+    [(None, 32768, True), (32768, 32768, True), (40960, 32768, True), (4096, 32768, False)],
+)
+def test_context_window_problem(served: int | None, configured: int, ok: bool) -> None:
+    problem = context_window_problem(served, configured)
+    assert (problem is None) is ok
+    if not ok:
+        assert "OLLAMA_CONTEXT_LENGTH=32768" in str(problem)
