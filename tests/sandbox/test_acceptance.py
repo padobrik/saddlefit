@@ -101,6 +101,19 @@ def test_a_reference_that_does_not_apply_is_refused(setup: tuple[Evaluator, Path
     assert reason == "the reference patch does not apply to the base snapshot"
 
 
+def test_no_collected_tests_is_not_a_failure(setup: tuple[Evaluator, Path, Path]) -> None:
+    empty = {"tests/test_shout_generated.py": "# no tests here\n"}
+    assert judge(setup, task(hidden_tests=empty)) == (
+        False,
+        "without the reference patch, pytest exited 5, not a test failure",
+    )
+
+
+def test_a_check_needs_hidden_tests() -> None:
+    with pytest.raises(ValueError, match="at least one hidden test"):
+        check_script([])
+
+
 def test_the_check_script_runs_the_hidden_tests_sorted() -> None:
     script = check_script(["tests/test_b.py", "tests/test_a.py"])
     assert script.endswith("tests/test_a.py tests/test_b.py\n")

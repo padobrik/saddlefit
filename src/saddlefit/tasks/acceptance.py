@@ -18,6 +18,10 @@ from saddlefit.tasks.generator import GeneratedTask
 from saddlefit.tasks.sealing import SealedWriter
 from saddlefit.tasks.suite import PYTEST
 
+# pytest's exit codes for failed tests (1) and an error while collecting them (2), such as
+# importing a module the task asks for; anything else means the tests never really ran
+FAILED_TESTS = frozenset({1, 2})
+
 
 @dataclass(frozen=True)
 class Acceptance:
@@ -27,6 +31,9 @@ class Acceptance:
 
 def check_script(test_paths: list[str]) -> str:
     """``check.sh`` for hidden tests: the same pytest call mined tasks use."""
+    if not test_paths:
+        # pytest without file arguments would collect the repository's own tests instead
+        raise ValueError("a generated task needs at least one hidden test")
     tests = " ".join(shlex.quote(path) for path in sorted(test_paths))
     return f"#!/usr/bin/env bash\nset -u\ncd /work\n{PYTEST} {tests}\n"
 
@@ -55,6 +62,8 @@ def _without_reference(verdict: Verdict) -> str | None:
         return f"without the reference patch, {problem}"
     if verdict.passed:
         return "the hidden tests pass without the reference patch"
+    if verdict.exit_code not in FAILED_TESTS:
+        return f"without the reference patch, pytest exited {verdict.exit_code}, not a test failure"
     return None
 
 
