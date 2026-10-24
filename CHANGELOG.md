@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.3.0](https://github.com/padobrik/saddlefit/compare/v0.2.0...v0.3.0) (2026-10-24)
+
+
+### Features
+
+* **cli:** add tasks generate with calibration ([#123](https://github.com/padobrik/saddlefit/issues/123)) ([7249566](https://github.com/padobrik/saddlefit/commit/72495666c28d156484738b6b8cdd35b7458c1c45))
+* **config:** give the generator a budget and prices ([#119](https://github.com/padobrik/saddlefit/issues/119)) ([3b47e5d](https://github.com/padobrik/saddlefit/commit/3b47e5d99b2a3477d4975d3fa1b1575573b5b56c))
+* log the arguments of each tool call ([#115](https://github.com/padobrik/saddlefit/issues/115)) ([ded3b80](https://github.com/padobrik/saddlefit/commit/ded3b80c76695639ab018b2088bdfb882d91bdab))
+* **tasks:** accept generated tasks fail-without, pass-with ([#122](https://github.com/padobrik/saddlefit/issues/122)) ([5159261](https://github.com/padobrik/saddlefit/commit/51592611b14fae681eb4c1342f32078a9ebbe72b))
+* **tasks:** add the generator role and task kinds ([#120](https://github.com/padobrik/saddlefit/issues/120)) ([07f3333](https://github.com/padobrik/saddlefit/commit/07f3333f6cbb050080485722d50fedfcc83d6a67))
+
+
+### Bug Fixes
+
+* check the context window Ollama serves ([#114](https://github.com/padobrik/saddlefit/issues/114)) ([c8a148a](https://github.com/padobrik/saddlefit/commit/c8a148a52a3763609bbb42a2efb19505afcd6f61))
+* tell the student which paths are protected ([#117](https://github.com/padobrik/saddlefit/issues/117)) ([cb8c191](https://github.com/padobrik/saddlefit/commit/cb8c191aa5ea64a9d440799721d11ac471c96460))
+
 ## [0.2.0](https://github.com/padobrik/saddlefit/compare/v0.1.3...v0.2.0) (2026-10-22)
 
 
