@@ -18,7 +18,7 @@ from saddlefit.providers.base import (
     ToolSpec,
     Usage,
 )
-from saddlefit.storage.runs import RunEvent, RunSummary
+from saddlefit.storage.runs import RUN_SCHEMA_VERSION, RunEvent, RunSummary
 from saddlefit.tutor.diagnose import (
     PROPOSE_TOOL,
     RunDigest,
@@ -41,7 +41,7 @@ PATCH = (
 def event(type: str, **data: Any) -> RunEvent:
     return RunEvent.model_validate(
         {
-            "schema_version": 1,
+            "schema_version": RUN_SCHEMA_VERSION,
             "type": type,
             "time": datetime(2026, 10, 22, tzinfo=UTC),
             "data": data,
@@ -51,7 +51,7 @@ def event(type: str, **data: Any) -> RunEvent:
 
 def summary(run_id: str, split: str = "train", **changes: Any) -> RunSummary:
     fields: dict[str, Any] = {
-        "schema_version": 1,
+        "schema_version": RUN_SCHEMA_VERSION,
         "type": "summary",
         "run_id": run_id,
         "task_id": "fix-date-parser-0042",

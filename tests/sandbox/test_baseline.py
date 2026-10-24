@@ -10,11 +10,11 @@ from tests.fixtures.toyrepo.build import build
 from tests.integration.host_runner import HostRunner
 
 from saddlefit.config import Config, EvaluationConfig, SandboxConfig
-from saddlefit.eval.evaluator import Evaluator
+from saddlefit.eval.evaluator import Evaluator, protected_patterns
 from saddlefit.eval.leak_guard import GuardedClient, guard_for_suite
 from saddlefit.harness.loop_config import default_loop_config
 from saddlefit.harness.store import HarnessStore
-from saddlefit.loops.baseline import BASELINE_SPLITS, BaselineRunner
+from saddlefit.loops.baseline import BASELINE_SPLITS, BaselineRunner, with_protected_rule
 from saddlefit.providers.base import ModelReply, ToolCall
 from saddlefit.providers.fake import FakeClient
 from saddlefit.storage.runs import find_runs, read_run
@@ -37,12 +37,14 @@ FIX = ToolCall(
 
 
 SEEN_REASONING: list[object] = []
+SEEN_TASKS: list[str] = []
 
 
 def student(messages: Any, tools: Any, params: Any) -> ModelReply:
     """Fixes parse_iso when asked about it; everywhere else it gives up at once."""
     SEEN_REASONING.append(params.reasoning)
     task = messages[1].content
+    SEEN_TASKS.append(task)
     already_edited = any(m.role == "tool" for m in messages)
     if "parse_iso" in task and not already_edited:
         return ModelReply(tool_calls=(FIX,))
@@ -75,6 +77,7 @@ def test_baseline_end_to_end(
 
     harness = HarnessStore(tmp_path / ".saddlefit" / "harness")
     commit = harness.init()
+    protected_rule = with_protected_rule("", protected_patterns(config.evaluation)).strip()
     runner = BaselineRunner(
         repo=repo,
         config=config,
@@ -94,7 +97,11 @@ def test_baseline_end_to_end(
         image=sandbox_image,
     )
     SEEN_REASONING.clear()
+    SEEN_TASKS.clear()
     result = runner.run(metas)
+    # the student is told which paths it must leave alone, as the evaluator judges them
+    assert SEEN_TASKS
+    assert all(protected_rule in task for task in SEEN_TASKS)
     # loop.yaml's reasoning effort reaches every model call (B6)
     assert SEEN_REASONING
     assert set(SEEN_REASONING) == {default_loop_config().reasoning.effort}

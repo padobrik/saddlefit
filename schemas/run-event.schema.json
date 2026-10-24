@@ -122,8 +122,31 @@
     },
     "ToolCallData": {
       "additionalProperties": false,
-      "description": "One tool execution; its output is not stored, only its size.",
+      "description": "One tool execution; its output is not stored, only its size.\n\nThe arguments are what the student wrote, with long strings shortened.",
       "properties": {
+        "arguments": {
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "title": "Arguments",
+          "type": "object"
+        },
         "name": {
           "title": "Name",
           "type": "string"
@@ -227,8 +250,31 @@
         "properties": {
           "data": {
             "additionalProperties": false,
-            "description": "One tool execution; its output is not stored, only its size.",
+            "description": "One tool execution; its output is not stored, only its size.\n\nThe arguments are what the student wrote, with long strings shortened.",
             "properties": {
+              "arguments": {
+                "additionalProperties": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "title": "Arguments",
+                "type": "object"
+              },
               "name": {
                 "title": "Name",
                 "type": "string"
@@ -418,7 +464,7 @@
       "title": "Data"
     },
     "schema_version": {
-      "const": 1,
+      "const": 2,
       "title": "Schema Version",
       "type": "integer"
     },

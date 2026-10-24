@@ -43,6 +43,13 @@ PYTEST_CONTROL_PATHS: tuple[str, ...] = (
     "pyproject.toml",
 )
 CHECK_FILE = ".saddlefit-check.sh"
+
+
+def protected_patterns(evaluation: EvaluationConfig) -> tuple[str, ...]:
+    """Every pattern a diff may not touch: the configured paths plus the pytest control files."""
+    return (*evaluation.protected_paths, *PYTEST_CONTROL_PATHS)
+
+
 APPLY_TIMEOUT_S = 60
 # a student's diff is untrusted input to a host-side git process: bound its size and time
 MAX_DIFF_BYTES = 1_000_000
@@ -116,7 +123,7 @@ class Evaluator:
             # git apply also accepts diffs without a "diff --git" header; judge what it applies
             touched |= applied
         hidden = self._store.hidden_test_paths(task_id)
-        protected = (*self._evaluation.protected_paths, *PYTEST_CONTROL_PATHS)
+        protected = protected_patterns(self._evaluation)
         tampered = _tampered(touched, protected, hidden)
         if tampered:
             return Verdict(passed=False, exit_code=None, duration_s=0.0, tampered=True)

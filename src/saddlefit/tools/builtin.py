@@ -53,19 +53,20 @@ def confine(path: str) -> str:
     return resolved
 
 
-def _cut_note(cut: int) -> str:
-    return f"\n[... {cut} characters cut; narrow the request ...]\n"
+def _cut_note(cut: int, hint: str) -> str:
+    return f"\n[... {cut} characters cut{f'; {hint}' if hint else ''} ...]\n"
 
 
-def truncate(text: str, max_chars: int) -> str:
+def truncate(text: str, max_chars: int, *, hint: str = "narrow the request") -> str:
     """Keep the head and tail of ``text``, with a note saying how much was cut.
 
-    The note counts toward ``max_chars``, so the result never exceeds it.
+    The note counts toward ``max_chars``, so the result never exceeds it. ``hint`` ends the
+    note; the student needs it, a log does not.
     """
     if len(text) <= max_chars:
         return text
-    keep = max(max_chars - len(_cut_note(len(text))), 0)
-    note = _cut_note(len(text) - keep)  # fewer digits than the bound above, never more
+    keep = max(max_chars - len(_cut_note(len(text), hint)), 0)
+    note = _cut_note(len(text) - keep, hint)  # fewer digits than the bound above, never more
     if keep == 0:
         return note.strip()[:max_chars]
     head, tail = (keep + 1) // 2, keep // 2

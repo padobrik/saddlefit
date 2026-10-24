@@ -12,9 +12,9 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from ulid import ULID
 
 from saddlefit.storage.migrations import upgrade
+from saddlefit.storage.migrations.runs import RUN_KIND
 
-RUN_SCHEMA_VERSION: Final = 1
-RUN_KIND = "run-record"
+RUN_SCHEMA_VERSION: Final = 2
 ULID_PATTERN = r"^[0-9A-HJKMNP-TV-Z]{26}$"
 
 EventType = Literal["model_call", "tool_call", "compaction", "loop_warning", "finish_gate", "error"]
@@ -36,11 +36,15 @@ class ModelCallData(_Strict):
 
 
 class ToolCallData(_Strict):
-    """One tool execution; its output is not stored, only its size."""
+    """One tool execution; its output is not stored, only its size.
+
+    The arguments are what the student wrote, with long strings shortened.
+    """
 
     name: str
     ok: bool
     output_chars: int = Field(ge=0)
+    arguments: dict[str, str | int | float | bool | None] = Field(default_factory=dict)
 
 
 class CompactionData(_Strict):
@@ -99,7 +103,7 @@ class RunEvent(_Strict):
         extra="forbid", frozen=True, allow_inf_nan=False, json_schema_extra=_bind_payload_to_type
     )
 
-    schema_version: Literal[1]
+    schema_version: Literal[2]
     type: EventType
     time: datetime
     data: EventData
@@ -144,7 +148,7 @@ class DiffStats(_Strict):
 class RunSummary(_Strict):
     """The last line of a run record."""
 
-    schema_version: Literal[1]
+    schema_version: Literal[2]
     type: Literal["summary"]
     run_id: str = Field(pattern=ULID_PATTERN)
     task_id: str
