@@ -58,7 +58,19 @@ new file mode 100644
 - The patch may touch only these paths in the harness: `EXPERIENCE.md`, `loop.yaml`, `systemprompt.md`, `tool_guidance.md`, `skills/**`, `tools/**`. Anything else is refused.
 - The patch may change at most 200 lines.
 - New tool scripts must be Python or shell, pass ruff or shellcheck, and run only inside the
-  sandbox, which has no network.
+  sandbox, which has no network. Scripts in `tools/` are mounted read-only at
+  `/harness/tools`, are on the student's `PATH`, and are listed in its system prompt.
+
+# Mechanics in loop.yaml
+
+- `tools.enabled`: the tools the student is offered (`finish` is always on).
+- `tools.read_line_numbers`: whether `read_file` prefixes lines with numbers.
+- `tools.edit_strips_line_numbers`: let `edit_file` accept `old` text copied with those
+  line numbers.
+- `context.repo_map`: add the repository's file list to the task message.
+- `hooks`: up to four fixed steps. Each has `event` (`post_tool` after a successful call of
+  the named `tools`, or `before_finish`) and exactly one of `run` (a shell command in the
+  sandbox; its output is added to the tool result) or `inject` (a fixed note).
 - `loop.yaml` must stay valid; values beyond the project's limits are clamped.
 - The student's context budget is 16000 tokens; the harness already uses part of it.
 - You never see hidden tests, check scripts, reference solutions, held-out or control tasks.
