@@ -9,7 +9,7 @@ import pytest
 from saddlefit.config import Config
 from saddlefit.harness.loop_config import default_loop_config
 from saddlefit.harness.store import HarnessStore
-from saddlefit.loops.baseline import BASELINE_SPLITS, BaselineRunner
+from saddlefit.loops.baseline import BASELINE_SPLITS, BaselineRunner, with_protected_rule
 from saddlefit.tasks.models import TaskMeta
 
 
@@ -80,3 +80,13 @@ def test_run_includes_control_when_asked(tmp_path: Path, monkeypatch: pytest.Mon
     with pytest.raises(StopIteration):
         final.run([task])
     assert asked == ["control"]
+
+
+def test_the_task_message_names_the_protected_paths() -> None:
+    message = with_protected_rule(
+        "# Add splits\n\n- Tests: a known vector\n", ("tests/**", "pytest.ini")
+    )
+    assert message.startswith("# Add splits\n\n- Tests: a known vector\n\n## Protected files\n")
+    assert "`tests/**`, `pytest.ini`" in message
+    assert "even if the text above asks for tests" in message
+    assert message.endswith("fails the task.\n")
