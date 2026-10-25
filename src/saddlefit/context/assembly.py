@@ -209,8 +209,11 @@ def assemble(
     """
     preamble, tool_sections = guidance_for(harness.tool_guidance, enabled_tools)
     if scripts:
-        listed = "\n".join(f"- {HARNESS_TOOLS_DIR}/{name}" for name in sorted(scripts))
-        preamble += f"\n\n## Harness scripts\nRun these with bash; they are on PATH.\n{listed}"
+        listed = "\n".join(
+            f"- `{'python3' if name.endswith('.py') else 'bash'} {HARNESS_TOOLS_DIR}/{name}`"
+            for name in sorted(scripts)
+        )
+        preamble += f"\n\n## Harness scripts\nRun these from the bash tool:\n{listed}"
     skills = rank_skills(harness.skills, task_type, task_text)[:max_skills]
     lessons = rank_lessons(harness.experience, model, task_text)
     dropped: list[str] = []

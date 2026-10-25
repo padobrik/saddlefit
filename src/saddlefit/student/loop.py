@@ -32,6 +32,8 @@ from saddlefit.tools.builtin import TOOL_SPECS, ToolResult, truncate
 COMPACTION_RATIO = 0.8
 LOGGED_ARGUMENT_CHARS = 300
 NUDGE = "Use a tool to make progress, or call finish when the task is done."
+REPO_MAP_SHARE = 0.1  # of context.budget_tokens
+CHARS_PER_TOKEN = 3  # as estimate_tokens counts
 REPO_MAP_COMMAND = (
     "find . -type f -not -path '*/.*' -not -path '*/__pycache__/*' | sed 's|^./||' | sort"
     " | head -n 300"
@@ -158,7 +160,10 @@ class StudentLoop:
         listing = self.tools.call("bash", {"command": REPO_MAP_COMMAND}, internal=True)
         if not listing.ok or not listing.output.strip():
             return ""
-        return f"\n\n## Files in the repository\n\n{listing.output.rstrip()}\n"
+        # the map stays in the task message, which compaction never cuts, so it gets a share
+        limit = int(self.loop.context.budget_tokens * REPO_MAP_SHARE * CHARS_PER_TOKEN)
+        files = truncate(listing.output.rstrip(), limit)
+        return f"\n\n## Files in the repository\n\n{files}\n"
 
     def _step(self, state: _RunState, step: int) -> StopReason | None:
         result = state.result
@@ -292,9 +297,9 @@ class StudentLoop:
 
     def _finish_gate(self, state: _RunState, call: ToolCall) -> StopReason | None:
         """Run the visible check on finish; on failure return its output to the model once."""
+        notes = self._hooks(state, "before_finish", call.name)
         if state.check is None:
             return "finished"
-        notes = self._hooks(state, "before_finish", call.name)
         gate = self.tools.call("bash", {"command": state.check}, internal=True)
         state.result.ran_visible_check = True
         state.result.finish_gate_passed = gate.ok

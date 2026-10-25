@@ -442,3 +442,24 @@ def test_the_repo_map_is_added_to_the_first_message() -> None:
     assert result.transcript[1].content == (
         "fix parse_iso\n\n## Files in the repository\n\nsrc/dates.py\ntests/test_dates.py\n"
     )
+
+
+def test_a_before_finish_hook_runs_without_a_finish_check() -> None:
+    loop = hooked(HookConfig(event="before_finish", run="ruff format ."))
+    loop = loop.model_copy(update={"finish_gate": FinishGateConfig(run=None)})
+    student, tools, _ = make([call("finish", 1, summary="x")], loop=loop, check=None)
+    assert student.run(CONTEXT).finished
+    assert tools.calls == [("bash", {"command": "ruff format ."})]
+
+
+def test_a_long_repo_map_is_cut_to_its_share_of_the_budget() -> None:
+    listing = "\n".join(f"src/m{i}.py" for i in range(300))
+    tools = FakeTools({"bash": [ToolResult(ok=True, output=listing)]})
+    loop = hooked(repo_map=True)
+    loop = loop.model_copy(
+        update={"context": loop.context.model_copy(update={"budget_tokens": 1000})}
+    )
+    student, _, _ = make([call("finish", 1, summary="x")], loop=loop, tools=tools, check=None)
+    first = student.run(CONTEXT).transcript[1].content
+    assert len(first) < len("fix parse_iso") + 400
+    assert "characters cut" in first
