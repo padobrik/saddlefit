@@ -289,3 +289,11 @@ Assumptions taken where the spec leaves a detail open. Deviations from the spec 
   Tool commands are capped at the student's share; a model call is not cut off mid-request,
   so one that starts late can still run up to the client timeout past it (as in the baseline).
   The budget is strict for the sandbox, not for an in-flight model request.
+- **Fit progress and `saddlefit status` (#113).** The loops report to a `ProgressSink`: the
+  middle loop its stages (`train`, `tutor` k, `candidate` k, `held-out` k, `lessons`,
+  `ablation`), the practice the runs it starts and each one that finishes, any split, as a
+  count only. `FitProgress` keeps `.saddlefit/progress.json` (`schema_version: 1`) current and
+  removes it when `fit` ends cleanly; a failed fit keeps it. `saddlefit status` reads it and
+  `fit.json` without the fit lock and tells running, interrupted (the pid is gone) and idle
+  apart. `fit` prints one plain line per stage change and finished run; the framed terminal
+  line comes separately.

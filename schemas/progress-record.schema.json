@@ -1,0 +1,121 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "candidate": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Candidate"
+    },
+    "candidates": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Candidates"
+    },
+    "command": {
+      "const": "fit",
+      "title": "Command",
+      "type": "string"
+    },
+    "done": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Done",
+      "type": "integer"
+    },
+    "pid": {
+      "exclusiveMinimum": 0,
+      "title": "Pid",
+      "type": "integer"
+    },
+    "round": {
+      "minimum": 1,
+      "title": "Round",
+      "type": "integer"
+    },
+    "rounds": {
+      "minimum": 1,
+      "title": "Rounds",
+      "type": "integer"
+    },
+    "schema_version": {
+      "const": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "stage": {
+      "enum": [
+        "train",
+        "tutor",
+        "candidate",
+        "held-out",
+        "lessons",
+        "ablation"
+      ],
+      "title": "Stage",
+      "type": "string"
+    },
+    "started_at": {
+      "format": "date-time",
+      "title": "Started At",
+      "type": "string"
+    },
+    "total": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Total"
+    },
+    "tutor_calls": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Tutor Calls",
+      "type": "integer"
+    },
+    "tutor_usd": {
+      "default": 0.0,
+      "minimum": 0.0,
+      "title": "Tutor Usd",
+      "type": "number"
+    },
+    "updated_at": {
+      "format": "date-time",
+      "title": "Updated At",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "command",
+    "pid",
+    "started_at",
+    "updated_at",
+    "round",
+    "rounds",
+    "stage"
+  ],
+  "title": "ProgressRecord",
+  "type": "object"
+}

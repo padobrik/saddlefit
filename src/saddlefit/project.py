@@ -53,6 +53,7 @@ from saddlefit.loops.generate import (
 from saddlefit.loops.generate import MAX_REPLY_TOKENS as GENERATOR_REPLY_TOKENS
 from saddlefit.loops.middle import MiddleLoop, RoundReport
 from saddlefit.loops.practice import DockerPractice, without_control
+from saddlefit.loops.progress import FitProgress
 from saddlefit.loops.work import WorkRunner, write_answer
 from saddlefit.playbook import proposal_for
 from saddlefit.providers.base import ModelClient, ModelInfo
@@ -78,6 +79,7 @@ from saddlefit.storage.fit_state import (
 )
 from saddlefit.storage.journal import JOURNAL_SCHEMA_VERSION, JournalEntry, task_ref, write_entry
 from saddlefit.storage.library import ChangeRecord, read_records
+from saddlefit.storage.progress import ProgressRecord, load_progress, process_alive
 from saddlefit.tasks import generated as generated_files
 from saddlefit.tasks.acceptance import FAILED_TESTS, Acceptance, accept, seal_generated
 from saddlefit.tasks.generator import (
@@ -701,6 +703,7 @@ class Project:
         rounds: int,
         on_run: Callable[[RunOutcome], None] | None = None,
         on_round: Callable[[RoundReport], None] | None = None,
+        on_progress: Callable[[ProgressRecord], None] | None = None,
     ) -> list[RoundReport]:
         """Run ``rounds`` more middle-loop rounds; control tasks are never run (B10).
 
@@ -729,8 +732,34 @@ class Project:
             max_usd_per_round=config.tutor.max_usd_per_round,
             prices=config.tutor.prices_usd_per_mtok,
         )
+        progress = FitProgress(
+            root=self.state,
+            rounds=rounds,
+            candidates=middle.candidates_per_round,
+            on_change=on_progress,
+        )
+        practice.progress = progress
         with fit_lock(self.state):
-            return run_rounds(middle, self.state, rounds, on_round)
+            reports = run_rounds(middle, self.state, rounds, on_round, progress)
+        progress.finish()  # a fit that fails keeps progress.json, so status can say where
+        return reports
+
+    def status(self) -> dict[str, Any]:
+        """Where a fit is, from progress.json and fit.json; never waits for the fit lock."""
+        state = load_fit_state(self.state)
+        totals = {
+            "rounds_done": state.rounds_done,
+            "tutor_calls": state.tutor_calls,
+            "tutor_usd": round(state.tutor_usd, 4),
+        }
+        record = load_progress(self.state)
+        if record is None:
+            return {"state": "idle", **totals}
+        return {
+            "state": "running" if process_alive(record.pid) else "interrupted",
+            "progress": record.model_dump(mode="json"),
+            **totals,
+        }
 
     def prune(
         self,
