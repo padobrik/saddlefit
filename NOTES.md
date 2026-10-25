@@ -295,5 +295,8 @@ Assumptions taken where the spec leaves a detail open. Deviations from the spec 
   count only. `FitProgress` keeps `.saddlefit/progress.json` (`schema_version: 1`) current and
   removes it when `fit` ends cleanly; a failed fit keeps it. `saddlefit status` reads it and
   `fit.json` without the fit lock and tells running, interrupted (the pid is gone) and idle
-  apart. `fit` prints one plain line per stage change and finished run; the framed terminal
-  line comes separately.
+  apart. Off a terminal `fit` prints one plain line per stage change and finished run. On a
+  terminal it shows one framed status line (rich `Live`, 30 fps, about 5 s a lap) with round
+  lines printed above it; when no run has finished for longer than
+  `evaluation.timeout_seconds` the ball stops, the frame turns amber and the line says how
+  long. Rich's own output is used, without the `?2026` synchronized-output wrapper.

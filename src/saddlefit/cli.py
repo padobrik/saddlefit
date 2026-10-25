@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import shlex
+import sys
 from collections.abc import Callable
 from datetime import UTC, date, datetime
 from enum import IntEnum
@@ -11,6 +12,7 @@ from pathlib import Path
 from typing import Annotated, Any
 
 import typer
+from rich.live import Live
 
 from saddlefit import __version__
 from saddlefit.config import Config, ConfigError, SandboxConfig, StudentConfig, load_config
@@ -20,6 +22,7 @@ from saddlefit.loops.ablation import AblationResult
 from saddlefit.loops.baseline import RunOutcome
 from saddlefit.loops.generate import GenerationReport
 from saddlefit.loops.middle import RoundReport
+from saddlefit.orbit import OrbitStatus
 from saddlefit.project import Project
 from saddlefit.providers.anthropic import AnthropicClient
 from saddlefit.providers.base import ModelClient, ModelInfo, ProviderError
@@ -339,6 +342,11 @@ def _student(project: Project) -> tuple[ModelInfo, Callable[[], ModelClient]]:
     return model_info, model_client
 
 
+def _framed(quiet: bool) -> bool:
+    """The animated frame only on a terminal, never with --json."""
+    return not quiet and sys.stdout.isatty()
+
+
 def _shown(record: ProgressRecord) -> tuple[object, ...]:
     return (record.round, record.stage, record.candidate, record.done, record.total)
 
@@ -416,30 +424,43 @@ def fit(
     quiet = bool((ctx.find_root().obj or {}).get("json"))
     done = 0
 
-    def on_round(report: RoundReport) -> None:
-        nonlocal done
-        done += 1
-        if not quiet:
-            typer.echo(round_line(done, report))
-
     last: list[ProgressRecord] = []
+    orbit = OrbitStatus(stall_after_s=config.evaluation.timeout_seconds)
+    live = Live(orbit, refresh_per_second=30, transient=True) if _framed(quiet) else None
 
     def on_progress(record: ProgressRecord) -> None:
-        # one line per stage change and finished run; spending alone changes nothing shown
-        if quiet or (last and _shown(last[-1]) == _shown(record)):
-            return
+        progressed = not last or (record.done, record.stage) != (last[-1].done, last[-1].stage)
+        changed = not last or _shown(last[-1]) != _shown(record)
         last[:] = [record]
-        typer.echo(fit_progress_line(record))
+        if live is not None:
+            orbit.update(progress_status(record), progressed=progressed)
+        elif changed and not quiet:
+            # one line per stage change and finished run; spending alone changes nothing shown
+            typer.echo(fit_progress_line(record))
 
-    reports = project.fit(
-        docker_client=_docker(),
-        model_client=model_client,
-        tutor_client=AnthropicClient(config.tutor.model),
-        model_info=model_info,
-        rounds=rounds,
-        on_round=on_round,
-        on_progress=on_progress,
-    )
+    def fit_with(echo: Callable[[str], object]) -> list[RoundReport]:
+        def on_round(report: RoundReport) -> None:
+            nonlocal done
+            done += 1
+            if not quiet:
+                echo(round_line(done, report))
+
+        return project.fit(
+            docker_client=_docker(),
+            model_client=model_client,
+            tutor_client=AnthropicClient(config.tutor.model),
+            model_info=model_info,
+            rounds=rounds,
+            on_round=on_round,
+            on_progress=on_progress,
+        )
+
+    if live is None:
+        reports = fit_with(typer.echo)
+    else:
+        with live:  # round lines print above the frame
+            # plain text: a refusal reason must not be read as Rich markup
+            reports = fit_with(lambda s: live.console.print(s, markup=False, highlight=False))
     data = [round_data(r) for r in reports]
     _emit(ctx, data, f"{len(reports)} rounds; {sum(bool(r.accepted) for r in reports)} accepted")
 
