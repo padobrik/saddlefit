@@ -110,7 +110,7 @@ def test_three_accepted_changes_trigger_ablation(tmp_path: Path) -> None:
     save_fit_state(
         tmp_path,
         FitState(
-            schema_version=1, rounds_done=0, accepted_since_ablation=2, student_model="student"
+            schema_version=2, rounds_done=0, accepted_since_ablation=2, student_model="student"
         ),
     )
     (report,) = run_rounds(loop, tmp_path, 1)  # the third accepted change
@@ -132,7 +132,7 @@ def test_a_new_student_model_triggers_ablation_first(tmp_path: Path) -> None:
     loop, _ = make_loop(tmp_path, FakeTutor([USELESS]), candidates_per_round=1)
     accept_by_noise(loop.store, tmp_path)
     save_fit_state(
-        tmp_path, FitState(schema_version=1, rounds_done=3, student_model="older-student")
+        tmp_path, FitState(schema_version=2, rounds_done=3, student_model="older-student")
     )
     (report,) = run_rounds(loop, tmp_path, 1)
     assert report.pruned == [NOISE_ID]
@@ -145,7 +145,7 @@ def test_the_same_or_a_first_model_does_not_trigger_ablation(
 ) -> None:
     loop, _ = make_loop(tmp_path, FakeTutor([USELESS]), candidates_per_round=1)
     accept_by_noise(loop.store, tmp_path)
-    save_fit_state(tmp_path, FitState(schema_version=1, rounds_done=0, student_model=model))
+    save_fit_state(tmp_path, FitState(schema_version=2, rounds_done=0, student_model=model))
     (report,) = run_rounds(loop, tmp_path, 1)
     assert report.pruned == []
 
@@ -158,7 +158,7 @@ def test_an_interrupted_ablation_resumes_without_repeating_the_round(
     save_fit_state(
         tmp_path,
         FitState(
-            schema_version=1, rounds_done=0, accepted_since_ablation=2, student_model="student"
+            schema_version=2, rounds_done=0, accepted_since_ablation=2, student_model="student"
         ),
     )
 
@@ -210,7 +210,7 @@ def test_a_new_digest_for_the_same_model_triggers_ablation(
     save_fit_state(
         tmp_path,
         FitState(
-            schema_version=1, rounds_done=0, student_model="student", student_digest=saved_digest
+            schema_version=2, rounds_done=0, student_model="student", student_digest=saved_digest
         ),
     )
     (report,) = run_rounds(loop, tmp_path, 1)

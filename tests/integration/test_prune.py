@@ -54,7 +54,7 @@ def test_prune_drops_the_useless_change_without_a_tutor(
     save_fit_state(
         project.state,
         FitState(
-            schema_version=1, rounds_done=4, accepted_since_ablation=2, student_model="student"
+            schema_version=2, rounds_done=4, accepted_since_ablation=2, student_model="student"
         ),
     )
     # no ANTHROPIC_API_KEY and a tutor fit would refuse: prune never calls a tutor

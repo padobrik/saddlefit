@@ -184,7 +184,7 @@ def test_the_final_report_reads_the_fit_state_under_the_lock(
 
     def runner_while_a_fit_finishes(self: Project, *args: Any) -> FakeControl:
         # building the environment image takes minutes; a fit finishes meanwhile
-        save_fit_state(self.state, FitState(schema_version=1, rounds_done=7, tutor_calls=9))
+        save_fit_state(self.state, FitState(schema_version=2, rounds_done=7, tutor_calls=9))
         return control
 
     monkeypatch.setattr(Project, "_control_runner", runner_while_a_fit_finishes)

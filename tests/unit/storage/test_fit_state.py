@@ -18,7 +18,7 @@ def test_no_state_means_no_rounds(tmp_path: Path) -> None:
 
 
 def test_the_round_count_survives(tmp_path: Path) -> None:
-    save_fit_state(tmp_path, FitState(schema_version=1, rounds_done=4))
+    save_fit_state(tmp_path, FitState(schema_version=2, rounds_done=4))
     assert load_fit_state(tmp_path).rounds_done == 4
     assert [p.name for p in tmp_path.iterdir()] == ["fit.json"]  # no temporary file left
 

@@ -406,3 +406,39 @@ def test_an_interrupted_round_still_records_what_the_tutor_cost(tmp_path: Path) 
         run_rounds(loop, tmp_path, 1)
     state = load_fit_state(tmp_path)
     assert (state.rounds_done, state.tutor_calls) == (0, 2)
+
+
+class SpyingPractice(FakePractice):
+    """Reads fit.json during each candidate batch, as a crash at that moment would leave it."""
+
+    def __init__(self, store: HarnessStore, root: Path) -> None:
+        super().__init__(store)
+        self.root = root
+        self.saved_calls: list[int] = []
+
+    def run_batch(self, harness_ref: str, task_ids: Sequence[str]) -> BatchResult:
+        if harness_ref != "main":
+            self.saved_calls.append(load_fit_state(self.root).tutor_calls)
+        return super().run_batch(harness_ref, task_ids)
+
+
+def test_each_tutor_call_is_saved_before_the_round_ends(tmp_path: Path) -> None:
+    loop, _ = make_loop(tmp_path, FakeTutor([USELESS, RIGHT]))
+    spy = SpyingPractice(loop.store, tmp_path)
+    loop.practice = spy
+    run_rounds(loop, tmp_path, 1)
+    # a power loss during either candidate's batch would still have kept its diagnosis
+    assert spy.saved_calls == [1, 2]
+
+
+def test_refusals_keep_their_reason_and_add_up_by_kind(tmp_path: Path) -> None:
+    # context that is not in loop.yaml: the patch cannot apply
+    broken = (
+        "diff --git a/loop.yaml b/loop.yaml\n--- a/loop.yaml\n+++ b/loop.yaml\n"
+        "@@ -1 +1 @@\n-nope\n+x\n"
+    )
+    loop, _ = make_loop(tmp_path, FakeTutor([broken, RIGHT]))
+    (report,) = run_rounds(loop, tmp_path, 1)
+    assert report.refused == 1
+    assert report.refusals[0].startswith("proposal: ")
+    assert load_fit_state(tmp_path).refusals == {"proposal": 1}
