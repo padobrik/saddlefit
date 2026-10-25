@@ -297,7 +297,7 @@ class Project:
                 call=lambda req: generate(
                     GuardedClient(generator_client, kit.guard), req, GENERATOR_REPLY_TOKENS
                 ),
-                seal=lambda task_id, task: seal_generated(kit.sealed, task_id, task),
+                seal=lambda task_id, task: seal_generated(kit.sealed_root, task_id, task),
                 accept=lambda task_id, task: accept(kit.evaluator, task_id, base, task),
                 calibrate=lambda task_id, task: kit.calibrate(task_id, task, head),
                 exists=kit.exists,
@@ -376,7 +376,7 @@ class Project:
 
             def seal(task_id: str, task: GeneratedTask) -> None:
                 pending[task_id] = commit_mutation(self.root, head, pending["mutation"], task_id)
-                seal_generated(kit.sealed, task_id, task)
+                seal_generated(kit.sealed_root, task_id, task)
 
             def judge(task_id: str, task: GeneratedTask) -> Acceptance:
                 snapshot = Path(tmp) / f"base-{task_id}"
