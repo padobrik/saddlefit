@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import shlex
 from collections.abc import Callable
-from datetime import date
+from datetime import UTC, date, datetime
 from enum import IntEnum
 from pathlib import Path
 from typing import Annotated, Any
@@ -24,6 +24,7 @@ from saddlefit.project import Project
 from saddlefit.providers.anthropic import AnthropicClient
 from saddlefit.providers.base import ModelClient, ModelInfo, ProviderError
 from saddlefit.providers.openai_compat import OpenAICompatibleClient, context_window_problem
+from saddlefit.storage.progress import ProgressRecord
 from saddlefit.tasks.generator import TASK_KINDS
 from saddlefit.tasks.mining import Runner, SandboxRunner
 
@@ -338,6 +339,26 @@ def _student(project: Project) -> tuple[ModelInfo, Callable[[], ModelClient]]:
     return model_info, model_client
 
 
+def _shown(record: ProgressRecord) -> tuple[object, ...]:
+    return (record.round, record.stage, record.candidate, record.done, record.total)
+
+
+def progress_status(record: ProgressRecord) -> str:
+    """``round 1/2 · candidate 1/3 · held-out 4/6 · $0.84``, the fit's place in one line."""
+    parts = [f"round {record.round}/{record.rounds}"]
+    if record.candidate is not None:
+        parts.append(f"candidate {record.candidate}/{record.candidates}")
+    counter = f" {record.done}/{record.total}" if record.total else ""
+    parts.append(f"{record.stage}{counter}")
+    parts.append(f"${record.tutor_usd:.2f}")
+    return " · ".join(parts)
+
+
+def fit_progress_line(record: ProgressRecord) -> str:
+    """The plain line written when output is not a terminal: a time, then the status."""
+    return f"{record.updated_at.astimezone().strftime('%H:%M:%S')} {progress_status(record)}"
+
+
 def round_line(number: int, report: RoundReport) -> str:
     """One round, as the console shows it."""
     solved = f"{report.train_before}/{len(report.batch)}"
@@ -401,6 +422,15 @@ def fit(
         if not quiet:
             typer.echo(round_line(done, report))
 
+    last: list[ProgressRecord] = []
+
+    def on_progress(record: ProgressRecord) -> None:
+        # one line per stage change and finished run; spending alone changes nothing shown
+        if quiet or (last and _shown(last[-1]) == _shown(record)):
+            return
+        last[:] = [record]
+        typer.echo(fit_progress_line(record))
+
     reports = project.fit(
         docker_client=_docker(),
         model_client=model_client,
@@ -408,6 +438,7 @@ def fit(
         model_info=model_info,
         rounds=rounds,
         on_round=on_round,
+        on_progress=on_progress,
     )
     data = [round_data(r) for r in reports]
     _emit(ctx, data, f"{len(reports)} rounds; {sum(bool(r.accepted) for r in reports)} accepted")
@@ -459,6 +490,38 @@ def run(
     _emit(ctx, data, "\n".join(lines))
     if not result.passed:
         raise typer.Exit(ExitCode.NOT_SOLVED)
+
+
+@app.command()
+def status(ctx: typer.Context) -> None:
+    """Show where a running or interrupted fit is, and what fits have cost so far."""
+    data = _project().status()
+    _emit(ctx, data, status_text(data, datetime.now(UTC)))
+
+
+def _ago(then: str, now: datetime) -> str:
+    minutes = int((now - datetime.fromisoformat(then)).total_seconds() // 60)
+    return f"{minutes} min ago" if minutes < 120 else f"{minutes // 60} h ago"
+
+
+def status_text(data: dict[str, Any], now: datetime) -> str:
+    """``saddlefit status`` for people; ``--json`` gives ``data`` itself."""
+    totals = (
+        f"all fits: {data['rounds_done']} rounds, {data['tutor_calls']} tutor calls, "
+        f"${data['tutor_usd']:.2f}"
+    )
+    if data["state"] == "idle":
+        return f"idle; {totals}"
+    record = ProgressRecord.model_validate(data["progress"])
+    raw = data["progress"]
+    when = f"started {_ago(raw['started_at'], now)}, last update {_ago(raw['updated_at'], now)}"
+    this = f"tutor this fit: {record.tutor_calls} calls, ${record.tutor_usd:.2f}; {totals}"
+    if data["state"] == "running":
+        return f"fit running (pid {record.pid}), {progress_status(record)}\n{when}\n{this}"
+    return (
+        f"fit interrupted (pid {record.pid} is gone) at {progress_status(record)}\n{when}\n"
+        f"{this}\nif no fit runs, .saddlefit/fit.lock can be removed"
+    )
 
 
 def ablation_line(result: AblationResult) -> str:
