@@ -158,11 +158,16 @@ def commit_mutation(repo: Path, base: str, mutation: Mutation, task_id: str) -> 
         _git_bytes(repo, "read-tree", base, env=env)
         _git_bytes(repo, "update-index", "--cacheinfo", f"{mode},{blob},{mutation.path}", env=env)
         tree = _git_bytes(repo, "write-tree", env=env).decode().strip()
-    commit = (
-        _git_bytes(repo, "commit-tree", tree, "-p", base, "-m", f"saddlefit mutation {task_id}")
-        .decode()
-        .strip()
-    )
+    # a fixed identity: the repository may have none set, and the commit is saddlefit's own
+    identity = {
+        "GIT_AUTHOR_NAME": "saddlefit",
+        "GIT_AUTHOR_EMAIL": "saddlefit@localhost",
+        "GIT_COMMITTER_NAME": "saddlefit",
+        "GIT_COMMITTER_EMAIL": "saddlefit@localhost",
+    }
+    message = f"saddlefit mutation {task_id}"
+    out = _git_bytes(repo, "commit-tree", tree, "-p", base, "-m", message, env=_git_env(**identity))
+    commit = out.decode().strip()
     _git_bytes(repo, "update-ref", f"{MUTATION_REF}/{task_id}", commit)
     return commit
 
