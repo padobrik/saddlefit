@@ -115,7 +115,7 @@ def _check_live_model(baseline: dict[str, Any], model_info: ModelInfo) -> None:
 class TaskKit:
     """What every new task needs, whatever wrote it: the sealed store, judging, calibration."""
 
-    sealed: Path
+    sealed_root: Path
     guard: Any
     evaluator: Evaluator
     image: str
@@ -484,7 +484,7 @@ class Project:
             )
 
         return TaskKit(
-            sealed=sealed,
+            sealed_root=sealed,
             guard=guard,
             evaluator=evaluator,
             image=image,
