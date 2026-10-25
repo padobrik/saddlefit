@@ -782,6 +782,7 @@ class Project:
             tutor_calls=basis.state.tutor_calls,
             tutor_usd=basis.state.tutor_usd,
             control_evaluations=control_count,
+            tutor_refusals=basis.state.refusals,
         )
         return build_progress(progress, ctx)
 

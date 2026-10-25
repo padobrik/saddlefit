@@ -314,7 +314,7 @@ def round_line(number: int, report: RoundReport) -> str:
         f"round {number}: batch solved {solved}; {len(report.records)} candidates tried, "
         f"{report.refused} refused; {outcome}; {report.lessons} lessons; "
         f"tutor {report.tutor_calls} calls, ${report.tutor_usd:.2f}"
-    )
+    ) + "".join(f"\n  refused {reason[:300]}" for reason in report.refusals)
 
 
 @app.command()

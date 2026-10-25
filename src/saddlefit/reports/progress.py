@@ -9,7 +9,7 @@ delegation map appear only in ``report --final``.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Final
@@ -31,6 +31,7 @@ class ProgressContext:
     tutor_calls: int
     tutor_usd: float
     control_evaluations: int
+    tutor_refusals: dict[str, int] = field(default_factory=dict)
 
 
 def build(progress: dict[str, Any], ctx: ProgressContext) -> dict[str, Any]:
@@ -48,9 +49,22 @@ def build(progress: dict[str, Any], ctx: ProgressContext) -> dict[str, Any]:
         "fit_rounds": ctx.fit_rounds,
         "splits": progress["splits"],
         "failure_profile": progress["failure_profile"],
-        "tutor": {"calls": ctx.tutor_calls, "usd": round(ctx.tutor_usd, 4)},
+        "tutor": {
+            "calls": ctx.tutor_calls,
+            "usd": round(ctx.tutor_usd, 4),
+            "refused": dict(ctx.tutor_refusals),
+        },
         "control_evaluations": ctx.control_evaluations,
     }
+
+
+def _refused(counts: dict[str, int]) -> str:
+    """ ", 2 refused (1 proposal, 1 tutor)", or nothing when none were."""
+    total = sum(counts.values())
+    if not total:
+        return ""
+    kinds = ", ".join(f"{n} {kind}" for kind, n in sorted(counts.items()))
+    return f", {total} refused ({kinds})"
 
 
 def _rate(row: dict[str, Any], n: int) -> str:
@@ -70,7 +84,8 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"- Task suite: `{report['suite_hash']}`",
         f"- Runs per task: {report['runs_per_task']}, solved at "
         f"{report['solved_threshold']}+ passing runs",
-        f"- Tutor: {report['tutor']['calls']} calls, ${report['tutor']['usd']:.2f}",
+        f"- Tutor: {report['tutor']['calls']} calls, ${report['tutor']['usd']:.2f}"
+        + _refused(report["tutor"].get("refused", {})),
         f"- Control evaluations so far: {report['control_evaluations']}",
         "",
         "Tasks decided under both harnesses; Wilson 95% intervals; the difference is a paired "

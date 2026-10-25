@@ -18,9 +18,9 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from saddlefit.errors import UserError
 from saddlefit.storage.migrations import upgrade
+from saddlefit.storage.migrations.fit_state import FIT_STATE_KIND
 
-FIT_STATE_SCHEMA_VERSION: Final = 1
-FIT_STATE_KIND: Final = "fit-state"
+FIT_STATE_SCHEMA_VERSION: Final = 2
 FIT_STATE_FILE: Final = "fit.json"
 FIT_LOCK_FILE: Final = "fit.lock"
 
@@ -28,7 +28,7 @@ FIT_LOCK_FILE: Final = "fit.lock"
 class FitState(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    schema_version: Literal[1]
+    schema_version: Literal[2]
     rounds_done: int = Field(ge=0)
     # ablation runs after every 3 accepted changes and after a change of student model
     accepted_since_ablation: int = Field(default=0, ge=0)
@@ -37,6 +37,8 @@ class FitState(BaseModel):
     # tutor spending over every fit, for reports (B15)
     tutor_calls: int = Field(default=0, ge=0)
     tutor_usd: float = Field(default=0.0, ge=0.0)
+    # refused tutor attempts over every fit, by kind ("tutor", "proposal")
+    refusals: dict[str, int] = Field(default_factory=dict)
 
 
 def load_fit_state(root: Path) -> FitState:

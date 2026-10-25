@@ -223,3 +223,9 @@ Assumptions taken where the spec leaves a detail open. Deviations from the spec 
   worst case (the prompt at four characters a token plus a full 8,192-token reply) could pass
   it. Calibration runs go to `.saddlefit/calibration/`, outside baseline and fit records.
   Generated tasks start from the repository's current `HEAD`.
+- **Fit spending and refusals (#113).** `run_rounds` saves `fit.json` after every paid tutor
+  call, so a crash or power loss loses at most the call in flight. Each refused attempt keeps
+  its reason as `tutor: …` (the call failed or its answer was unusable) or `proposal: …` (a
+  disallowed file, a failed linter, a patch that does not apply); `fit` prints them under the
+  round line, `fit.json` v2 counts them by kind across fits, and the progress report shows
+  the counts.
