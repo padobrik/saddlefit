@@ -1,0 +1,53 @@
+# Known small-model mechanics, shipped before any statistics exist (A6, Mingbird).
+# Each entry changes loop.yaml only; the fast loop probes them and the tutor sees them.
+# "loop" is merged into loop.yaml; a "hooks" list is appended to the hooks already there.
+- id: finish-gate-reread
+  technique: "finish gate: re-read the task and retry twice"
+  failure_tags: [gave_up, check_fail]
+  level: mechanics
+  rationale: "Small models stop at the first failed check; a second retry with the task text often finishes the job."
+  loop:
+    finish_gate: {reread_task: true, max_retries: 2}
+- id: loop-detection-tight
+  technique: "signature-level loop detection after two identical calls"
+  failure_tags: [loop, timeout]
+  level: mechanics
+  rationale: "Repeated identical calls burn steps; warning after the second one breaks the cycle sooner."
+  loop:
+    loop_detection: {identical_calls: 2}
+- id: context-budget-tight
+  technique: "context budget: compact tool outputs earlier"
+  failure_tags: [context_overflow, timeout]
+  level: mechanics
+  rationale: "Long tool outputs crowd out the task; a smaller budget drops old outputs before the window fills."
+  loop:
+    context: {budget_tokens: 16000}
+- id: edit-strips-line-numbers
+  technique: "edit_file accepts old text copied with read_file's line numbers"
+  failure_tags: [tool_error]
+  level: tools
+  rationale: "Models copy `cat -n` prefixes into edit_file and the match fails; stripping them makes the edit land."
+  loop:
+    tools: {edit_strips_line_numbers: true}
+- id: read-without-line-numbers
+  technique: "read_file without line numbers"
+  failure_tags: [tool_error]
+  level: tools
+  rationale: "Without numbered lines there is nothing extra to copy into edit_file's old text."
+  loop:
+    tools: {read_line_numbers: false}
+- id: test-after-edit
+  technique: "run the tests after every edit"
+  failure_tags: [check_fail, gave_up]
+  level: mechanics
+  rationale: "Feedback right after a change keeps a small model from stacking broken edits."
+  loop:
+    hooks:
+      - {event: post_tool, tools: [edit_file, write_file], run: "pytest -q -x 2>&1 | tail -n 30"}
+- id: repo-map
+  technique: "show the repository's file list at the start"
+  failure_tags: [gave_up, tool_error]
+  level: mechanics
+  rationale: "Small models guess paths; the file list up front saves list_dir calls and wrong reads."
+  loop:
+    context: {repo_map: true}

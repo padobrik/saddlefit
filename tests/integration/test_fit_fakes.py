@@ -406,3 +406,11 @@ def test_an_interrupted_round_still_records_what_the_tutor_cost(tmp_path: Path) 
         run_rounds(loop, tmp_path, 1)
     state = load_fit_state(tmp_path)
     assert (state.rounds_done, state.tutor_calls) == (0, 2)
+
+
+def test_the_tutor_prompt_lists_playbook_techniques_for_the_failures(tmp_path: Path) -> None:
+    tutor = FakeTutor([USELESS, RIGHT])
+    loop, _ = make_loop(tmp_path, tutor)
+    run_rounds(loop, tmp_path, 1)
+    system = next(p for p in tutor.prompts if "Techniques that worked before" in p)
+    assert "finish gate: re-read the task and retry twice" in system  # for gave_up runs
