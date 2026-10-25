@@ -54,7 +54,10 @@ def _sync_directory(root: Path) -> None:
     """Make the rename itself durable; Windows has no directory handles to sync."""
     if os.name == "nt":
         return
-    fd = os.open(root, os.O_RDONLY)
+    try:
+        fd = os.open(root, os.O_RDONLY)
+    except OSError:
+        return  # an unreadable directory: the file is replaced, only less durably
     try:
         os.fsync(fd)
     finally:
