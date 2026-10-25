@@ -50,6 +50,17 @@ def load_fit_state(root: Path) -> FitState:
     return FitState.model_validate(upgrade(FIT_STATE_KIND, raw, FIT_STATE_SCHEMA_VERSION))
 
 
+def _sync_directory(root: Path) -> None:
+    """Make the rename itself durable; Windows has no directory handles to sync."""
+    if os.name == "nt":
+        return
+    fd = os.open(root, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
 def save_fit_state(root: Path, state: FitState) -> None:
     """Replace the state atomically, so a crash leaves the old count, never a broken file."""
     root.mkdir(parents=True, exist_ok=True)
@@ -57,7 +68,11 @@ def save_fit_state(root: Path, state: FitState) -> None:
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(state.model_dump_json(indent=2) + "\n")
+            # on disk before the rename, so a power loss keeps the old file or the new one
+            handle.flush()
+            os.fsync(handle.fileno())
         os.replace(tmp, root / FIT_STATE_FILE)
+        _sync_directory(root)
     except BaseException:
         Path(tmp).unlink(missing_ok=True)
         raise
