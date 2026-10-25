@@ -223,3 +223,15 @@ Assumptions taken where the spec leaves a detail open. Deviations from the spec 
   worst case (the prompt at four characters a token plus a full 8,192-token reply) could pass
   it. Calibration runs go to `.saddlefit/calibration/`, outside baseline and fit records.
   Generated tasks start from the repository's current `HEAD`.
+- **Harness mechanics (#121).** `loop.yaml` v2 adds `tools` (which tools the student gets,
+  `finish` always; `read_line_numbers`; `edit_strips_line_numbers`, which removes `cat -n`
+  prefixes from `old` and `new` only when every line of `old` has one), `hooks` (at most
+  four; `event` `post_tool` or `before_finish`, and exactly one of `run` or `inject`; the
+  field is not `on`, which YAML 1.1 reads as true) and `context.repo_map`. Hooks, the finish
+  gate and the repo map are the loop's own calls, so they run even when the harness switches
+  `bash` off; a hook runs in the sandbox like any tool, so the diff and its tamper check are
+  unchanged. Harness `tools/` scripts are mounted read-only at `/harness/tools`, put first on
+  `PATH` (every command now gets the container's environment) and listed in the system
+  prompt. v1 files drop `reasoning.language` and `reasoning.latent_depth`, which no run used.
+  Defaults keep the v1 behaviour, so a baseline does not move until the tutor proposes a
+  mechanic; `edit_lines` was left out.

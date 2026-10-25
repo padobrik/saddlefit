@@ -7,16 +7,21 @@ The tutor may edit ``loop.yaml``, so it holds behaviour only. Budgets and limits
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Final, Literal
+from typing import Final, Literal, Self
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from saddlefit.config import Config
 from saddlefit.errors import UserError
+from saddlefit.storage.migrations import MigrationError, upgrade
+from saddlefit.storage.migrations.loop import LOOP_KIND
 from saddlefit.yamlio import safe_load_unique
 
-LOOP_SCHEMA_VERSION: Final = 1
+LOOP_SCHEMA_VERSION: Final = 2
+# The tools a harness may switch off; finish is always on, or no run could end.
+OPTIONAL_TOOLS: Final = ("read_file", "list_dir", "search", "edit_file", "write_file", "bash")
+MAX_HOOKS: Final = 4
 # One step takes at least this long, so max_steps cannot outlast evaluation.timeout_seconds.
 MIN_SECONDS_PER_STEP: Final = 1
 
@@ -33,10 +38,62 @@ class ToolOutputConfig(_Strict):
 
 
 class ContextConfig(_Strict):
-    """Token budgets for the whole prompt and for the harness share of it."""
+    """Token budgets for the whole prompt and for the harness share of it.
+
+    ``repo_map`` adds the repository's file list to the task message at the first step.
+    """
 
     budget_tokens: int = Field(default=24000, gt=0)
     harness_budget_tokens: int = Field(default=4000, gt=0)
+    repo_map: bool = False
+
+
+class ToolsConfig(_Strict):
+    """Which tools the student gets, and the shape of two of them.
+
+    ``read_line_numbers`` prefixes ``read_file`` output with line numbers, as ``cat -n``
+    does. ``edit_strips_line_numbers`` lets ``edit_file`` take ``old`` text the student
+    copied with those prefixes: when every line of ``old`` has one, they are removed from
+    ``old`` and from ``new`` before matching.
+    """
+
+    # a YAML list is read as a tuple; the items stay strictly strings
+    enabled: tuple[str, ...] = Field(default=OPTIONAL_TOOLS, strict=False)
+    read_line_numbers: bool = True
+    edit_strips_line_numbers: bool = False
+
+    @model_validator(mode="after")
+    def _known_tools(self) -> Self:
+        unknown = sorted(set(self.enabled) - set(OPTIONAL_TOOLS))
+        if unknown:
+            raise ValueError(f"unknown or always-on tools in tools.enabled: {unknown}")
+        return self
+
+
+class HookConfig(_Strict):
+    """One fixed step the loop adds; it runs in the sandbox like any tool call.
+
+    ``event``: ``post_tool`` runs after a successful call of one of ``tools`` (any tool when empty);
+    ``before_finish`` runs when the student calls ``finish``, before the finish gate.
+    ``run`` is a shell command whose output the student sees; ``inject`` is a fixed note.
+    """
+
+    # not "on": YAML 1.1 reads a bare on as true
+    event: Literal["post_tool", "before_finish"]
+    tools: tuple[str, ...] = Field(default=(), strict=False)
+    run: str | None = Field(default=None, min_length=1)
+    inject: str | None = Field(default=None, min_length=1)
+
+    @model_validator(mode="after")
+    def _one_action(self) -> Self:
+        if (self.run is None) == (self.inject is None):
+            raise ValueError("a hook needs exactly one of run or inject")
+        if self.tools and self.event != "post_tool":
+            raise ValueError("only a post_tool hook can name tools")
+        unknown = sorted(set(self.tools) - set(OPTIONAL_TOOLS))
+        if unknown:
+            raise ValueError(f"unknown tools in a hook: {unknown}")
+        return self
 
 
 class FinishGateConfig(_Strict):
@@ -54,23 +111,23 @@ class LoopDetectionConfig(_Strict):
 
 
 class ReasoningConfig(_Strict):
-    """Reasoning language, amount and latent depth (looped models only)."""
+    """How much the student reasons; sent to the runner with every request."""
 
-    language: Literal["english", "user", "mixed"] = "mixed"
     effort: Literal["off", "low", "high"] = "low"
-    latent_depth: int | None = Field(default=None, ge=1)
 
 
 class LoopConfig(_Strict):
     """The whole ``loop.yaml`` file."""
 
-    schema_version: Literal[1]
+    schema_version: Literal[2]
     max_steps: int = Field(default=40, gt=0)
     tool_output: ToolOutputConfig = ToolOutputConfig()
     context: ContextConfig = ContextConfig()
     finish_gate: FinishGateConfig = FinishGateConfig()
     loop_detection: LoopDetectionConfig = LoopDetectionConfig()
     reasoning: ReasoningConfig = ReasoningConfig()
+    tools: ToolsConfig = ToolsConfig()
+    hooks: tuple[HookConfig, ...] = Field(default=(), max_length=MAX_HOOKS, strict=False)
 
 
 class LoopConfigError(UserError):
@@ -90,6 +147,10 @@ def load_loop_config(path: Path) -> LoopConfig:
         raise LoopConfigError(f"cannot read {path}: {exc}") from exc
     if not isinstance(raw, dict):
         raise LoopConfigError(f"{path} must be a mapping")
+    try:
+        raw = upgrade(LOOP_KIND, raw, LOOP_SCHEMA_VERSION)
+    except MigrationError as exc:
+        raise LoopConfigError(f"invalid {path}: {exc}") from exc
     try:
         return LoopConfig.model_validate(raw)
     except ValidationError as exc:
@@ -124,7 +185,9 @@ def clamp(loop: LoopConfig, config: Config) -> tuple[LoopConfig, list[str]]:
     clamped = loop.model_copy(
         update={
             "max_steps": max_steps,
-            "context": ContextConfig(budget_tokens=budget, harness_budget_tokens=harness_budget),
+            "context": loop.context.model_copy(
+                update={"budget_tokens": budget, "harness_budget_tokens": harness_budget}
+            ),
         }
     )
     return LoopConfig.model_validate(clamped.model_dump()), notes

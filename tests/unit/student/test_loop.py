@@ -7,6 +7,7 @@ from saddlefit.context.assembly import AssembledContext
 from saddlefit.harness.loop_config import (
     ContextConfig,
     FinishGateConfig,
+    HookConfig,
     LoopConfig,
     LoopDetectionConfig,
     default_loop_config,
@@ -45,7 +46,7 @@ class FakeTools:
     results: dict[str, list[ToolResult]] = field(default_factory=dict)
     calls: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
 
-    def call(self, name: str, arguments: dict[str, Any]) -> ToolResult:
+    def call(self, name: str, arguments: dict[str, Any], *, internal: bool = False) -> ToolResult:
         self.calls.append((name, dict(arguments)))
         queue = self.results.get(name)
         return queue.pop(0) if queue else ToolResult(ok=True, output=f"{name} ok")
@@ -292,9 +293,12 @@ def test_compaction_drops_old_tool_outputs_but_keeps_the_task_and_latest() -> No
     student, _, recorder = make(replies, loop=loop, tools=tools, check=None)
     result = student.run(CONTEXT)
     tool_msgs = [m.content for m in result.transcript if m.role == "tool"]
-    assert tool_msgs[0].startswith("[output dropped")
+    # the stub names the call it replaces, so the student knows what to re-run (B6)
+    assert tool_msgs[0].startswith("[output of read_file f0.py dropped to save context; 600")
     assert tool_msgs[-1] == "x" * 600
-    assert all(m.startswith("[output dropped") for m in tool_msgs[:-1])
+    assert all("dropped to save context" in m for m in tool_msgs[:-1])
+    drops = [d for t, d in recorder.events if t == "compaction"]
+    assert sum(d["dropped_outputs"] for d in drops) == 2  # a stub is never dropped again
     assert any(m.content == "fix parse_iso" for m in result.transcript)
     assert result.compactions >= 1
     assert "compaction" in recorder.types()
@@ -359,3 +363,103 @@ def test_compaction_counts_tool_call_arguments() -> None:
     student, _, recorder = make([*replies, call("finish", 9)], loop=loop, tools=tools, check=None)
     student.run(CONTEXT)
     assert "compaction" in recorder.types()
+
+
+def hooked(*hooks: HookConfig, repo_map: bool = False) -> LoopConfig:
+    loop = default_loop_config()
+    context = loop.context.model_copy(update={"repo_map": repo_map})
+    return loop.model_copy(update={"hooks": hooks, "context": context})
+
+
+def test_a_post_tool_hook_runs_after_the_named_tools_only() -> None:
+    hook = HookConfig(event="post_tool", tools=("edit_file",), run="pytest -q -x")
+    tools = FakeTools({"bash": [ToolResult(ok=False, output="1 failed")]})
+    student, tools, recorder = make(
+        [
+            call("read_file", 1, path="a.py"),
+            call("edit_file", 2, path="a.py", old="a", new="b"),
+            call("finish", 3, summary="done"),
+        ],
+        loop=hooked(hook),
+        tools=tools,
+        check=None,
+    )
+    result = student.run(CONTEXT)
+    tool_msgs = [m.content for m in result.transcript if m.role == "tool"]
+    assert tool_msgs[0] == "read_file ok"
+    assert tool_msgs[1] == "edit_file ok\n\n[hook `pytest -q -x` failed]\n1 failed"
+    # then loop.yaml's own finish gate runs bash once more
+    assert [n for n, _ in tools.calls] == ["read_file", "edit_file", "bash", "bash"]
+    hook_events = [
+        d for t, d in recorder.events if t == "tool_call" and d["name"] == "hook:post_tool"
+    ]
+    assert hook_events[0]["arguments"] == {"command": "pytest -q -x"}
+
+
+def test_an_inject_hook_adds_a_fixed_note() -> None:
+    hook = HookConfig(event="post_tool", inject="Run the tests next.")
+    student, tools, _ = make(
+        [call("read_file", 1, path="a.py"), call("finish", 2, summary="x")],
+        loop=hooked(hook),
+        check=None,
+    )
+    result = student.run(CONTEXT)
+    assert result.transcript[3].content == "read_file ok\n\n[note] Run the tests next."
+    assert [n for n, _ in tools.calls] == ["read_file", "bash"]  # bash: the finish gate
+
+
+def test_a_before_finish_hook_output_comes_back_with_a_failed_gate() -> None:
+    hook = HookConfig(event="before_finish", run="ruff check .")
+    tools = FakeTools(
+        {
+            "bash": [
+                ToolResult(ok=False, output="E501 line too long"),
+                ToolResult(ok=False, output="1 failed"),
+            ]
+        }
+    )
+    student, tools, _ = make(
+        [call("finish", 1, summary="x"), call("finish", 2, summary="x")],
+        loop=hooked(hook),
+        tools=tools,
+    )
+    result = student.run(CONTEXT)
+    gate = next(m.content for m in result.transcript if m.role == "tool")
+    assert gate.startswith("The check `pytest -q tests/test_dates.py` failed:\n1 failed")
+    assert "[hook `ruff check .` failed]\nE501 line too long" in gate
+    assert [c["command"] for n, c in tools.calls][:2] == [
+        "ruff check .",
+        "pytest -q tests/test_dates.py",
+    ]
+
+
+def test_the_repo_map_is_added_to_the_first_message() -> None:
+    tools = FakeTools({"bash": [ToolResult(ok=True, output="src/dates.py\ntests/test_dates.py\n")]})
+    student, _, _ = make(
+        [call("finish", 1, summary="x")], loop=hooked(repo_map=True), tools=tools, check=None
+    )
+    result = student.run(CONTEXT)
+    assert result.transcript[1].content == (
+        "fix parse_iso\n\n## Files in the repository\n\nsrc/dates.py\ntests/test_dates.py\n"
+    )
+
+
+def test_a_before_finish_hook_runs_without_a_finish_check() -> None:
+    loop = hooked(HookConfig(event="before_finish", run="ruff format ."))
+    loop = loop.model_copy(update={"finish_gate": FinishGateConfig(run=None)})
+    student, tools, _ = make([call("finish", 1, summary="x")], loop=loop, check=None)
+    assert student.run(CONTEXT).finished
+    assert tools.calls == [("bash", {"command": "ruff format ."})]
+
+
+def test_a_long_repo_map_is_cut_to_its_share_of_the_budget() -> None:
+    listing = "\n".join(f"src/m{i}.py" for i in range(300))
+    tools = FakeTools({"bash": [ToolResult(ok=True, output=listing)]})
+    loop = hooked(repo_map=True)
+    loop = loop.model_copy(
+        update={"context": loop.context.model_copy(update={"budget_tokens": 1000})}
+    )
+    student, _, _ = make([call("finish", 1, summary="x")], loop=loop, tools=tools, check=None)
+    first = student.run(CONTEXT).transcript[1].content
+    assert len(first) < len("fix parse_iso") + 400
+    assert "characters cut" in first
