@@ -99,6 +99,19 @@ def _check_live_model(baseline: dict[str, Any], model_info: ModelInfo) -> None:
 
 
 @dataclass(frozen=True)
+class TaskKit:
+    """What every new task needs, whatever wrote it: the sealed store, judging, calibration."""
+
+    sealed: Path
+    guard: Any
+    evaluator: Evaluator
+    image: str
+    calibrate: Callable[[str, GeneratedTask, str], int]
+    keep: Callable[[str, GeneratedTask], None]
+    exists: Callable[[str], bool]
+
+
+@dataclass(frozen=True)
 class ReportBasis:
     """What a report compares against: the latest baseline, checked as still comparable."""
 
@@ -249,6 +262,48 @@ class Project:
         summary = generated_files.repo_summary(self.root, head, paths)
         train = [m for m in self.tasks() if m.split == "train"][:MAX_EXAMPLES]
         examples = [self.task_text(m.id) for m in train]
+        kit = self._task_kit(docker_client, model_client, model_info, "generated", kind)
+
+        def request(rng: Any) -> GeneratorRequest:
+            return GeneratorRequest(
+                kind=TASK_KINDS[kind],
+                repo_summary=summary,
+                files=select_files(files, rng),
+                examples=examples,
+                protected=protected,
+                existing_paths=frozenset(paths),
+            )
+
+        with tempfile.TemporaryDirectory(prefix="saddlefit-base-") as tmp:
+            base = Path(tmp) / "base"
+            _export(self.root, head, base)
+            generation = Generation(
+                kind=kind,
+                budget=config.generator,
+                request=request,
+                call=lambda req: generate(
+                    GuardedClient(generator_client, kit.guard), req, GENERATOR_REPLY_TOKENS
+                ),
+                seal=lambda task_id, task: seal_generated(kit.sealed, task_id, task),
+                accept=lambda task_id, task: accept(kit.evaluator, task_id, base, task),
+                calibrate=lambda task_id, task: kit.calibrate(task_id, task, head),
+                exists=kit.exists,
+                keep=kit.keep,
+                discard=lambda task_id: generated_files.discard(self.suite, task_id),
+                prompt_chars=lambda req: len(render_system(req)) + len(render_user(req)),
+            )
+            return generation.run(count)
+
+    def _task_kit(
+        self,
+        docker_client: Any,
+        model_client: Callable[[], ModelClient],
+        model_info: ModelInfo,
+        source: Literal["generated", "mutation"],
+        kind: str,
+    ) -> TaskKit:
+        """Sealing, judging, calibrating and keeping new tasks of one source and type."""
+        config = self.config()
         sealed = self.suite.sealed_dir
         guard = guard_for_suite(sealed, self.incidents)
         image = self.environment_image(docker_client)
@@ -263,36 +318,24 @@ class Project:
                 )
             }
         )
-        metas: dict[str, TaskMeta] = {}
 
-        def request(rng: Any) -> GeneratorRequest:
-            return GeneratorRequest(
-                kind=TASK_KINDS[kind],
-                repo_summary=summary,
-                files=select_files(files, rng),
-                examples=examples,
-                protected=protected,
-                existing_paths=frozenset(paths),
-            )
-
-        def calibrate(task_id: str, task: GeneratedTask) -> int:
+        def calibrate(task_id: str, task: GeneratedTask, base_commit: str) -> int:
             lock = add_task(
                 load_lock(self.suite, config.splits),
                 task_id,
-                "generated",
+                source,
                 generated_files.content_hash(task),
             )
             meta = TaskMeta(
                 schema_version=TASK_SCHEMA_VERSION,
                 id=task_id,
-                source="generated",
+                source=source,
                 type=kind,
                 split=next(t.split for t in lock.tasks if t.id == task_id),
-                repo=RepoRef(base_commit=head),
-                visible_check=task.visible_check,
+                repo=RepoRef(base_commit=base_commit),
+                visible_check=task.visible_check or None,
                 created=date.today(),
             )
-            metas[task_id] = meta
             generated_files.publish(self.suite, meta, task)
             commit = self.harness.head()
             with tempfile.TemporaryDirectory(prefix="saddlefit-harness-") as tmp:
@@ -324,29 +367,18 @@ class Project:
         def keep(task_id: str, task: GeneratedTask) -> None:
             lock = load_lock(self.suite, config.splits)
             save_lock(
-                self.suite,
-                add_task(lock, task_id, "generated", generated_files.content_hash(task)),
+                self.suite, add_task(lock, task_id, source, generated_files.content_hash(task))
             )
 
-        with tempfile.TemporaryDirectory(prefix="saddlefit-base-") as tmp:
-            base = Path(tmp) / "base"
-            _export(self.root, head, base)
-            generation = Generation(
-                kind=kind,
-                budget=config.generator,
-                request=request,
-                call=lambda req: generate(
-                    GuardedClient(generator_client, guard), req, GENERATOR_REPLY_TOKENS
-                ),
-                seal=lambda task_id, task: seal_generated(sealed, task_id, task),
-                accept=lambda task_id, task: accept(evaluator, task_id, base, task),
-                calibrate=calibrate,
-                exists=lambda task_id: any(t.id == task_id for t in self.tasks()),
-                keep=keep,
-                discard=lambda task_id: generated_files.discard(self.suite, task_id),
-                prompt_chars=lambda req: len(render_system(req)) + len(render_user(req)),
-            )
-            return generation.run(count)
+        return TaskKit(
+            sealed=sealed,
+            guard=guard,
+            evaluator=evaluator,
+            image=image,
+            calibrate=calibrate,
+            keep=keep,
+            exists=lambda task_id: any(t.id == task_id for t in self.tasks()),
+        )
 
     def environment_image(self, docker_client: Any) -> str:
         """The image this repository's tests run in: the sandbox plus its dependencies (B11).

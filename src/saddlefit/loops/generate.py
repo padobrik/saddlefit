@@ -14,13 +14,13 @@ import random
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Final
+from typing import Any, Final
 
 from saddlefit.config import GeneratorConfig
 from saddlefit.providers.base import ProviderError
 from saddlefit.providers.cost import PER_MTOK, cost_usd
 from saddlefit.tasks.acceptance import Acceptance
-from saddlefit.tasks.generator import GeneratedTask, GeneratorRequest, GeneratorResult
+from saddlefit.tasks.generator import GeneratedTask, GeneratorResult
 
 CALIBRATION_RUNS: Final = 5
 KEEP_PASSES: Final = range(1, 5)  # 20-80% of five runs
@@ -40,6 +40,10 @@ def worst_case_usd(prompt_chars: int, prices: GeneratorConfig) -> float:
     """An upper bound for one call: the prompt at about four characters a token, full reply."""
     p = prices.prices_usd_per_mtok
     return (prompt_chars / 4 * p.input + MAX_REPLY_TOKENS * p.output) / PER_MTOK
+
+
+class NoCandidate(Exception):
+    """This attempt found nothing to send to the model; it costs no call."""
 
 
 class CalibrationError(Exception):
@@ -72,16 +76,18 @@ class Generation:
 
     kind: str
     budget: GeneratorConfig
-    request: Callable[[random.Random], GeneratorRequest]
-    call: Callable[[GeneratorRequest], GeneratorResult]
+    # may raise NoCandidate; whatever it returns goes to prompt_chars and call
+    request: Callable[[random.Random], Any]
+    call: Callable[[Any], GeneratorResult]
     seal: Callable[[str, GeneratedTask], None]
     accept: Callable[[str, GeneratedTask], Acceptance]
     calibrate: Callable[[str, GeneratedTask], int]
     exists: Callable[[str], bool]
     keep: Callable[[str, GeneratedTask], None]
     discard: Callable[[str], None]
-    prompt_chars: Callable[[GeneratorRequest], int]
+    prompt_chars: Callable[[Any], int]
     seed: int = 7
+    max_attempts: int | None = None  # attempts of any kind, model calls or not
 
     def run(self, count: int) -> GenerationReport:
         report = GenerationReport()
@@ -90,7 +96,14 @@ class Generation:
             if report.calls >= self.budget.max_calls:
                 report.stopped = f"generator.max_calls ({self.budget.max_calls}) reached"
                 break
-            request = self.request(rng)
+            if self.max_attempts is not None and len(report.attempts) >= self.max_attempts:
+                report.stopped = f"{self.max_attempts} attempts made"
+                break
+            try:
+                request = self.request(rng)
+            except NoCandidate as exc:
+                report.attempts.append(Attempt(None, False, str(exc)))
+                continue
             if report.usd + worst_case_usd(self.prompt_chars(request), self.budget) > (
                 self.budget.max_usd
             ):
@@ -102,7 +115,7 @@ class Generation:
             report.attempts.append(self._attempt(request, report))
         return report
 
-    def _attempt(self, request: GeneratorRequest, report: GenerationReport) -> Attempt:
+    def _attempt(self, request: Any, report: GenerationReport) -> Attempt:
         try:
             result = self.call(request)
         except ProviderError as exc:
