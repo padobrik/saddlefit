@@ -28,12 +28,12 @@ MAX_REPLY_TOKENS: Final = 8_192
 _SLUG = re.compile(r"[^a-z0-9]+")
 
 
-def task_id_for(kind: str, task: GeneratedTask) -> str:
-    """``gen-<kind>-<title slug>-<12 hex>``, unique per task text."""
+def task_id_for(kind: str, task: GeneratedTask, prefix: str = "gen") -> str:
+    """``<prefix>-<kind>-<title slug>-<12 hex>``, unique per task text."""
     title = task.task_md.splitlines()[0].removeprefix("# ").lower()
     slug = _SLUG.sub("-", title).strip("-")[:40].strip("-") or "task"
     digest = hashlib.sha256(task.task_md.encode("utf-8")).hexdigest()[:12]
-    return f"gen-{kind}-{slug}-{digest}"
+    return f"{prefix}-{kind}-{slug}-{digest}"
 
 
 def worst_case_usd(prompt_chars: int, prices: GeneratorConfig) -> float:
@@ -88,6 +88,7 @@ class Generation:
     prompt_chars: Callable[[Any], int]
     seed: int = 7
     max_attempts: int | None = None  # attempts of any kind, model calls or not
+    id_prefix: str = "gen"
 
     def run(self, count: int) -> GenerationReport:
         report = GenerationReport()
@@ -123,7 +124,7 @@ class Generation:
                 report.usd += cost_usd(exc.usage, self.budget.prices_usd_per_mtok)
             return Attempt(None, False, f"generator: {exc}")
         report.usd += cost_usd(result.usage, self.budget.prices_usd_per_mtok)
-        task_id = task_id_for(self.kind, result.task)
+        task_id = task_id_for(self.kind, result.task, self.id_prefix)
         if self.exists(task_id):
             # sealing would overwrite the existing task, and discarding would delete it
             return Attempt(task_id, False, "the same task is already in the suite")

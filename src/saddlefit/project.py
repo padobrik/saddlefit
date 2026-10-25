@@ -26,6 +26,7 @@ from saddlefit.eval.control import control_summary
 from saddlefit.eval.evaluator import Evaluator, protected_patterns
 from saddlefit.eval.leak_guard import GuardedClient, guard_for_suite
 from saddlefit.eval.progress import Comparable, harness_progress
+from saddlefit.eval.tamper import matches_any
 from saddlefit.export.skill import export_skill
 from saddlefit.harness.lint import SandboxLinter
 from saddlefit.harness.loop_config import LoopConfig, clamp, load_loop_config
@@ -44,6 +45,7 @@ from saddlefit.loops.generate import (
     CalibrationError,
     Generation,
     GenerationReport,
+    NoCandidate,
 )
 from saddlefit.loops.generate import MAX_REPLY_TOKENS as GENERATOR_REPLY_TOKENS
 from saddlefit.loops.middle import MiddleLoop, RoundReport
@@ -71,12 +73,13 @@ from saddlefit.storage.fit_state import (
 )
 from saddlefit.storage.library import ChangeRecord, read_records
 from saddlefit.tasks import generated as generated_files
-from saddlefit.tasks.acceptance import accept, seal_generated
+from saddlefit.tasks.acceptance import FAILED_TESTS, Acceptance, accept, seal_generated
 from saddlefit.tasks.generator import (
     MAX_EXAMPLES,
     TASK_KINDS,
     GeneratedTask,
     GeneratorRequest,
+    GeneratorResult,
     generate,
     render_system,
     render_user,
@@ -84,8 +87,18 @@ from saddlefit.tasks.generator import (
 )
 from saddlefit.tasks.mining import STATE_DIR, MiningReport, Runner, _export, _git_bytes, mine
 from saddlefit.tasks.models import TASK_SCHEMA_VERSION, RepoRef, TaskMeta
+from saddlefit.tasks.mutation import (
+    MUTATION_TRIES_PER_CALL,
+    Mutation,
+    commit_mutation,
+    drop_mutation,
+    issue_messages,
+    pick,
+    related_tests,
+    write_issue,
+)
 from saddlefit.tasks.splits import add_task, new_lock
-from saddlefit.tasks.suite import SuitePaths, load_lock, load_meta, materialize, save_lock
+from saddlefit.tasks.suite import PYTEST, SuitePaths, load_lock, load_meta, materialize, save_lock
 
 
 def _check_live_model(baseline: dict[str, Any], model_info: ModelInfo) -> None:
@@ -291,6 +304,106 @@ class Project:
                 keep=kit.keep,
                 discard=lambda task_id: generated_files.discard(self.suite, task_id),
                 prompt_chars=lambda req: len(render_system(req)) + len(render_user(req)),
+            )
+            return generation.run(count)
+
+    def mutate_tasks(
+        self,
+        *,
+        count: int,
+        docker_client: Any,
+        generator_client: ModelClient,
+        model_client: Callable[[], ModelClient],
+        model_info: ModelInfo,
+        runner: Runner,
+    ) -> GenerationReport:
+        """Inject ``count`` kept bugs into working code; the generator writes each up (A11)."""
+        config = self.config()
+        protected = protected_patterns(config.evaluation)
+        head = _git_bytes(self.root, "rev-parse", "HEAD").decode().strip()
+        paths = generated_files.tracked_paths(self.root, head)
+        tests = {
+            p: t
+            for p, t in ((p, generated_files.read_text(self.root, head, p)) for p in paths)
+            if t is not None and p.endswith(".py") and matches_any(p, protected)
+        }
+        sources = {
+            f.path: f.content
+            for f in generated_files.repo_files(self.root, head, paths, protected)
+            if f.path.endswith(".py") and related_tests(f.path, tests)
+        }
+        if not sources:
+            raise UserError("no Python source file has tests that import it")
+        kit = self._task_kit(docker_client, model_client, model_info, "mutation", "bugfix")
+        pending: dict[str, Any] = {}
+        passing: dict[tuple[str, ...], bool] = {}
+
+        with tempfile.TemporaryDirectory(prefix="saddlefit-mutate-") as tmp:
+            base = Path(tmp) / "base"
+            _export(self.root, head, base)
+
+            def request(rng: Any) -> tuple[Mutation, list[str]]:
+                path = rng.choice(sorted(sources))
+                mutation = pick(path, sources[path], rng)
+                if mutation is None:
+                    raise NoCandidate(f"{path}: no site to mutate")
+                related = related_tests(path, tests)
+                key = tuple(related)
+                if key not in passing:  # the tests must pass before the bug goes in
+                    passing[key] = runner.run_tests(base, related) == 0
+                if not passing[key]:
+                    raise NoCandidate(f"{path}: its tests fail without any mutation")
+                mutated = Path(tmp) / "mutated"
+                if mutated.exists():
+                    remove_tree(mutated)
+                shutil.copytree(base, mutated, symlinks=True)
+                (mutated / path).write_text(mutation.mutated, encoding="utf-8")
+                if runner.run_tests(mutated, related) not in FAILED_TESTS:
+                    raise NoCandidate(f"{path}:{mutation.site.line}: the tests still pass")
+                return mutation, related
+
+            def call(req: tuple[Mutation, list[str]]) -> GeneratorResult:
+                mutation, related = req
+                result = write_issue(
+                    GuardedClient(generator_client, kit.guard),
+                    mutation,
+                    related,
+                    {p: tests[p] for p in related},
+                    visible_check=f"{PYTEST} {' '.join(related)}",
+                )
+                pending["mutation"] = mutation
+                return result
+
+            def seal(task_id: str, task: GeneratedTask) -> None:
+                pending[task_id] = commit_mutation(self.root, head, pending["mutation"], task_id)
+                seal_generated(kit.sealed, task_id, task)
+
+            def judge(task_id: str, task: GeneratedTask) -> Acceptance:
+                snapshot = Path(tmp) / f"base-{task_id}"
+                _export(self.root, pending[task_id], snapshot)
+                return accept(kit.evaluator, task_id, snapshot, task)
+
+            def discard(task_id: str) -> None:
+                generated_files.discard(self.suite, task_id)
+                if task_id in pending:
+                    drop_mutation(self.root, task_id)
+
+            generation = Generation(
+                kind="bugfix",
+                id_prefix="mut",
+                budget=config.generator,
+                request=request,
+                call=call,
+                seal=seal,
+                accept=judge,
+                calibrate=lambda task_id, task: kit.calibrate(task_id, task, pending[task_id]),
+                exists=kit.exists,
+                keep=kit.keep,
+                discard=discard,
+                prompt_chars=lambda req: sum(
+                    len(m.content) for m in issue_messages(req[0], req[1])
+                ),
+                max_attempts=config.generator.max_calls * MUTATION_TRIES_PER_CALL,
             )
             return generation.run(count)
 
