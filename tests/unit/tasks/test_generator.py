@@ -138,8 +138,7 @@ def test_edits_become_a_patch_that_git_applies(tmp_path: Path) -> None:
     subprocess.run(
         ["git", "apply", "-"],
         cwd=tmp_path,
-        input=result.task.reference_patch,
-        text=True,
+        input=result.task.reference_patch.encode("utf-8"),  # bytes: no CRs added on Windows
         check=True,
         env=_git_env(),
     )
