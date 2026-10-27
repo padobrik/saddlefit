@@ -171,3 +171,20 @@ def test_a_line_separator_inside_a_line_stays_in_it() -> None:
     patch = file_diff("a.py", "x = 'a\u2028b'\n", "x = 'a\u2028c'\n")
     assert patch.count("\n-x = ") == 1
     assert "No newline" not in patch
+
+
+def test_a_path_with_a_tab_is_quoted_and_applies(tmp_path: Path) -> None:
+    name = "src/a\tb.py"
+    patch = file_diff(name, "x = 1\n", "x = 2\n")
+    assert patch.startswith('diff --git "a/src/a\\tb.py" "b/src/a\\tb.py"\n')
+    (tmp_path / "src").mkdir()
+    (tmp_path / name).write_bytes(b"x = 1\n")
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True, env=_git_env())
+    subprocess.run(
+        ["git", "-c", "core.autocrlf=false", "apply", "-"],
+        cwd=tmp_path,
+        input=patch.encode("utf-8"),
+        check=True,
+        env=_git_env(),
+    )
+    assert (tmp_path / name).read_bytes() == b"x = 2\n"
