@@ -47,6 +47,14 @@ def repo_files(
     return files
 
 
+def read_text(repo: Path, ref: str, path: str) -> str | None:
+    """A tracked file's text at ``ref``; ``None`` for binary files and gitlinks."""
+    try:
+        return _git_bytes(repo, "show", f"{ref}:{path}").decode("utf-8")
+    except (UnicodeDecodeError, subprocess.CalledProcessError):
+        return None
+
+
 def repo_summary(repo: Path, ref: str, paths: Sequence[str]) -> str:
     """The file list and the start of the README."""
     listed = "\n".join(paths[:MAX_LISTED_PATHS])
