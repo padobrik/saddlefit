@@ -8,6 +8,7 @@ import pytest
 
 from saddlefit.providers.base import ModelReply, ProviderError, ToolCall, Usage
 from saddlefit.providers.fake import FakeClient
+from saddlefit.tasks.mining import _git_env
 from saddlefit.tasks.mutation import (
     ISSUE_TOOL,
     MUTATION_REF,
@@ -63,7 +64,7 @@ def test_related_tests_import_the_module() -> None:
 
 def git(repo: Path, *args: str) -> str:
     return subprocess.run(
-        ["git", *args], cwd=repo, check=True, capture_output=True, text=True
+        ["git", *args], cwd=repo, check=True, capture_output=True, text=True, env=_git_env()
     ).stdout.strip()
 
 
@@ -100,7 +101,9 @@ def test_the_reference_patch_undoes_the_mutation(repo: Path) -> None:
     (repo / "src" / "dates.py").write_text(mutation.mutated, encoding="utf-8")
     patch = reference_patch(mutation)
     assert patch.startswith("diff --git a/src/dates.py b/src/dates.py\n")
-    subprocess.run(["git", "apply", "-"], cwd=repo, input=patch, text=True, check=True)
+    subprocess.run(
+        ["git", "apply", "-"], cwd=repo, input=patch, text=True, check=True, env=_git_env()
+    )
     assert (repo / "src" / "dates.py").read_text(encoding="utf-8") == SOURCE
 
 
@@ -138,3 +141,30 @@ def test_an_issue_that_quotes_the_fixed_line_is_refused() -> None:
             visible_check="true",
         )
     assert exc.value.usage is not None
+
+
+def test_line_numbers_follow_tokenize_across_a_form_feed() -> None:
+    source = "x = 1\n\x0c\ndef f(a):\n    return a < 2\n"
+    mutation = pick("m.py", source, random.Random(0))
+    assert mutation is not None
+    assert sum(a != b for a, b in zip(mutation.original, mutation.mutated, strict=False)) >= 1
+    for site in sites(source):
+        apply(source, site)  # every site tokenize reports is where apply looks
+
+
+def test_the_reference_patch_ignores_the_users_diff_config(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / ".gitconfig").write_text("[diff]\n\tnoprefix = true\n", encoding="utf-8")
+    monkeypatch.setenv("HOME", str(home))
+    mutation = pick("src/dates.py", SOURCE, random.Random(1))
+    assert mutation is not None
+    patch = reference_patch(mutation)
+    assert "\n--- a/src/dates.py\n+++ b/src/dates.py\n" in patch
+    (repo / "src" / "dates.py").write_text(mutation.mutated, encoding="utf-8")
+    subprocess.run(
+        ["git", "apply", "-"], cwd=repo, input=patch, text=True, check=True, env=_git_env()
+    )
+    assert (repo / "src" / "dates.py").read_text(encoding="utf-8") == SOURCE

@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import secrets
+import shlex
 import shutil
 import stat
 import tempfile
@@ -322,10 +323,12 @@ class Project:
         protected = protected_patterns(config.evaluation)
         head = _git_bytes(self.root, "rev-parse", "HEAD").decode().strip()
         paths = generated_files.tracked_paths(self.root, head)
+        # the cheap path filters first: one git show per test file, not per tracked file
+        test_paths = [p for p in paths if p.endswith(".py") and matches_any(p, protected)]
         tests = {
             p: t
-            for p, t in ((p, generated_files.read_text(self.root, head, p)) for p in paths)
-            if t is not None and p.endswith(".py") and matches_any(p, protected)
+            for p in test_paths
+            if (t := generated_files.read_text(self.root, head, p)) is not None
         }
         sources = {
             f.path: f.content
@@ -356,8 +359,11 @@ class Project:
                 mutated = Path(tmp) / "mutated"
                 if mutated.exists():
                     remove_tree(mutated)
-                shutil.copytree(base, mutated, symlinks=True)
-                (mutated / path).write_text(mutation.mutated, encoding="utf-8")
+                # no bytecode caches: a .pyc with the same mtime and size would hide the bug
+                shutil.copytree(
+                    base, mutated, symlinks=True, ignore=shutil.ignore_patterns("__pycache__")
+                )
+                (mutated / path).write_bytes(mutation.mutated.encode("utf-8"))
                 if runner.run_tests(mutated, related) not in FAILED_TESTS:
                     raise NoCandidate(f"{path}:{mutation.site.line}: the tests still pass")
                 return mutation, related
@@ -369,7 +375,7 @@ class Project:
                     mutation,
                     related,
                     {p: tests[p] for p in related},
-                    visible_check=f"{PYTEST} {' '.join(related)}",
+                    visible_check=f"{PYTEST} {' '.join(shlex.quote(r) for r in related)}",
                 )
                 pending["mutation"] = mutation
                 return result
@@ -379,7 +385,8 @@ class Project:
                 seal_generated(kit.sealed_root, task_id, task)
 
             def judge(task_id: str, task: GeneratedTask) -> Acceptance:
-                snapshot = Path(tmp) / f"base-{task_id}"
+                # a fresh directory per attempt: a repeated task ID must not meet old files
+                snapshot = Path(tempfile.mkdtemp(dir=tmp)) / "base"
                 _export(self.root, pending[task_id], snapshot)
                 return accept(kit.evaluator, task_id, snapshot, task)
 

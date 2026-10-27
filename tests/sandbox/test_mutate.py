@@ -13,6 +13,7 @@ from saddlefit.config import dump_config
 from saddlefit.project import Project
 from saddlefit.providers.base import ModelReply, ToolCall, Usage
 from saddlefit.providers.fake import FakeClient
+from saddlefit.tasks.mining import _git_env
 from saddlefit.tasks.mutation import ISSUE_TOOL, MUTATION_REF
 
 pytestmark = pytest.mark.docker
@@ -20,7 +21,7 @@ pytestmark = pytest.mark.docker
 
 def git(repo: Path, *args: str) -> str:
     return subprocess.run(
-        ["git", *args], cwd=repo, check=True, capture_output=True, text=True
+        ["git", *args], cwd=repo, check=True, capture_output=True, text=True, env=_git_env()
     ).stdout.strip()
 
 

@@ -69,6 +69,11 @@ class Mutation:
     site: Site
 
 
+def _lines(source: str) -> list[str]:
+    """``source`` split as ``tokenize`` reads it: at ``\n`` only, line endings kept."""
+    return re.findall(r"[^\n]*\n|[^\n]+$", source)
+
+
 def sites(source: str) -> list[Site]:
     """Every mutable token in ``source``; none when it does not tokenize."""
     found = []
@@ -87,7 +92,7 @@ def sites(source: str) -> list[Site]:
 
 def apply(source: str, site: Site) -> str:
     """``source`` with the one token at ``site`` replaced; every other byte kept."""
-    lines = source.splitlines(keepends=True)
+    lines = _lines(source)
     text = lines[site.line - 1]
     if text[site.col : site.col + len(site.old)] != site.old:
         raise ValueError(f"no {site.old!r} at line {site.line}, column {site.col}")
@@ -108,7 +113,10 @@ def pick(path: str, source: str, rng: random.Random) -> Mutation | None:
     candidates = sites(source)
     rng.shuffle(candidates)
     for site in candidates:
-        mutated = apply(source, site)
+        try:
+            mutated = apply(source, site)
+        except (ValueError, IndexError):
+            continue
         if mutated != source and compiles(mutated, path):
             return Mutation(path, source, mutated, site)
     return None
@@ -129,7 +137,7 @@ def related_tests(path: str, test_files: dict[str, str]) -> list[str]:
 
 def excerpt(source: str, line: int) -> str:
     """The lines around ``line``, numbered, for the issue writer."""
-    lines = source.splitlines()
+    lines = [text.rstrip("\r\n") for text in _lines(source)]
     first = max(line - CONTEXT_LINES, 1)
     last = min(line + CONTEXT_LINES, len(lines))
     return "\n".join(f"{n:5d}  {lines[n - 1]}" for n in range(first, last + 1))
@@ -181,15 +189,33 @@ def reference_patch(mutation: Mutation) -> str:
     """The diff that undoes the mutation, as ``git diff`` writes it."""
     with tempfile.TemporaryDirectory(prefix="saddlefit-diff-") as tmp:
         a, b = Path(tmp) / "a", Path(tmp) / "b"
-        a.write_text(mutation.mutated, encoding="utf-8")
-        b.write_text(mutation.original, encoding="utf-8")
-        out = subprocess.run(
-            ["git", "diff", "--no-index", "--no-color", "a", "b"],  # noqa: S607
+        # bytes, so no line ending is translated on the way
+        a.write_bytes(mutation.mutated.encode("utf-8"))
+        b.write_bytes(mutation.original.encode("utf-8"))
+        done = subprocess.run(
+            [  # noqa: S607
+                "git",
+                "-c",
+                "diff.noprefix=false",
+                "-c",
+                "diff.mnemonicPrefix=false",
+                "diff",
+                "--no-index",
+                "--no-color",
+                "--no-ext-diff",
+                "--src-prefix=a/",
+                "--dst-prefix=b/",
+                "a",
+                "b",
+            ],
             cwd=tmp,
-            env=_git_env(),
+            env=_git_env(GIT_CONFIG_NOSYSTEM="1"),
             capture_output=True,
-            check=False,  # exit 1 means the files differ
-        ).stdout.decode("utf-8")
+            check=False,
+        )
+    if done.returncode != 1:  # 1 means the files differ; anything else is an error
+        raise RuntimeError(f"git diff exited {done.returncode}: {done.stderr.decode()[:300]}")
+    out = done.stdout.decode("utf-8")
     body = out.split("\n", 1)[1]  # drop git's own header line, which names a and b
     body = re.sub(r"^--- a/a$", f"--- a/{mutation.path}", body, count=1, flags=re.MULTILINE)
     body = re.sub(r"^\+\+\+ b/b$", f"+++ b/{mutation.path}", body, count=1, flags=re.MULTILINE)
@@ -240,7 +266,7 @@ def write_issue(
     task_md = calls[0].arguments.get("task_md") if len(calls) == 1 else None
     if not isinstance(task_md, str) or not task_md.lstrip().startswith("# "):
         raise ProviderError("the issue is unusable: no task_md with a '# ' title", reply.usage)
-    fixed_line = mutation.original.splitlines()[mutation.site.line - 1].strip()
+    fixed_line = _lines(mutation.original)[mutation.site.line - 1].strip()
     if len(fixed_line) >= 8 and fixed_line in task_md:
         raise ProviderError("the issue quotes the original line", reply.usage)
     task = GeneratedTask(
