@@ -70,7 +70,7 @@ def test_a_loop_yaml_without_a_final_newline_still_takes_the_patch(tmp_path: Pat
     store.init()
     path = store.path / "loop.yaml"
     text = path.read_text(encoding="utf-8").rstrip("\n")
-    path.write_text(text, encoding="utf-8")
+    path.write_bytes(text.encode("utf-8"))  # bytes: on Windows write_text would add CRs
     subprocess.run(
         ["git", "commit", "-qam", "chore: trim"],
         cwd=store.path,
