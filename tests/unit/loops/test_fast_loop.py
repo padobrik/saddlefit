@@ -1,5 +1,7 @@
 """Required test 7: the fast loop respects its budget, and probation never reaches main."""
 
+import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -9,7 +11,9 @@ from saddlefit.config import FastLoopConfig
 from saddlefit.harness.loop_config import LoopConfig, default_loop_config, load_loop_config
 from saddlefit.harness.store import MAIN, HarnessStore
 from saddlefit.loops.fast import FastLoop, Probe, variant_passes
+from saddlefit.loops.work import copy_working_tree
 from saddlefit.playbook import starter_playbook
+from saddlefit.tasks.mining import _git_env
 
 ENTRY = {e.id: e for e in starter_playbook()}
 
@@ -89,7 +93,12 @@ def test_the_time_budget_stops_probing() -> None:
 
 def refs(store: HarnessStore) -> str:
     return subprocess.run(
-        ["git", "for-each-ref"], cwd=store.path, check=True, capture_output=True, text=True
+        ["git", "for-each-ref"],
+        cwd=store.path,
+        check=True,
+        capture_output=True,
+        text=True,
+        env=_git_env(),
     ).stdout
 
 
@@ -124,3 +133,32 @@ def test_a_variant_passes_by_the_b12_rule(passes: list[bool], runs: int, ok: boo
 
 def test_entries_are_real_playbook_entries() -> None:
     assert {"edit-strips-line-numbers", "read-without-line-numbers", "repo-map"} <= set(ENTRY)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="directory symlinks need extra rights on Windows")
+def test_a_file_behind_a_symlinked_directory_is_not_copied(tmp_path: Path) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.txt").write_text("key\n", encoding="utf-8")
+    repo = tmp_path / "repo"
+    (repo / "dir").mkdir(parents=True)
+    (repo / "dir" / "secret.txt").write_text("x\n", encoding="utf-8")
+    (repo / "ok.txt").write_text("ok\n", encoding="utf-8")
+    env = _git_env(
+        GIT_AUTHOR_NAME="t",
+        GIT_AUTHOR_EMAIL="t@t",
+        GIT_COMMITTER_NAME="t",
+        GIT_COMMITTER_EMAIL="t@t",
+    )
+    for args in (
+        ["init", "-q"],
+        ["add", "."],
+        ["-c", "core.hooksPath=/dev/null", "commit", "-qm", "x"],
+    ):
+        subprocess.run(["git", *args], cwd=repo, check=True, env=env)
+    shutil.rmtree(repo / "dir")
+    (repo / "dir").symlink_to(outside, target_is_directory=True)
+    dest = tmp_path / "copy"
+    copy_working_tree(repo, dest)
+    assert (dest / "ok.txt").exists()
+    assert not (dest / "dir").exists()

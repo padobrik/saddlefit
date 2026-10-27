@@ -49,12 +49,23 @@ def working_tree_files(repo: Path) -> list[str]:
     return sorted(p for p in set(out.split("\0")) if p and p.split("/", 1)[0] not in SKIPPED)
 
 
+def _inside(repo: Path, rel: str) -> bool:
+    """No component of ``rel`` is a symlink, so the file is really in the repository."""
+    path = repo
+    for part in Path(rel).parts:
+        path = path / part
+        if path.is_symlink():
+            return False
+    return True
+
+
 def copy_working_tree(repo: Path, dest: Path) -> None:
     dest.mkdir(parents=True, exist_ok=True)
     for rel in working_tree_files(repo):
         source = repo / rel
-        if not source.is_file() or source.is_symlink():
-            continue  # deleted in the working tree, or a link that could point outside
+        # deleted in the working tree, or reached through a link that could point outside
+        if not _inside(repo, rel) or not source.is_file():
+            continue
         target = dest / rel
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, target)
@@ -143,6 +154,8 @@ class WorkRunner:
                         workspace_digest=tracker.digest,
                     )
                     result = student.run(context)
+                    # the check gets its own time, not what the student left of the run's
+                    box.renew(self.config.evaluation.timeout_seconds)
                     verdict_run = box.exec(self.check, self.config.evaluation.timeout_seconds)
                     exit_code, passed = verdict_run.exit_code, verdict_run.exit_code == 0
                 diff = tracker.diff()

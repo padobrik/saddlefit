@@ -13,6 +13,7 @@ from saddlefit.project import Project
 from saddlefit.providers.base import ModelReply, ToolCall
 from saddlefit.providers.fake import FakeClient
 from saddlefit.storage.journal import read_entries
+from saddlefit.tasks.mining import _git_env
 
 pytestmark = pytest.mark.docker
 
@@ -67,6 +68,11 @@ def test_run_rescues_a_task_with_a_playbook_variant_on_probation(
     assert project.harness.head(MAIN) == main_before
     assert not (repo / "DONE.txt").exists()
     status = subprocess.run(
-        ["git", "status", "--porcelain"], cwd=repo, check=True, capture_output=True, text=True
+        ["git", "status", "--porcelain"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+        env=_git_env(),
     )
     assert "DONE.txt" not in status.stdout

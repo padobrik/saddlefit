@@ -254,6 +254,10 @@ class Sandbox:
     def remaining_s(self) -> float:
         return max(0.0, self._deadline - self._clock())
 
+    def renew(self, seconds: float) -> None:
+        """Give what runs next ``seconds`` from now, whatever the run has used so far."""
+        self._deadline = self._clock() + seconds
+
     def exec(self, command: str, timeout_s: float) -> ExecResult:
         """Run a shell command in ``/work``, bounded by its own and the run's time limit.
 

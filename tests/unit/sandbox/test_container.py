@@ -323,3 +323,13 @@ def test_harness_tools_are_mounted_read_only_on_path(tmp_path: Path) -> None:
     assert "/harness" not in container_options(work, LIMITS)["environment"]["PATH"]
     with pytest.raises(SandboxError, match="absolute directory"):
         container_options(work, LIMITS, harness_tools=tmp_path / "missing")
+
+
+def test_renew_gives_what_runs_next_its_own_time(tmp_path: Path) -> None:
+    now = [100.0]
+    box = Sandbox(object(), "img", tmp_path, LIMITS, run_timeout_s=60, clock=lambda: now[0])
+    box._deadline = now[0] + 60
+    now[0] += 59
+    assert box.remaining_s == pytest.approx(1)
+    box.renew(30)
+    assert box.remaining_s == pytest.approx(30)
