@@ -33,6 +33,7 @@ class ExitCode(IntEnum):
     USER_ERROR = 1
     INTEGRITY_VIOLATION = 2
     ENVIRONMENT_ERROR = 3
+    NOT_SOLVED = 4  # run: the check still fails; the answer is the best attempt
 
 
 app = typer.Typer(
@@ -413,6 +414,8 @@ def run(
         lines.append(f"journal ({status}): {work.journal}")
     lines.append(f"answer: {work.answer}  (apply with: git apply {work.answer})")
     _emit(ctx, data, "\n".join(lines))
+    if not result.passed:
+        raise typer.Exit(ExitCode.NOT_SOLVED)
 
 
 def ablation_line(result: AblationResult) -> str:

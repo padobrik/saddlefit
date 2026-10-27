@@ -257,3 +257,6 @@ Assumptions taken where the spec leaves a detail open. Deviations from the spec 
   the composed change passed and `rejected` when it did not. Work mode has no hidden tests,
   so the protected-files rule is not added and nothing reads the sealed store; probe records
   go to `.saddlefit/work/`.
+- **Exit code 4.** `saddlefit run` exits 4 when the check still fails: the command worked,
+  the task is not solved, and the answer is the best attempt. B14 defines 0 to 3 only; code 4
+  is an addition for the owner to take into the spec's exit-code table.
