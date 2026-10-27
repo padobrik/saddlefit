@@ -76,4 +76,3 @@ def test_run_rescues_a_task_with_a_playbook_variant_on_probation(
         env=_git_env(),
     )
     assert "DONE.txt" not in status.stdout
-
