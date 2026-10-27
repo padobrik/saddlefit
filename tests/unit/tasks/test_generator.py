@@ -177,6 +177,8 @@ def test_a_path_with_a_tab_is_quoted_and_applies(tmp_path: Path) -> None:
     name = "src/a\tb.py"
     patch = file_diff(name, "x = 1\n", "x = 2\n")
     assert patch.startswith('diff --git "a/src/a\\tb.py" "b/src/a\\tb.py"\n')
+    if os.name == "nt":
+        return  # Windows has no file names with a tab; the header is what this test is about
     (tmp_path / "src").mkdir()
     (tmp_path / name).write_bytes(b"x = 1\n")
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True, env=_git_env())
