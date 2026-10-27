@@ -30,7 +30,7 @@ class FakeBox:
     def __init__(self, clock: Clock, run_timeout_s: float) -> None:
         self.clock = clock
         self.deadline = clock.now + run_timeout_s
-        self.checks: list[float] = []  # time left for each command
+        self.checks: list[float] = []  # the time each command was allowed
 
     def __enter__(self) -> "FakeBox":
         return self
@@ -43,7 +43,7 @@ class FakeBox:
 
     def exec(self, command: str, timeout_s: float) -> ExecResult:
         left = max(0.0, self.deadline - self.clock.now)
-        self.checks.append(left)
+        self.checks.append(min(timeout_s, left))  # what Sandbox.exec really allows
         if left <= 0:
             return ExecResult(exit_code=124, output="[timed out]", timed_out=True, duration_s=0)
         return ExecResult(exit_code=0, output="ok", timed_out=False, duration_s=0)
