@@ -409,7 +409,8 @@ def run(
     if result.helped:
         lines.append(f"with playbook variants: {', '.join(e.id for e in result.helped)}")
     if work.journal:
-        lines.append(f"journal (on probation): {work.journal}")
+        status = "on probation" if result.passed else "rejected: the composed change failed"
+        lines.append(f"journal ({status}): {work.journal}")
     lines.append(f"answer: {work.answer}  (apply with: git apply {work.answer})")
     _emit(ctx, data, "\n".join(lines))
 
