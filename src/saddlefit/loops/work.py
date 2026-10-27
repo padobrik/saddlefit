@@ -3,8 +3,9 @@
 Each attempt copies the working tree (tracked files and untracked ones git does not
 ignore, never ``.git`` or ``.saddlefit``) into a fresh sandbox, runs the student with the
 check as its finish gate, then runs the check once more. The check is visible by design:
-work mode has no hidden tests, so nothing here touches the sealed store. Probe records go to
-``.saddlefit/work/``, apart from the baseline's and fit's runs.
+work mode has no hidden tests, so nothing here touches the sealed store. Each probe's events
+go to ``.saddlefit/work/``: an event log, not a run record (it has no summary line, since a
+work task belongs to no split), kept apart from the baseline's and fit's runs.
 """
 
 from __future__ import annotations
@@ -170,7 +171,9 @@ class WorkRunner:
                     result = student.run(context)
                     # the check runs in what the student's share left of the same deadline
                     verdict_run = box.exec(self.check, run_s)
-                    exit_code, passed = verdict_run.exit_code, verdict_run.exit_code == 0
+                    exit_code = verdict_run.exit_code
+                    # a check that ran out of time did not pass, whatever it exited with
+                    passed = verdict_run.exit_code == 0 and not verdict_run.timed_out
                 diff = tracker.diff()
                 stats = tracker.diff_stats()
             except SandboxError as exc:

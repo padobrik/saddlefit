@@ -178,3 +178,40 @@ def test_no_time_left_is_a_timeout_without_a_sandbox(
     )
     probe = runner.attempt(default_loop_config(), seed=7, deadline=time.monotonic() - 1)
     assert (probe.passed, probe.tags) == (False, ("timeout",))
+
+
+def test_a_check_that_timed_out_did_not_pass(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class SlowBox(FakeBox):
+        def exec(self, command: str, timeout_s: float) -> ExecResult:
+            if command == "true":  # the final check: it caught the signal and exited 0
+                return ExecResult(exit_code=0, output="", timed_out=True, duration_s=60)
+            return super().exec(command, timeout_s)
+
+    clock = Clock()
+    monkeypatch.setattr(
+        work_module, "Sandbox", lambda *a, run_timeout_s, **k: SlowBox(clock, run_timeout_s)
+    )
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True, env=_git_env())
+    store = HarnessStore(tmp_path / "harness")
+    store.init()
+    loop = default_loop_config().model_copy(
+        update={"finish_gate": default_loop_config().finish_gate.model_copy(update={"run": None})}
+    )
+    runner = WorkRunner(
+        repo=repo,
+        config=Config(schema_version=3, project="p"),
+        task_text="t",
+        check="true",
+        harness_dir=store.path,
+        state=tmp_path / "state",
+        client_factory=lambda: FakeClient(
+            [ModelReply(tool_calls=(ToolCall(id="f", name="finish", arguments={"summary": "x"}),))]
+        ),
+        docker_client=object(),
+        image="img",
+    )
+    assert not runner.attempt(loop, seed=7).passed
