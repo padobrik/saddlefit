@@ -137,7 +137,7 @@ def test_edits_become_a_patch_that_git_applies(tmp_path: Path) -> None:
     (tmp_path / "src" / "dates.py").write_bytes(b"def parse(s): return s\n")
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True, env=_git_env())
     subprocess.run(
-        ["git", "apply", "-"],
+        ["git", "-c", "core.autocrlf=false", "apply", "-"],  # Windows runners set autocrlf
         cwd=tmp_path,
         input=result.task.reference_patch.encode("utf-8"),  # bytes: no CRs added on Windows
         check=True,
