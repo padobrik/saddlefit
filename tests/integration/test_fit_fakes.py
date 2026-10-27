@@ -442,6 +442,8 @@ def test_refusals_keep_their_reason_and_add_up_by_kind(tmp_path: Path) -> None:
     assert report.refused == 1
     assert report.refusals[0].startswith("proposal: ")
     assert load_fit_state(tmp_path).refusals == {"proposal": 1}
+
+
 def test_the_tutor_prompt_lists_playbook_techniques_for_the_failures(tmp_path: Path) -> None:
     tutor = FakeTutor([USELESS, RIGHT])
     loop, _ = make_loop(tmp_path, tutor)
