@@ -2,6 +2,7 @@
 
 import os
 import random
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -20,9 +21,11 @@ from saddlefit.tasks.generator import (
     render_user,
     select_files,
 )
+from saddlefit.tasks.mining import _git_env
 
 SNAPSHOTS = Path(__file__).parent / "snapshots"
 PROTECTED = ("tests/**", "**/test_*.py", "**/*_test.py")
+EDIT = {"path": "src/dates.py", "old": "return s\n", "new": "return s.strip()\n"}
 PATCH = (
     "diff --git a/src/dates.py b/src/dates.py\n--- a/src/dates.py\n+++ b/src/dates.py\n"
     "@@ -1 +1 @@\n-def parse(s): return s\n+def parse(s): return s.strip()\n"
@@ -54,7 +57,7 @@ def reply(**arguments: Any) -> ModelReply:
     task: dict[str, Any] = {
         "task_md": "# parse keeps spaces\n\nparse(' 2026-10-21 ') should strip them.",
         "hidden_tests": [{"path": "tests/test_parse_spaces.py", "content": "def test(): ..."}],
-        "reference_patch": PATCH,
+        "reference_edits": [EDIT],
         "visible_check": "python -m pytest -q tests/test_dates.py",
     }
     call = ToolCall(id="c1", name=SUBMIT_TOOL.name, arguments={**task, **arguments})
@@ -85,8 +88,12 @@ def test_a_good_answer_becomes_a_task() -> None:
         ({"hidden_tests": [{"path": "src/check.py", "content": "x"}]}, "no protected pattern"),
         ({"hidden_tests": [{"path": "../tests/t.py", "content": "x"}]}, "stay inside"),
         ({"hidden_tests": [{"path": "tests/test_dates.py", "content": "x"}]}, "already exists"),
-        ({"reference_patch": "just prose"}, "unified diff"),
-        ({"reference_patch": "diff --git a/src/dates.py b/src/dates.py\n"}, "unified diff"),
+        ({"reference_edits": []}, "at least one edit"),
+        ({"reference_edits": [{**EDIT, "old": "nowhere"}]}, "occurs 0 times"),
+        ({"reference_edits": [{**EDIT, "path": "src/other.py"}]}, "were not shown"),
+        ({"reference_edits": [{**EDIT, "new": EDIT["old"]}]}, "change nothing"),
+        ({"reference_edits": [{"path": "src/dates.py", "old": "", "new": "x"}]}, "new file"),
+        ({"reference_edits": [{"path": "../x.py", "old": "", "new": "x"}]}, "relative and normal"),
         (
             {"hidden_tests": [{"path": "tests/./test_dates.py", "content": "x"}]},
             "normal form",
@@ -102,8 +109,8 @@ def test_a_good_answer_becomes_a_task() -> None:
             "quotes the hidden test",
         ),
         (
-            {"reference_patch": PATCH.replace("src/dates.py", "tests/test_dates.py")},
-            "touches protected paths",
+            {"reference_edits": [{**EDIT, "path": "tests/test_dates.py"}]},
+            "touch protected paths",
         ),
         ({"visible_check": " "}, "shell command"),
     ],
@@ -120,6 +127,24 @@ def test_unusable_answers_are_refused_with_their_cost(
 def test_an_answer_without_the_tool_is_refused() -> None:
     with pytest.raises(GeneratorError, match="exactly one submit_task"):
         generate(FakeClient([ModelReply(text="here is a task")]), request())
+
+
+def test_edits_become_a_patch_that_git_applies(tmp_path: Path) -> None:
+    new_file = {"path": "src/extra.py", "old": "", "new": "X = 1"}
+    result = generate(FakeClient([reply(reference_edits=[EDIT, new_file])]), request())
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "dates.py").write_bytes(b"def parse(s): return s\n")
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True, env=_git_env())
+    subprocess.run(
+        ["git", "apply", "-"],
+        cwd=tmp_path,
+        input=result.task.reference_patch,
+        text=True,
+        check=True,
+        env=_git_env(),
+    )
+    assert (tmp_path / "src" / "dates.py").read_bytes() == b"def parse(s): return s.strip()\n"
+    assert (tmp_path / "src" / "extra.py").read_bytes() == b"X = 1"  # no newline, kept
 
 
 def test_file_sampling_fits_the_budget_and_varies() -> None:
