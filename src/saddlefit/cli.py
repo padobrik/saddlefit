@@ -12,11 +12,12 @@ from typing import Annotated, Any
 import typer
 
 from saddlefit import __version__
-from saddlefit.config import ConfigError, SandboxConfig, StudentConfig, load_config
+from saddlefit.config import Config, ConfigError, SandboxConfig, StudentConfig, load_config
 from saddlefit.doctor import doctor_for, render
 from saddlefit.errors import EnvironmentFailure, SaddlefitError, UserError
 from saddlefit.loops.ablation import AblationResult
 from saddlefit.loops.baseline import RunOutcome
+from saddlefit.loops.generate import GenerationReport
 from saddlefit.loops.middle import RoundReport
 from saddlefit.project import Project
 from saddlefit.providers.anthropic import AnthropicClient
@@ -138,21 +139,11 @@ def tasks_mine(
     )
 
 
-@tasks_app.command("generate")
-def tasks_generate(
-    ctx: typer.Context,
-    type_: Annotated[str, typer.Option("--type", help="Task type: feature or bugfix.")],
-    count: Annotated[int, typer.Option(min=1, help="How many tasks to keep.")] = 1,
-) -> None:
-    """Write tasks with the generator; keep those the student solves in 20-80% of 5 runs."""
-    if type_ not in TASK_KINDS:
-        raise UserError(f"unknown task type {type_!r}; known: {', '.join(sorted(TASK_KINDS))}")
-    project = _project()
-    config = project.config()
+def _generator_ready(config: Config, command: str) -> None:
+    """Refuse before any spending: the generator must be real and priced."""
     if config.generator.provider != "anthropic":
         raise UserError(
-            f"tasks generate needs the anthropic generator provider, not "
-            f"{config.generator.provider!r}"
+            f"{command} needs the anthropic generator provider, not {config.generator.provider!r}"
         )
     prices = config.generator.prices_usd_per_mtok
     if not (prices.input and prices.output):
@@ -161,15 +152,9 @@ def tasks_generate(
             "generator prices are not set; fill in generator.prices_usd_per_mtok "
             "(input and output) from your price list"
         )
-    model_info, model_client = _student(project)
-    report = project.generate_tasks(
-        kind=type_,
-        count=count,
-        docker_client=_docker(),
-        generator_client=AnthropicClient(config.generator.model),
-        model_client=model_client,
-        model_info=model_info,
-    )
+
+
+def _generation_output(ctx: typer.Context, report: GenerationReport, count: int) -> None:
     data = {
         "kept": report.kept,
         "attempts": [vars(a) for a in report.attempts],
@@ -184,6 +169,51 @@ def tasks_generate(
     if report.stopped:
         lines.append(f"stopped: {report.stopped}")
     _emit(ctx, data, "\n".join(lines))
+
+
+@tasks_app.command("mutate")
+def tasks_mutate(
+    ctx: typer.Context,
+    count: Annotated[int, typer.Option(min=1, help="How many tasks to keep.")] = 1,
+) -> None:
+    """Inject bugs that break existing tests; keep those the student solves in 20-80% of 5 runs."""
+    project = _project()
+    config = project.config()
+    _generator_ready(config, "tasks mutate")
+    model_info, model_client = _student(project)
+    report = project.mutate_tasks(
+        count=count,
+        docker_client=_docker(),
+        generator_client=AnthropicClient(config.generator.model),
+        model_client=model_client,
+        model_info=model_info,
+        runner=mining_runner(project),
+    )
+    _generation_output(ctx, report, count)
+
+
+@tasks_app.command("generate")
+def tasks_generate(
+    ctx: typer.Context,
+    type_: Annotated[str, typer.Option("--type", help="Task type: feature or bugfix.")],
+    count: Annotated[int, typer.Option(min=1, help="How many tasks to keep.")] = 1,
+) -> None:
+    """Write tasks with the generator; keep those the student solves in 20-80% of 5 runs."""
+    if type_ not in TASK_KINDS:
+        raise UserError(f"unknown task type {type_!r}; known: {', '.join(sorted(TASK_KINDS))}")
+    project = _project()
+    config = project.config()
+    _generator_ready(config, "tasks generate")
+    model_info, model_client = _student(project)
+    report = project.generate_tasks(
+        kind=type_,
+        count=count,
+        docker_client=_docker(),
+        generator_client=AnthropicClient(config.generator.model),
+        model_client=model_client,
+        model_info=model_info,
+    )
+    _generation_output(ctx, report, count)
 
 
 @tasks_app.command("list")
