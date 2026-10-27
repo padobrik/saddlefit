@@ -1,6 +1,7 @@
 """Work mode: one deadline per run, and the final check always keeps a share of it (B11)."""
 
 import subprocess
+import time
 from pathlib import Path
 from typing import Any
 
@@ -93,7 +94,7 @@ def test_the_final_check_keeps_its_share_of_the_run(
     assert probe.passed
 
 
-def test_an_attempt_fits_in_the_seconds_it_is_given(
+def test_an_attempt_ends_by_the_deadline_it_is_given(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     boxes: list[float] = []
@@ -120,8 +121,8 @@ def test_an_attempt_fits_in_the_seconds_it_is_given(
         image="img",
     )
     with pytest.raises(EnvironmentFailure):
-        runner.attempt(default_loop_config(), seed=7, seconds=42)
-    assert boxes == [42]
+        runner.attempt(default_loop_config(), seed=7, deadline=time.monotonic() + 42)
+    assert 41 < boxes[0] <= 42  # what was left once the workspace was ready
 
 
 def test_a_sandbox_that_fails_is_an_environment_failure(
@@ -150,3 +151,30 @@ def test_a_sandbox_that_fails_is_an_environment_failure(
     )
     with pytest.raises(EnvironmentFailure, match="no such image"):
         runner.attempt(default_loop_config(), seed=7)
+
+
+def test_no_time_left_is_a_timeout_without_a_sandbox(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def sandbox(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("no sandbox may start")
+
+    monkeypatch.setattr(work_module, "Sandbox", sandbox)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True, env=_git_env())
+    store = HarnessStore(tmp_path / "harness")
+    store.init()
+    runner = WorkRunner(
+        repo=repo,
+        config=Config(schema_version=3, project="p"),
+        task_text="t",
+        check="true",
+        harness_dir=store.path,
+        state=tmp_path / "state",
+        client_factory=lambda: FakeClient([]),
+        docker_client=object(),
+        image="img",
+    )
+    probe = runner.attempt(default_loop_config(), seed=7, deadline=time.monotonic() - 1)
+    assert (probe.passed, probe.tags) == (False, ("timeout",))

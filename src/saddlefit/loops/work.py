@@ -12,6 +12,7 @@ from __future__ import annotations
 import shutil
 import subprocess
 import tempfile
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -97,13 +98,12 @@ class WorkRunner:
     image: str
     tool_mode: Literal["native", "json"] = "native"
 
-    def attempt(self, loop: LoopConfig, seed: int, seconds: float | None = None) -> Probe:
-        """One run, within one wall-clock deadline (B11): ``evaluation.timeout_seconds``, or
-        ``seconds`` when less is left. The student gets ``STUDENT_SHARE`` of it, so the final
+    def attempt(self, loop: LoopConfig, seed: int, deadline: float | None = None) -> Probe:
+        """One run, within one wall-clock deadline (B11): ``evaluation.timeout_seconds``, cut
+        to what is left before ``deadline`` (on ``time.monotonic``) once the workspace is
+        ready, so setup counts too. The student gets ``STUDENT_SHARE`` of it, and the final
         check always has the rest inside the same deadline.
         """
-        limit = self.config.evaluation.timeout_seconds
-        run_s = max(min(limit, seconds), 1.0) if seconds is not None else float(limit)
         run_id = new_run_id()
         writer = RunWriter(self.state / WORK_DIR, run_id)
         harness = Harness.load(self.harness_dir)
@@ -126,6 +126,11 @@ class WorkRunner:
             work = Path(tmp) / "work"
             copy_working_tree(self.repo, work)
             tracker = WorkspaceTracker(work, Path(tmp) / "track.git")
+            run_s = float(self.config.evaluation.timeout_seconds)
+            if deadline is not None:
+                run_s = min(run_s, deadline - time.monotonic())
+            if run_s <= 0:
+                return Probe(run_id, False, ("timeout",), "")  # nothing left to run in
             result = None
             passed = False
             exit_code: int | None = None

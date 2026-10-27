@@ -25,10 +25,10 @@ class Student:
         self.fixes = fixes
         self.tags = tags
         self.loops: list[LoopConfig] = []
-        self.budgets: list[float] = []
+        self.deadlines: list[float] = []
 
-    def attempt(self, loop: LoopConfig, seed: int, seconds: float = 0.0) -> Probe:
-        self.budgets.append(seconds)
+    def attempt(self, loop: LoopConfig, seed: int, deadline: float = 0.0) -> Probe:
+        self.deadlines.append(deadline)
         self.loops.append(loop)
         on = {
             "edit": loop.tools.edit_strips_line_numbers,
@@ -78,9 +78,9 @@ def test_the_time_budget_stops_probing() -> None:
     now = [0.0]
     student = Student({"map"})
 
-    def slow_attempt(loop: LoopConfig, seed: int, seconds: float) -> Probe:
-        now[0] += min(6 * 60, seconds)  # a run takes six minutes, or what is left
-        return student.attempt(loop, seed, seconds)
+    def slow_attempt(loop: LoopConfig, seed: int, deadline: float) -> Probe:
+        now[0] = min(now[0] + 6 * 60, deadline)  # a run takes six minutes, or what is left
+        return student.attempt(loop, seed, deadline)
 
     loop = FastLoop(
         budget=FastLoopConfig(max_variants=3, runs_per_variant=2, time_budget_minutes=10),
@@ -91,9 +91,9 @@ def test_the_time_budget_stops_probing() -> None:
     result = loop.run()
     assert len(student.loops) == 2  # the first attempt and one probe, then time is up
     assert result.stopped == "time budget"
-    # the second run was given only the four minutes left: the budget holds end to end
-    assert student.budgets == [600, 240]
-    assert now[0] <= 600
+    # every run is told the same end, so the second one stops at it: ten minutes in all
+    assert student.deadlines == [600, 600]
+    assert now[0] == 600
 
 
 def refs(store: HarnessStore) -> str:

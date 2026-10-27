@@ -55,7 +55,7 @@ def variant_passes(passes: Sequence[bool], runs_per_variant: int) -> bool:
 class FastLoop:
     budget: FastLoopConfig
     loop: LoopConfig  # the harness's own, unchanged by anything here
-    # loop settings, a seed, and the seconds the attempt may take at most
+    # loop settings, a seed, and the deadline (on ``clock``) the attempt must end by
     attempt: Callable[[LoopConfig, int, float], Probe]
     seed: int = 7
     clock: Callable[[], float] = time.monotonic
@@ -69,7 +69,7 @@ class FastLoop:
             return deadline - self.clock()
 
         # every attempt, the first one too, fits in what is left of the budget
-        first = self.attempt(self.loop, self.seed, left())
+        first = self.attempt(self.loop, self.seed, deadline)
         result = FastResult(passed=first.passed, diff=first.diff, probes=[first])
         if first.passed:
             return result
@@ -85,7 +85,7 @@ class FastLoop:
                     result.stopped = "time budget"
                     break
                 seed = self.seed + 1 + index * 10 + run
-                probe = self.attempt(applied(self.loop, [entry]), seed, left())
+                probe = self.attempt(applied(self.loop, [entry]), seed, deadline)
                 result.probes.append(probe)
                 passes.append(probe.passed)
                 if probe.passed and not best.passed:
@@ -100,7 +100,7 @@ class FastLoop:
                 "no variant helped" if not helped else "time budget"
             )
             return result
-        final = self.attempt(applied(self.loop, helped), self.seed, left())
+        final = self.attempt(applied(self.loop, helped), self.seed, deadline)
         result.probes.append(final)
         result.helped = helped
         result.passed = final.passed
