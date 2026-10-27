@@ -50,11 +50,11 @@ def working_tree_files(repo: Path) -> list[str]:
 
 
 def _inside(repo: Path, rel: str) -> bool:
-    """No component of ``rel`` is a symlink, so the file is really in the repository."""
+    """No component of ``rel`` is a symlink or a Windows junction: the file is really here."""
     path = repo
     for part in Path(rel).parts:
         path = path / part
-        if path.is_symlink():
+        if path.is_symlink() or path.is_junction():
             return False
     return True
 

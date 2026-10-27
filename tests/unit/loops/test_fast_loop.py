@@ -145,6 +145,8 @@ def test_a_file_behind_a_symlinked_directory_is_not_copied(tmp_path: Path) -> No
     (repo / "dir" / "secret.txt").write_text("x\n", encoding="utf-8")
     (repo / "ok.txt").write_text("ok\n", encoding="utf-8")
     env = _git_env(
+        GIT_CONFIG_GLOBAL=os.devnull,
+        GIT_CONFIG_NOSYSTEM="1",
         GIT_AUTHOR_NAME="t",
         GIT_AUTHOR_EMAIL="t@t",
         GIT_COMMITTER_NAME="t",

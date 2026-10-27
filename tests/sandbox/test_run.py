@@ -1,6 +1,7 @@
 """``saddlefit run`` end to end: a failed task rescued by a playbook variant, journaled (A6)."""
 
 import subprocess
+import time
 from pathlib import Path
 from typing import Any
 
@@ -76,3 +77,39 @@ def test_run_rescues_a_task_with_a_playbook_variant_on_probation(
         env=_git_env(),
     )
     assert "DONE.txt" not in status.stdout
+
+
+def test_the_final_check_gets_its_own_time(
+    tmp_path: Path, docker_client, sandbox_image: str
+) -> None:
+    """A student that uses most of the run must not starve the check that judges it."""
+    repo = build(tmp_path / "repo")
+    project = Project(repo)
+    project.init(model="fake-student")
+    config = project.config()
+    project.config_path.write_text(
+        dump_config(
+            config.model_copy(
+                update={
+                    "sandbox": config.sandbox.model_copy(
+                        update={"image": sandbox_image, "memory": "512m"}
+                    ),
+                    "evaluation": config.evaluation.model_copy(update={"timeout_seconds": 12}),
+                }
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    def slow_student(messages: Any, tools: Any, params: Any) -> ModelReply:
+        time.sleep(9)  # most of the twelve seconds
+        return ModelReply(tool_calls=(FINISH,))
+
+    work = project.work(
+        task_text="Nothing to do.",
+        check="sleep 5",  # longer than what the student leaves of the run
+        docker_client=docker_client,
+        model_client=lambda: FakeClient(slow_student),
+        model_info=FakeClient(slow_student).info(),
+    )
+    assert work.result.probes[0].passed
