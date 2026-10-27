@@ -19,6 +19,7 @@ from typing import Any, Final, Literal
 
 from saddlefit.config import Config
 from saddlefit.context.assembly import Harness, assemble
+from saddlefit.errors import EnvironmentFailure
 from saddlefit.eval.evaluator import Verdict
 from saddlefit.eval.taxonomy import classify
 from saddlefit.harness.loop_config import LoopConfig
@@ -162,7 +163,8 @@ class WorkRunner:
                 stats = tracker.diff_stats()
             except SandboxError as exc:
                 writer.event("error", {"kind": "sandbox", "message": str(exc)[:2000]})
-                return Probe(run_id, False, ("env_error",), "")
+                # the check never ran: an environment failure (exit 3), not a failed task
+                raise EnvironmentFailure(f"the sandbox failed: {exc}") from exc
         verdict = Verdict(passed=passed, exit_code=exit_code, duration_s=0.0)
         tags = classify(run_signals(result, verdict, stats, self.config)).tags
         return Probe(run_id, passed, tuple(tags), diff)

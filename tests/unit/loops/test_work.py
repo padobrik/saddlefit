@@ -7,13 +7,14 @@ from typing import Any
 import pytest
 
 from saddlefit.config import Config, EvaluationConfig
+from saddlefit.errors import EnvironmentFailure
 from saddlefit.harness.loop_config import default_loop_config
 from saddlefit.harness.store import HarnessStore
 from saddlefit.loops import work as work_module
 from saddlefit.loops.work import WorkRunner
 from saddlefit.providers.base import ModelReply, ToolCall
 from saddlefit.providers.fake import FakeClient
-from saddlefit.sandbox.container import ExecResult
+from saddlefit.sandbox.container import ExecResult, SandboxError
 from saddlefit.tasks.mining import _git_env
 
 TIMEOUT = 60
@@ -91,3 +92,31 @@ def test_the_final_check_runs_on_a_renewed_deadline(
     probe = runner.attempt(loop, seed=7)
     assert boxes[0].checks[-1] == TIMEOUT  # the check started with all of its own time
     assert probe.passed
+
+
+def test_a_sandbox_that_fails_is_an_environment_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True, env=_git_env())
+    store = HarnessStore(tmp_path / "harness")
+    store.init()
+
+    def broken(*args: Any, **kwargs: Any) -> Any:
+        raise SandboxError("cannot start sandbox from img: no such image")
+
+    monkeypatch.setattr(work_module, "Sandbox", broken)
+    runner = WorkRunner(
+        repo=repo,
+        config=Config(schema_version=3, project="p"),
+        task_text="Do nothing.",
+        check="true",
+        harness_dir=store.path,
+        state=tmp_path / "state",
+        client_factory=lambda: FakeClient([]),
+        docker_client=object(),
+        image="img",
+    )
+    with pytest.raises(EnvironmentFailure, match="no such image"):
+        runner.attempt(default_loop_config(), seed=7)
