@@ -243,3 +243,17 @@ Assumptions taken where the spec leaves a detail open. Deviations from the spec 
   not a patch, so `proposal_for` diffs whatever the current `loop.yaml` is; a `hooks` list is
   appended. The tutor's prompt lists up to five entries that match its runs' failure tags,
   most matching first. Statistics (`proposed`, `accepted`) stay at zero until the slow loop.
+- **Fast loop, journal and `run` (#35, #36, #38).** `saddlefit run "TASK" [--check CMD]`
+  copies the working tree (tracked files and untracked ones git does not ignore, never `.git`
+  or `.saddlefit`) into a fresh sandbox for every attempt; the check (default
+  `finish_gate.run`) is the finish gate and is run once more after the student stops. If the
+  first attempt fails, up to `fast_loop.max_variants` starter-playbook entries for its failure
+  tags are probed `runs_per_variant` times each (B12: every run up to two, else a majority),
+  the ones that helped are composed and the check runs once more, all within
+  `time_budget_minutes`. Variants are only loop settings handed to an attempt, so nothing
+  reaches the harness store (required test 7). The answer is a patch in
+  `.saddlefit/answers/`, never applied to the working tree; a rescue that needed variants is
+  written to `.saddlefit/journal/<entry-id>.json` as a `fast_loop` proposal, `probation` when
+  the composed change passed and `rejected` when it did not. Work mode has no hidden tests,
+  so the protected-files rule is not added and nothing reads the sealed store; probe records
+  go to `.saddlefit/work/`.
