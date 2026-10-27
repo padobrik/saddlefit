@@ -8,13 +8,15 @@ has no newline.
 from __future__ import annotations
 
 import difflib
+import re
 from collections.abc import Iterable
 
 NO_NEWLINE = "\\ No newline at end of file\n"
 
 
 def _lines(text: str) -> list[str]:
-    return text.splitlines(keepends=True) if text else []
+    """Lines as git sees them: split at LF only, each LF kept, a last line without one too."""
+    return re.findall(r"[^\n]*\n|[^\n]+$", text)
 
 
 def _marked(lines: Iterable[str]) -> str:

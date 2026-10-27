@@ -22,6 +22,7 @@ from saddlefit.tasks.generator import (
     select_files,
 )
 from saddlefit.tasks.mining import _git_env
+from saddlefit.textdiff import file_diff
 
 SNAPSHOTS = Path(__file__).parent / "snapshots"
 PROTECTED = ("tests/**", "**/test_*.py", "**/*_test.py")
@@ -164,3 +165,9 @@ def test_a_request_over_the_file_budget_is_refused() -> None:
     big = [RepoFile("src/big.py", "x" * 40_001)]
     with pytest.raises(ValueError, match="over 40000"):
         generate(FakeClient([reply()]), request(files=big))
+
+
+def test_a_line_separator_inside_a_line_stays_in_it() -> None:
+    patch = file_diff("a.py", "x = 'a\u2028b'\n", "x = 'a\u2028c'\n")
+    assert patch.count("\n-x = ") == 1
+    assert "No newline" not in patch
