@@ -1,5 +1,6 @@
 """The starter playbook: every entry applies to a fresh harness and reaches the tutor (A6)."""
 
+import subprocess
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -9,6 +10,7 @@ from saddlefit.harness.loop_config import default_loop_config, dump_loop_config,
 from saddlefit.harness.proposals import apply_proposal
 from saddlefit.harness.store import HarnessStore
 from saddlefit.playbook import applied, for_tags, proposal_for, starter_playbook, tutor_lines
+from saddlefit.tasks.mining import _git_env
 
 
 class NoLint:
@@ -61,3 +63,35 @@ def test_the_tutor_sees_matching_techniques() -> None:
     lines = tutor_lines(["tool_error"])
     assert lines[0].startswith("edit_file accepts old text copied")
     assert "edit_strips_line_numbers: true" in lines[0]
+
+
+def test_a_loop_yaml_without_a_final_newline_still_takes_the_patch(tmp_path: Path) -> None:
+    store = HarnessStore(tmp_path / "harness")
+    store.init()
+    path = store.path / "loop.yaml"
+    text = path.read_text(encoding="utf-8").rstrip("\n")
+    path.write_text(text, encoding="utf-8")
+    subprocess.run(
+        ["git", "commit", "-qam", "chore: trim"],
+        cwd=store.path,
+        check=True,
+        env=_git_env(
+            GIT_AUTHOR_NAME="t",
+            GIT_AUTHOR_EMAIL="t@t",
+            GIT_COMMITTER_NAME="t",
+            GIT_COMMITTER_EMAIL="t@t",
+        ),
+    )
+    entry = next(e for e in starter_playbook() if e.id == "repo-map")
+    proposal = proposal_for([entry], text, load_loop_config(path))
+    assert proposal is not None
+    assert "\\ No newline at end of file" in proposal.patch
+    apply_proposal(store, proposal, NoLint())
+
+
+def test_no_entries_or_a_reformatted_file_is_no_proposal() -> None:
+    loop = default_loop_config()
+    reformatted = "# a comment the dump would drop\n" + dump_loop_config(loop)
+    assert proposal_for([], reformatted, loop) is None
+    done = applied(loop, [starter_playbook()[0]])
+    assert proposal_for([starter_playbook()[0]], "# x\n" + dump_loop_config(done), done) is None
