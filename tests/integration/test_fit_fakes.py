@@ -463,3 +463,30 @@ def test_a_refusal_survives_a_round_that_fails_later(tmp_path: Path) -> None:
     with pytest.raises(RuntimeError):
         run_rounds(loop, tmp_path, 1)
     assert load_fit_state(tmp_path).refusals == {"proposal": 1}
+
+
+class SpyingTutor(FakeTutor):
+    """Reads fit.json as each diagnosis starts, before that call can save anything."""
+
+    def __init__(self, patches: Sequence[str], root: Path) -> None:
+        super().__init__(patches)
+        self.root = root
+        self.seen: list[dict[str, int]] = []
+
+    def chat(
+        self, messages: Sequence[Message], tools: Sequence[ToolSpec] | None, params: GenParams
+    ) -> ModelReply:
+        if tools and tools[0].name != "record_lesson":
+            self.seen.append(dict(load_fit_state(self.root).refusals))
+        return super().chat(messages, tools, params)
+
+
+def test_a_refusal_is_saved_before_the_next_tutor_call(tmp_path: Path) -> None:
+    broken = (
+        "diff --git a/loop.yaml b/loop.yaml\n--- a/loop.yaml\n+++ b/loop.yaml\n"
+        "@@ -1 +1 @@\n-nope\n+x\n"
+    )
+    tutor = SpyingTutor([broken, RIGHT], tmp_path)
+    loop, _ = make_loop(tmp_path, tutor)
+    run_rounds(loop, tmp_path, 1)
+    assert tutor.seen[:2] == [{}, {"proposal": 1}]
