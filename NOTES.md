@@ -235,6 +235,14 @@ Assumptions taken where the spec leaves a detail open. Deviations from the spec 
   prompt. v1 files drop `reasoning.language` and `reasoning.latent_depth`, which no run used.
   Defaults keep the v1 behaviour, so a baseline does not move until the tutor proposes a
   mechanic; `edit_lines` was left out.
+- **Starter playbook (#37).** Seven entries ship as package data
+  (`starter_playbook/entries.yaml`): the three A6 mechanics (a finish gate that re-reads the
+  task and retries, loop detection after two identical calls, a tighter context budget) and
+  four from the observed gemma4 failures (edit with line numbers stripped, read without
+  them, tests after every edit, a repo map). An entry holds the `loop.yaml` values to set,
+  not a patch, so `proposal_for` diffs whatever the current `loop.yaml` is; a `hooks` list is
+  appended. The tutor's prompt lists up to five entries that match its runs' failure tags,
+  most matching first. Statistics (`proposed`, `accepted`) stay at zero until the slow loop.
 - **`tasks mutate` (#39).** A mutation flips one token in a Python source file (a comparison,
   `+`/`-`, `and`/`or`, `is`, `True`/`False`, or an integer by one), found with `tokenize` so the
   file keeps its exact text, and must still compile. The tests that import the module must
