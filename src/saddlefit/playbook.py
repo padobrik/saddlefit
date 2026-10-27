@@ -44,10 +44,19 @@ class PlaybookEntry(BaseModel):
         return self.accepted / self.proposed if self.proposed else 0.0
 
 
+class StarterPlaybook(BaseModel):
+    """``starter_playbook/entries.yaml``."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    schema_version: Literal[1]
+    entries: tuple[PlaybookEntry, ...]
+
+
 @cache
 def starter_playbook() -> tuple[PlaybookEntry, ...]:
     text = (resources.files("saddlefit.starter_playbook") / "entries.yaml").read_text("utf-8")
-    return tuple(PlaybookEntry.model_validate(raw) for raw in yaml.safe_load(text))
+    return StarterPlaybook.model_validate(yaml.safe_load(text)).entries
 
 
 def for_tags(
@@ -90,7 +99,10 @@ def loop_patch(before: str, after: str) -> str:
         fromfile="a/loop.yaml",
         tofile="b/loop.yaml",
     )
-    body = "".join(lines)
+    # a last line without a newline gets git's marker, or it would run into the next one
+    body = "".join(
+        line if line.endswith("\n") else f"{line}\n\\ No newline at end of file\n" for line in lines
+    )
     return f"diff --git a/loop.yaml b/loop.yaml\n{body}" if body else ""
 
 
@@ -98,9 +110,10 @@ def proposal_for(
     entries: Sequence[PlaybookEntry], loop_yaml: str, loop: LoopConfig, source: str = "playbook"
 ) -> Proposal | None:
     """One proposal that makes all of ``entries``; ``None`` when they change nothing."""
-    patch = loop_patch(loop_yaml, dump_loop_config(applied(loop, entries)))
-    if not patch:
+    changed = applied(loop, entries) if entries else loop
+    if changed == loop:  # compared as settings: a reformatted file is no change
         return None
+    patch = loop_patch(loop_yaml, dump_loop_config(changed))
     tags = sorted({t for e in entries for t in e.failure_tags})
     return Proposal.model_validate(
         {
