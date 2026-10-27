@@ -159,6 +159,8 @@ class MiddleLoop:
     spent_usd: float = 0.0
     # called after every paid tutor call, so its cost can be saved at once
     on_charge: Callable[[], None] | None = None
+    # called with each refusal's "<kind>: <reason>" as soon as it happens
+    on_refusal: Callable[[str], None] | None = None
 
     def round(self, index: int) -> RoundReport:
         batch = pick_batch(self.train_tasks, index, self.batch_size)
@@ -182,6 +184,11 @@ class MiddleLoop:
             report.lessons += self._reflect(t, status, report.train_before, len(batch), budget)
         report.tutor_calls, report.tutor_usd = budget.calls, budget.usd
         return report
+
+    def _refused(self, report: RoundReport, reason: str) -> None:
+        report.refusals.append(reason)
+        if self.on_refusal is not None:
+            self.on_refusal(reason)
 
     def _charged(self, usd: float) -> None:
         self.spent_calls += 1
@@ -243,14 +250,14 @@ class MiddleLoop:
             except ProviderError as exc:  # TutorError included; the call was paid for
                 budget.charge(exc.usage)
                 report.refused += 1
-                report.refusals.append(f"{REFUSED_BY_TUTOR}: {exc}")
+                self._refused(report, f"{REFUSED_BY_TUTOR}: {exc}")
                 continue
             budget.charge(result.usage)
             try:
                 ref = apply_proposal(self.store, result.proposal, self.linter)
             except ProposalError as exc:
                 report.refused += 1
-                report.refusals.append(f"{REFUSED_PROPOSAL}: {exc}")
+                self._refused(report, f"{REFUSED_PROPOSAL}: {exc}")
                 continue
             try:
                 after = self.practice.run_batch(ref, batch)

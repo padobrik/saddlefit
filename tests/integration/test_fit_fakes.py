@@ -450,3 +450,16 @@ def test_the_tutor_prompt_lists_playbook_techniques_for_the_failures(tmp_path: P
     run_rounds(loop, tmp_path, 1)
     system = next(p for p in tutor.prompts if "Techniques that worked before" in p)
     assert "finish gate: re-read the task and retry twice" in system  # for gave_up runs
+
+
+def test_a_refusal_survives_a_round_that_fails_later(tmp_path: Path) -> None:
+    broken = (
+        "diff --git a/loop.yaml b/loop.yaml\n--- a/loop.yaml\n+++ b/loop.yaml\n"
+        "@@ -1 +1 @@\n-nope\n+x\n"
+    )
+    # refused first, then two candidates: the second one's batch crashes the round
+    loop, _ = make_loop(tmp_path, FakeTutor([broken, USELESS, RIGHT]), candidates_per_round=3)
+    loop.practice = CrashingPractice(loop.store)
+    with pytest.raises(RuntimeError):
+        run_rounds(loop, tmp_path, 1)
+    assert load_fit_state(tmp_path).refusals == {"proposal": 1}

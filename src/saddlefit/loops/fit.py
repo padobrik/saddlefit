@@ -49,7 +49,13 @@ def run_rounds(
         save_fit_state(root, _state(rounds_done, accepted, loop, spent(), refusals))
 
     # every tutor call is saved as soon as it is paid for: a crash loses at most the one in flight
+    def refused(reason: str) -> None:
+        # counted and saved at once, so a round that fails later still keeps it
+        refusals[reason.split(":", 1)[0]] += 1
+        save(current)
+
     loop.on_charge = lambda: save(current)
+    loop.on_refusal = refused
     save(done)
     reports = []
     for index in range(done, done + rounds):
@@ -62,7 +68,6 @@ def run_rounds(
             raise
         report.pruned, pending = pending, []
         accepted += report.accepted is not None
-        refusals.update(reason.split(":", 1)[0] for reason in report.refusals)
         # the round is saved before ablation, so a failing ablation never repeats it
         current = index + 1
         save(index + 1)
