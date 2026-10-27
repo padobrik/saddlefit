@@ -16,6 +16,7 @@ from saddlefit.tasks.mutation import (
     apply,
     commit_mutation,
     drop_mutation,
+    issue_messages,
     pick,
     reference_patch,
     related_tests,
@@ -185,3 +186,18 @@ def test_the_hidden_tests_are_not_in_the_students_tree(repo: Path) -> None:
     files = git(repo, "ls-tree", "-r", "--name-only", sha).splitlines()
     assert files == ["src/dates.py"]
     assert (repo / "tests" / "test_dates.py").exists()  # the working tree keeps them
+
+
+def test_an_issue_that_names_a_hidden_test_is_refused() -> None:
+    mutation = pick("src/dates.py", SOURCE, random.Random(1))
+    assert mutation is not None
+    with pytest.raises(ProviderError, match="names a hidden test"):
+        write_issue(
+            FakeClient([issue("# Bug\n\nSee test_dates.py for the failure.")]),
+            mutation,
+            ["tests/test_dates.py"],
+            {},
+            visible_check="",
+        )
+    messages = issue_messages(mutation, ["tests/test_dates.py"])
+    assert "test_dates" not in messages[1].content  # the generator is never told the names

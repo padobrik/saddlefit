@@ -254,7 +254,7 @@ def issue_messages(mutation: Mutation, tests: Sequence[str]) -> list[Message]:
         f"{excerpt(mutation.mutated, mutation.site.line)}\n\n"
         f"The code before the change, for you only:\n\n"
         f"{excerpt(mutation.original, mutation.site.line)}\n\n"
-        f"Tests that now fail: {', '.join(tests)}"
+        f"{len(tests)} test file(s) of this module now fail."
     )
     return [Message(role="system", content=ISSUE_PROMPT), Message(role="user", content=user)]
 
@@ -276,6 +276,9 @@ def write_issue(
     fixed_line = _lines(mutation.original)[mutation.site.line - 1].strip()
     if len(fixed_line) >= 8 and fixed_line in task_md:
         raise ProviderError("the issue quotes the original line", reply.usage)
+    named = [t for t in tests if t in task_md or PurePosixPath(t).name in task_md]
+    if named:
+        raise ProviderError(f"the issue names a hidden test: {named[0]}", reply.usage)
     task = GeneratedTask(
         task_md=task_md.strip() + "\n",
         hidden_tests=hidden,
