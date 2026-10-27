@@ -1,4 +1,4 @@
-"""``saddlefit run`` exits 4 when the task is not solved (B14 plus NOTES)."""
+"""``saddlefit run`` reports whether the check passed; B14 has no code for "not solved"."""
 
 from pathlib import Path
 from typing import Any
@@ -13,7 +13,7 @@ from saddlefit.project import Project, WorkResult
 runner = CliRunner()
 
 
-@pytest.mark.parametrize(("passed", "code"), [(True, 0), (False, 4)])
+@pytest.mark.parametrize(("passed", "code"), [(True, 0), (False, 0)])
 def test_run_exits_by_whether_the_check_passed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, passed: bool, code: int
 ) -> None:
