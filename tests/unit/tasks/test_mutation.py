@@ -168,3 +168,20 @@ def test_the_reference_patch_ignores_the_users_diff_config(
         ["git", "apply", "-"], cwd=repo, input=patch, text=True, check=True, env=_git_env()
     )
     assert (repo / "src" / "dates.py").read_text(encoding="utf-8") == SOURCE
+
+
+def test_the_hidden_tests_are_not_in_the_students_tree(repo: Path) -> None:
+    (repo / "tests").mkdir()
+    (repo / "tests" / "test_dates.py").write_text("def test(): ...\n", encoding="utf-8")
+    identity = ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "core.hooksPath=/dev/null"]
+    git(repo, "add", "tests/test_dates.py")
+    git(repo, *identity, "commit", "-qm", "tests")
+    head = git(repo, "rev-parse", "HEAD")
+    mutation = pick("src/dates.py", SOURCE, random.Random(1))
+    assert mutation is not None
+    sha = commit_mutation(
+        repo, head, mutation, "mut-bugfix-y-0123456789ab", ["tests/test_dates.py"]
+    )
+    files = git(repo, "ls-tree", "-r", "--name-only", sha).splitlines()
+    assert files == ["src/dates.py"]
+    assert (repo / "tests" / "test_dates.py").exists()  # the working tree keeps them

@@ -9,7 +9,6 @@ from __future__ import annotations
 import json
 import os
 import secrets
-import shlex
 import shutil
 import stat
 import tempfile
@@ -99,7 +98,7 @@ from saddlefit.tasks.mutation import (
     write_issue,
 )
 from saddlefit.tasks.splits import add_task, new_lock
-from saddlefit.tasks.suite import PYTEST, SuitePaths, load_lock, load_meta, materialize, save_lock
+from saddlefit.tasks.suite import SuitePaths, load_lock, load_meta, materialize, save_lock
 
 
 def _check_live_model(baseline: dict[str, Any], model_info: ModelInfo) -> None:
@@ -375,13 +374,15 @@ class Project:
                     mutation,
                     related,
                     {p: tests[p] for p in related},
-                    visible_check=f"{PYTEST} {' '.join(shlex.quote(r) for r in related)}",
+                    # no task-specific check: it would name the hidden tests and print them
+                    visible_check="",
                 )
-                pending["mutation"] = mutation
+                pending["mutation"], pending["related"] = mutation, related
                 return result
 
             def seal(task_id: str, task: GeneratedTask) -> None:
-                pending[task_id] = commit_mutation(self.root, head, pending["mutation"], task_id)
+                mutation, related = pending["mutation"], pending["related"]
+                pending[task_id] = commit_mutation(self.root, head, mutation, task_id, related)
                 seal_generated(kit.sealed_root, task_id, task)
 
             def judge(task_id: str, task: GeneratedTask) -> Acceptance:

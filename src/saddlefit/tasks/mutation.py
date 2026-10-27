@@ -143,10 +143,14 @@ def excerpt(source: str, line: int) -> str:
     return "\n".join(f"{n:5d}  {lines[n - 1]}" for n in range(first, last + 1))
 
 
-def commit_mutation(repo: Path, base: str, mutation: Mutation, task_id: str) -> str:
+def commit_mutation(
+    repo: Path, base: str, mutation: Mutation, task_id: str, hidden: Sequence[str] = ()
+) -> str:
     """A commit with the mutated file on top of ``base``, kept alive by a saddlefit ref.
 
-    Built in a temporary index, so the user's index, working tree and branches never move.
+    The ``hidden`` test files are removed from it: they are the task's hidden tests, so the
+    student never sees them; the evaluator copies them back in to judge. Built in a
+    temporary index, so the user's index, working tree and branches never move.
     """
     blob = (
         subprocess.run(
@@ -165,6 +169,8 @@ def commit_mutation(repo: Path, base: str, mutation: Mutation, task_id: str) -> 
         env = {**_git_env(), "GIT_INDEX_FILE": os.path.join(tmp, "index")}
         _git_bytes(repo, "read-tree", base, env=env)
         _git_bytes(repo, "update-index", "--cacheinfo", f"{mode},{blob},{mutation.path}", env=env)
+        if hidden:
+            _git_bytes(repo, "update-index", "--force-remove", "--", *hidden, env=env)
         tree = _git_bytes(repo, "write-tree", env=env).decode().strip()
     # a fixed identity: the repository may have none set, and the commit is saddlefit's own
     identity = {
@@ -238,7 +244,8 @@ You write bug reports for Saddlefit. A small change was made to working code in 
 repository, and the tests below now fail. Write the issue a user would file: a `# ` title,
 then what goes wrong and when, in a few sentences, naming the module or function. Describe the
 behaviour, not the fix: do not quote the original line, do not say which operator or number
-is wrong, and do not mention the tests. Call `write_issue` once."""
+is wrong, and do not mention the tests: the student will not see them. Call `write_issue`
+once."""
 
 
 def issue_messages(mutation: Mutation, tests: Sequence[str]) -> list[Message]:

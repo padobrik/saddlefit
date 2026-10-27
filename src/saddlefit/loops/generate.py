@@ -144,5 +144,9 @@ class Generation:
         if passes not in KEEP_PASSES:
             self.discard(task_id)
             return Attempt(task_id, False, f"the student passed {passes} of 5", passes)
-        self.keep(task_id, result.task)
+        try:
+            self.keep(task_id, result.task)
+        except BaseException:  # a task that is not in the suite leaves nothing behind
+            self.discard(task_id)
+            raise
         return Attempt(task_id, True, f"the student passed {passes} of 5", passes)

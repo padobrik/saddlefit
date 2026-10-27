@@ -92,4 +92,9 @@ def test_an_injected_bug_the_student_sometimes_fixes_is_kept(
     assert (meta.source, meta.type) == ("mutation", "bugfix")
     assert meta.repo.base_commit == git(repo, "rev-parse", f"{MUTATION_REF}/{task_id}")
     assert git(repo, "rev-parse", "HEAD") == head  # the user's branch never moved
+    # the tests that judge the task are not in the student's tree, and nothing names them
+    base_files = git(repo, "ls-tree", "-r", "--name-only", meta.repo.base_commit).splitlines()
+    hidden = (project.suite.sealed_dir / task_id / "check.sh").read_text(encoding="utf-8")
+    assert not any(path in hidden for path in base_files if path.startswith("tests/"))
+    assert meta.visible_check is None
     assert (project.suite.sealed_dir / task_id / "reference.patch").exists()
