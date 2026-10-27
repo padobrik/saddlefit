@@ -24,7 +24,7 @@ from saddlefit.tasks.generator import GeneratedTask, GeneratorRequest, Generator
 
 CALIBRATION_RUNS: Final = 5
 KEEP_PASSES: Final = range(1, 5)  # 20-80% of five runs
-MAX_REPLY_TOKENS: Final = 8_192
+MAX_REPLY_TOKENS: Final = 16_000
 _SLUG = re.compile(r"[^a-z0-9]+")
 
 
