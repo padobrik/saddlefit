@@ -1,4 +1,4 @@
-"""Work mode: the final check gets its own time, whatever the student used (B14)."""
+"""Work mode: one deadline per run, and the final check always keeps a share of it (B11)."""
 
 import subprocess
 from pathlib import Path
@@ -11,7 +11,7 @@ from saddlefit.errors import EnvironmentFailure
 from saddlefit.harness.loop_config import default_loop_config
 from saddlefit.harness.store import HarnessStore
 from saddlefit.loops import work as work_module
-from saddlefit.loops.work import WorkRunner
+from saddlefit.loops.work import STUDENT_SHARE, WorkRunner
 from saddlefit.providers.base import ModelReply, ToolCall
 from saddlefit.providers.fake import FakeClient
 from saddlefit.sandbox.container import ExecResult, SandboxError
@@ -39,9 +39,6 @@ class FakeBox:
     def __exit__(self, *exc: object) -> None:
         return None
 
-    def renew(self, seconds: float) -> None:
-        self.deadline = self.clock.now + seconds
-
     def exec(self, command: str, timeout_s: float) -> ExecResult:
         left = max(0.0, self.deadline - self.clock.now)
         self.checks.append(min(timeout_s, left))  # what Sandbox.exec really allows
@@ -50,7 +47,7 @@ class FakeBox:
         return ExecResult(exit_code=0, output="ok", timed_out=False, duration_s=0)
 
 
-def test_the_final_check_runs_on_a_renewed_deadline(
+def test_the_final_check_keeps_its_share_of_the_run(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     repo = tmp_path / "repo"
@@ -69,7 +66,7 @@ def test_the_final_check_runs_on_a_renewed_deadline(
     monkeypatch.setattr(work_module, "Sandbox", sandbox)
 
     def student(messages: Any, tools: Any, params: Any) -> ModelReply:
-        clock.now += TIMEOUT + 5  # the student uses the whole run, and then some
+        clock.now += TIMEOUT * STUDENT_SHARE + 1  # the student overruns its own share
         return ModelReply(tool_calls=(ToolCall(id="f", name="finish", arguments={"summary": "x"}),))
 
     config = Config(
@@ -90,8 +87,41 @@ def test_the_final_check_runs_on_a_renewed_deadline(
         image="img",
     )
     probe = runner.attempt(loop, seed=7)
-    assert boxes[0].checks[-1] == TIMEOUT  # the check started with all of its own time
+    # one deadline for the whole run, and the check still has the rest of it
+    assert boxes[0].deadline == 1000.0 + TIMEOUT
+    assert boxes[0].checks[-1] == pytest.approx(TIMEOUT * (1 - STUDENT_SHARE) - 1)
     assert probe.passed
+
+
+def test_an_attempt_fits_in_the_seconds_it_is_given(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    boxes: list[float] = []
+
+    def sandbox(*args: Any, run_timeout_s: float, **kwargs: Any) -> Any:
+        boxes.append(run_timeout_s)
+        raise SandboxError("stop here")
+
+    monkeypatch.setattr(work_module, "Sandbox", sandbox)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True, env=_git_env())
+    store = HarnessStore(tmp_path / "harness")
+    store.init()
+    runner = WorkRunner(
+        repo=repo,
+        config=Config(schema_version=3, project="p"),
+        task_text="t",
+        check="true",
+        harness_dir=store.path,
+        state=tmp_path / "state",
+        client_factory=lambda: FakeClient([]),
+        docker_client=object(),
+        image="img",
+    )
+    with pytest.raises(EnvironmentFailure):
+        runner.attempt(default_loop_config(), seed=7, seconds=42)
+    assert boxes == [42]
 
 
 def test_a_sandbox_that_fails_is_an_environment_failure(

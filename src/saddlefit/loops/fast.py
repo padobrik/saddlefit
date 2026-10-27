@@ -55,7 +55,8 @@ def variant_passes(passes: Sequence[bool], runs_per_variant: int) -> bool:
 class FastLoop:
     budget: FastLoopConfig
     loop: LoopConfig  # the harness's own, unchanged by anything here
-    attempt: Callable[[LoopConfig, int], Probe]  # loop settings and a seed
+    # loop settings, a seed, and the seconds the attempt may take at most
+    attempt: Callable[[LoopConfig, int, float], Probe]
     seed: int = 7
     clock: Callable[[], float] = time.monotonic
     playbook: Sequence[PlaybookEntry] = field(default_factory=starter_playbook)
@@ -63,7 +64,12 @@ class FastLoop:
     def run(self) -> FastResult:
         started = self.clock()
         deadline = started + self.budget.time_budget_minutes * 60
-        first = self.attempt(self.loop, self.seed)
+
+        def left() -> float:
+            return deadline - self.clock()
+
+        # every attempt, the first one too, fits in what is left of the budget
+        first = self.attempt(self.loop, self.seed, left())
         result = FastResult(passed=first.passed, diff=first.diff, probes=[first])
         if first.passed:
             return result
@@ -75,10 +81,11 @@ class FastLoop:
         for index, entry in enumerate(candidates):
             passes = []
             for run in range(self.budget.runs_per_variant):
-                if self.clock() >= deadline:
+                if left() <= 0:
                     result.stopped = "time budget"
                     break
-                probe = self.attempt(applied(self.loop, [entry]), self.seed + 1 + index * 10 + run)
+                seed = self.seed + 1 + index * 10 + run
+                probe = self.attempt(applied(self.loop, [entry]), seed, left())
                 result.probes.append(probe)
                 passes.append(probe.passed)
                 if probe.passed and not best.passed:
@@ -88,12 +95,12 @@ class FastLoop:
             if result.stopped:
                 break
         result.diff = best.diff
-        if not helped or self.clock() >= deadline:
+        if not helped or left() <= 0:
             result.stopped = result.stopped or (
                 "no variant helped" if not helped else "time budget"
             )
             return result
-        final = self.attempt(applied(self.loop, helped), self.seed)
+        final = self.attempt(applied(self.loop, helped), self.seed, left())
         result.probes.append(final)
         result.helped = helped
         result.passed = final.passed

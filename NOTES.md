@@ -273,3 +273,7 @@ Assumptions taken where the spec leaves a detail open. Deviations from the spec 
   the check still fails: the command worked, and `--json` says `"passed": false`. B14 fixes
   the codes at 0 to 3 and `test_exit_codes_match_spec` holds the CLI to that, so a separate
   "task not solved" code needs a spec change first.
+- **Work-mode time.** Each `run` attempt has one wall-clock deadline (B11):
+  `evaluation.timeout_seconds`, or less when the fast loop's `time_budget_minutes` has less
+  left, so the whole command, the first attempt included, stays within that budget. The
+  student gets 75% of the attempt; the final check runs in the rest of the same deadline.

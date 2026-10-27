@@ -36,6 +36,8 @@ from saddlefit.tools.builtin import Toolbox, specs_for
 
 WORK_DIR: Final = "work"
 SKIPPED: Final = (".git", ".saddlefit")
+# of each run's wall clock; the final check has the rest, under the same deadline
+STUDENT_SHARE: Final = 0.75
 
 
 def working_tree_files(repo: Path) -> list[str]:
@@ -95,7 +97,13 @@ class WorkRunner:
     image: str
     tool_mode: Literal["native", "json"] = "native"
 
-    def attempt(self, loop: LoopConfig, seed: int) -> Probe:
+    def attempt(self, loop: LoopConfig, seed: int, seconds: float | None = None) -> Probe:
+        """One run, within one wall-clock deadline (B11): ``evaluation.timeout_seconds``, or
+        ``seconds`` when less is left. The student gets ``STUDENT_SHARE`` of it, so the final
+        check always has the rest inside the same deadline.
+        """
+        limit = self.config.evaluation.timeout_seconds
+        run_s = max(min(limit, seconds), 1.0) if seconds is not None else float(limit)
         run_id = new_run_id()
         writer = RunWriter(self.state / WORK_DIR, run_id)
         harness = Harness.load(self.harness_dir)
@@ -127,7 +135,7 @@ class WorkRunner:
                     self.image,
                     work,
                     self.config.sandbox,
-                    run_timeout_s=self.config.evaluation.timeout_seconds,
+                    run_timeout_s=run_s,
                     labels={"saddlefit.role": "work", "saddlefit.run": run_id},
                     harness_tools=tools_dir if scripts else None,
                 ) as box:
@@ -151,13 +159,12 @@ class WorkRunner:
                         ),
                         recorder=_Recorder(writer),
                         visible_check=self.check,
-                        time_limit_s=self.config.evaluation.timeout_seconds,
+                        time_limit_s=run_s * STUDENT_SHARE,
                         workspace_digest=tracker.digest,
                     )
                     result = student.run(context)
-                    # the check gets its own time, not what the student left of the run's
-                    box.renew(self.config.evaluation.timeout_seconds)
-                    verdict_run = box.exec(self.check, self.config.evaluation.timeout_seconds)
+                    # the check runs in what the student's share left of the same deadline
+                    verdict_run = box.exec(self.check, run_s)
                     exit_code, passed = verdict_run.exit_code, verdict_run.exit_code == 0
                 diff = tracker.diff()
                 stats = tracker.diff_stats()

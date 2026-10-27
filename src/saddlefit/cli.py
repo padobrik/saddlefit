@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shlex
 from collections.abc import Callable
 from datetime import date
 from enum import IntEnum
@@ -441,7 +442,8 @@ def run(
     if work.journal:
         status = "on probation" if result.passed else "rejected: the composed change failed"
         lines.append(f"journal ({status}): {work.journal}")
-    lines.append(f"answer: {work.answer}  (apply with: git apply {work.answer})")
+    apply = f"git apply {shlex.quote(str(work.answer))}"
+    lines.append(f"answer: {work.answer}  (apply with: {apply})")
     _emit(ctx, data, "\n".join(lines))
 
 
