@@ -9,12 +9,15 @@ from __future__ import annotations
 
 import math
 import re
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
 import yaml
+
+from saddlefit.sandbox.container import HARNESS_TOOLS as HARNESS_TOOLS_DIR
+from saddlefit.tools.builtin import TOOL_NAMES
 
 Tier = Literal["S", "M", "L"]
 # Harness share of the context by compact-model tier (B7); configurable through loop.yaml.
@@ -61,11 +64,8 @@ _STOP_WORDS = frozenset(
         "into",
     ]
 )
-# The student's tools (saddlefit.tools.builtin.TOOL_NAMES); other "##" headings stay in the
-# preamble.
-KNOWN_TOOLS = frozenset(
-    {"read_file", "list_dir", "search", "edit_file", "write_file", "bash", "finish"}
-)
+# Sections headed by one of the student's tools; other "##" headings stay in the preamble.
+KNOWN_TOOLS = TOOL_NAMES
 _ANY_SECTION = re.compile(r"^## +(.+?)\s*$", re.MULTILINE)
 _FRONTMATTER = re.compile(r"\A---\n(.*?)\n---\n?(.*)\Z", re.DOTALL)
 _MODEL_LABEL = re.compile(r"\((?:model|for):\s*([^)]+)\)")
@@ -201,9 +201,19 @@ def assemble(
     harness_budget_tokens: int,
     max_skills: int = DEFAULT_MAX_SKILLS,
     count: TokenCounter = estimate_tokens,
+    scripts: Sequence[str] = (),
 ) -> AssembledContext:
-    """Build the system message within the harness budget; the task text is never cut."""
+    """Build the system message within the harness budget; the task text is never cut.
+
+    ``scripts`` are the harness's tool scripts, mounted read-only for ``bash`` to run.
+    """
     preamble, tool_sections = guidance_for(harness.tool_guidance, enabled_tools)
+    if scripts:
+        listed = "\n".join(
+            f"- `{'python3' if name.endswith('.py') else 'bash'} {HARNESS_TOOLS_DIR}/{name}`"
+            for name in sorted(scripts)
+        )
+        preamble += f"\n\n## Harness scripts\nRun these from the bash tool:\n{listed}"
     skills = rank_skills(harness.skills, task_type, task_text)[:max_skills]
     lessons = rank_lessons(harness.experience, model, task_text)
     dropped: list[str] = []

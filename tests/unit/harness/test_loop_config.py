@@ -58,7 +58,20 @@ def test_spec_example_loads_and_round_trips(tmp_path: Path) -> None:
     [
         ("schema_version: 1\nmax_budget_usd: 99\n", "max_budget_usd"),
         ("schema_version: 1\nmax_steps: 0\n", "max_steps"),
-        ("schema_version: 2\n", "schema_version"),
+        ("schema_version: 3\n", "schema_version"),
+        ("schema_version: 2\ntools: {enabled: [finish]}\n", "always-on"),
+        ("schema_version: 2\ntools: {enabled: [rm_rf]}\n", "unknown"),
+        ("schema_version: 2\nhooks: [{event: post_tool}]\n", "exactly one of run or inject"),
+        (
+            "schema_version: 2\nhooks: [{event: post_tool, run: x, inject: y}]\n",
+            "exactly one of run or inject",
+        ),
+        (
+            "schema_version: 2\nhooks: [{event: before_finish, tools: [bash], run: x}]\n",
+            "only a post_tool hook",
+        ),
+        ("schema_version: 2\nhooks: [{event: post_tool, tools: [nope], run: x}]\n", "unknown"),
+        ("schema_version: 2\nhooks: [{on: post_tool, run: x}]\n", "event"),
         ("- a\n", "mapping"),
         ("schema_version: [1\n", "cannot read"),
     ],
@@ -72,7 +85,7 @@ def test_invalid_loop_yaml(tmp_path: Path, text: str, message: str) -> None:
 
 def test_values_beyond_the_limits_are_clamped() -> None:
     loop = LoopConfig(
-        schema_version=1,
+        schema_version=2,
         max_steps=10_000,
         context=ContextConfig(budget_tokens=100_000, harness_budget_tokens=50_000),
     )
@@ -159,3 +172,39 @@ def test_strict_types_and_no_duplicate_keys(tmp_path: Path, text: str, message: 
     path.write_text(text, encoding="utf-8")
     with pytest.raises(LoopConfigError, match=message):
         load_loop_config(path)
+
+
+def test_a_v1_loop_yaml_drops_the_unused_reasoning_knobs(tmp_path: Path) -> None:
+    path = tmp_path / "loop.yaml"
+    path.write_text(SPEC_EXAMPLE, encoding="utf-8")
+    loop = load_loop_config(path)
+    assert loop.schema_version == 2
+    assert loop.reasoning.effort == "low"
+    assert loop.tools == default_loop_config().tools
+    assert loop.hooks == ()
+
+
+def test_tools_and_hooks_round_trip(tmp_path: Path) -> None:
+    path = tmp_path / "loop.yaml"
+    path.write_text(
+        "schema_version: 2\n"
+        "context: {repo_map: true}\n"
+        "tools: {enabled: [read_file, edit_file, bash], read_line_numbers: false}\n"
+        "hooks:\n"
+        "  - {event: post_tool, tools: [edit_file], run: pytest -q -x}\n"
+        "  - {event: before_finish, inject: Re-read the task.}\n",
+        encoding="utf-8",
+    )
+    loop = load_loop_config(path)
+    assert loop.tools.enabled == ("read_file", "edit_file", "bash")
+    assert loop.hooks[0].run == "pytest -q -x"
+    path.write_text(dump_loop_config(loop), encoding="utf-8")
+    assert load_loop_config(path) == loop
+
+
+def test_clamping_keeps_the_repo_map() -> None:
+    loop = default_loop_config().model_copy(
+        update={"context": ContextConfig(budget_tokens=99_000, repo_map=True)}
+    )
+    clamped, _ = clamp(loop, CONFIG)
+    assert clamped.context.repo_map

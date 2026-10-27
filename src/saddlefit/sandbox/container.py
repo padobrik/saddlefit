@@ -31,6 +31,7 @@ SANDBOX_ENV: dict[str, str] = {
     "LANG": "C.UTF-8",
 }
 TMP_SIZE = "512m"
+HARNESS_TOOLS = "/harness/tools"
 KILL_GRACE_S = 5
 HOST_MARGIN_S = 5
 OUTPUT_LIMIT_BYTES = 1_000_000
@@ -132,7 +133,11 @@ def sandbox_user() -> str:
 
 
 def container_options(
-    workspace: Path, limits: SandboxConfig, *, labels: dict[str, str] | None = None
+    workspace: Path,
+    limits: SandboxConfig,
+    *,
+    labels: dict[str, str] | None = None,
+    harness_tools: Path | None = None,
 ) -> dict[str, Any]:
     """Keyword arguments for ``docker.containers.run`` that enforce every B11 limit."""
     if not workspace.is_absolute():
@@ -146,6 +151,14 @@ def container_options(
         )
     if memory_bytes(limits.memory) < MIN_MEMORY_BYTES:
         raise SandboxError(f"memory limit below Docker's 6m minimum: {limits.memory!r}")
+    if harness_tools is not None and not (harness_tools.is_absolute() and harness_tools.is_dir()):
+        raise SandboxError(f"harness tools must be an absolute directory: {harness_tools}")
+    volumes = {str(workspace): {"bind": WORKDIR, "mode": "rw"}}
+    environment = dict(SANDBOX_ENV)
+    if harness_tools is not None:
+        # outside /work, so the scripts never show up in the student's diff
+        volumes[str(harness_tools)] = {"bind": HARNESS_TOOLS, "mode": "ro"}
+        environment["PATH"] = f"{HARNESS_TOOLS}:{environment['PATH']}"
     return {
         "command": ["sleep", "infinity"],
         "detach": True,
@@ -153,9 +166,9 @@ def container_options(
         "user": sandbox_user(),
         "read_only": True,
         "tmpfs": {"/tmp": f"rw,nosuid,nodev,size={TMP_SIZE}"},  # noqa: S108 - container path
-        "volumes": {str(workspace): {"bind": WORKDIR, "mode": "rw"}},
+        "volumes": volumes,
         "working_dir": WORKDIR,
-        "environment": dict(SANDBOX_ENV),
+        "environment": environment,
         "nano_cpus": nano_cpus,
         "mem_limit": limits.memory,
         "memswap_limit": limits.memory,
@@ -206,10 +219,13 @@ class Sandbox:
         run_timeout_s: float,
         labels: dict[str, str] | None = None,
         clock: Callable[[], float] = time.monotonic,
+        harness_tools: Path | None = None,
     ) -> None:
         self._client = client
         self._image = image
-        self._options = container_options(workspace, limits, labels=labels)
+        self._options = container_options(
+            workspace, limits, labels=labels, harness_tools=harness_tools
+        )
         self._run_timeout_s = run_timeout_s
         self._clock = clock
         self._container: Any = None
@@ -260,7 +276,7 @@ class Sandbox:
                 _timed_command(command, budget),
                 user=self._options["user"],
                 workdir=WORKDIR,
-                environment=dict(SANDBOX_ENV),
+                environment=dict(self._options["environment"]),
             )["Id"]
             stream = api.exec_start(exec_id, stream=True)
         except Exception as exc:

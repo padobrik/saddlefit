@@ -34,6 +34,7 @@ from saddlefit.eval.decisions import (
 from saddlefit.eval.tamper import diff_paths
 from saddlefit.harness.proposals import Proposal, ProposalError, ScriptLinter, apply_proposal
 from saddlefit.harness.store import MAIN, HarnessStore, HarnessStoreError
+from saddlefit.playbook import tutor_lines
 from saddlefit.providers.base import ModelClient, ProviderError, Usage
 from saddlefit.providers.cost import cost_usd
 from saddlefit.storage.library import (
@@ -235,6 +236,7 @@ class MiddleLoop:
                 harness_files={p: t for p, t in files.items() if p != "EXPERIENCE.md"},
                 experience=files.get("EXPERIENCE.md", ""),
                 context_budget=self.context_budget,
+                playbook=tutor_lines(t for d in before.failures[:MAX_RUNS] for t in d.tags),
             )
             try:
                 result = diagnose(self.tutor, request)
