@@ -223,6 +223,15 @@ Assumptions taken where the spec leaves a detail open. Deviations from the spec 
   worst case (the prompt at four characters a token plus a full 8,192-token reply) could pass
   it. Calibration runs go to `.saddlefit/calibration/`, outside baseline and fit records.
   Generated tasks start from the repository's current `HEAD`.
+- **Fit spending and refusals (#113).** `run_rounds` saves `fit.json` after every paid tutor
+  call, so a crash of `fit` loses at most the call in flight. A power loss or system crash
+  loses no more either on Linux and macOS (`F_FULLFSYNC` there, where `fsync` stops at the
+  drive cache), unless the state directory cannot be opened to sync the rename. On Windows
+  the rename is not written through, so a power loss or system crash can lose the last saves. Each refused attempt keeps
+  its reason as `tutor: …` (the call failed or its answer was unusable) or `proposal: …` (a
+  disallowed file, a failed linter, a patch that does not apply); `fit` prints them under the
+  round line, `fit.json` v2 counts them by kind across fits, and the progress report shows
+  the counts.
 - **Harness mechanics (#121).** `loop.yaml` v2 adds `tools` (which tools the student gets,
   `finish` always; `read_line_numbers`; `edit_strips_line_numbers`, which removes `cat -n`
   prefixes from `old` and `new` only when every line of `old` has one), `hooks` (at most

@@ -346,7 +346,30 @@ def round_line(number: int, report: RoundReport) -> str:
         f"round {number}: batch solved {solved}; {len(report.records)} candidates tried, "
         f"{report.refused} refused; {outcome}; {report.lessons} lessons; "
         f"tutor {report.tutor_calls} calls, ${report.tutor_usd:.2f}"
+    ) + "".join(f"\n  refused {_printable(reason[:300])}" for reason in report.refusals)
+
+
+def _printable(text: str) -> str:
+    """Escape what a terminal would act on: a reason can quote the tutor or a linter."""
+    return "".join(
+        c if c.isprintable() else (f"\\x{ord(c):02x}" if ord(c) < 0x100 else f"\\u{ord(c):04x}")
+        for c in text
     )
+
+
+def round_data(report: RoundReport) -> dict[str, Any]:
+    """One round, as ``--json`` gives it."""
+    return {
+        "batch": list(report.batch),
+        "train_before": report.train_before,
+        "accepted": report.accepted,
+        "records": [rec.model_dump(mode="json") for rec in report.records],
+        "refused": report.refused,
+        "refusals": list(report.refusals),  # "<kind>: <reason>", one per refusal
+        "lessons": report.lessons,
+        "tutor_calls": report.tutor_calls,
+        "tutor_usd": report.tutor_usd,
+    }
 
 
 @app.command()
@@ -386,19 +409,7 @@ def fit(
         rounds=rounds,
         on_round=on_round,
     )
-    data = [
-        {
-            "batch": list(r.batch),
-            "train_before": r.train_before,
-            "accepted": r.accepted,
-            "records": [rec.model_dump(mode="json") for rec in r.records],
-            "refused": r.refused,
-            "lessons": r.lessons,
-            "tutor_calls": r.tutor_calls,
-            "tutor_usd": r.tutor_usd,
-        }
-        for r in reports
-    ]
+    data = [round_data(r) for r in reports]
     _emit(ctx, data, f"{len(reports)} rounds; {sum(bool(r.accepted) for r in reports)} accepted")
 
 

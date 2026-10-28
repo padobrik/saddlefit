@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Callable
 from pathlib import Path
 
@@ -41,23 +42,39 @@ def run_rounds(
     def spent() -> tuple[int, float]:
         return (base[0] + loop.spent_calls, base[1] + loop.spent_usd)
 
-    save_fit_state(root, _state(done, accepted, loop, spent()))
+    refusals = Counter(state.refusals)
+    current = done
+
+    def save(rounds_done: int) -> None:
+        save_fit_state(root, _state(rounds_done, accepted, loop, spent(), refusals))
+
+    # every tutor call is saved as soon as it is paid for: a crash loses at most the one in flight
+    def refused(reason: str) -> None:
+        # counted and saved at once, so a round that fails later still keeps it
+        refusals[reason.split(":", 1)[0]] += 1
+        save(current)
+
+    loop.on_charge = lambda: save(current)
+    loop.on_refusal = refused
+    save(done)
     reports = []
     for index in range(done, done + rounds):
+        current = index
         try:
             report = loop.round(index)
         except BaseException:  # Ctrl+C included
             # the round does not count, but what its tutor calls cost does
-            save_fit_state(root, _state(index, accepted, loop, spent()))
+            save(index)
             raise
         report.pruned, pending = pending, []
         accepted += report.accepted is not None
         # the round is saved before ablation, so a failing ablation never repeats it
-        save_fit_state(root, _state(index + 1, accepted, loop, spent()))
+        current = index + 1
+        save(index + 1)
         if ablation_due(accepted, model_changed=False):
             report.pruned += [r.proposal_id for r in ablate(loop) if r.pruned]
             accepted = 0
-            save_fit_state(root, _state(index + 1, accepted, loop, spent()))
+            save(index + 1)
         reports.append(report)
         if on_round is not None:
             on_round(report)
@@ -73,7 +90,13 @@ def _model_changed(state: FitState, model: str, digest: str | None) -> bool:
     return None not in {state.student_digest, digest} and state.student_digest != digest
 
 
-def _state(rounds_done: int, accepted: int, loop: MiddleLoop, spent: tuple[int, float]) -> FitState:
+def _state(
+    rounds_done: int,
+    accepted: int,
+    loop: MiddleLoop,
+    spent: tuple[int, float],
+    refusals: Counter[str],
+) -> FitState:
     return FitState(
         schema_version=FIT_STATE_SCHEMA_VERSION,
         rounds_done=rounds_done,
@@ -82,4 +105,5 @@ def _state(rounds_done: int, accepted: int, loop: MiddleLoop, spent: tuple[int, 
         student_digest=loop.student_digest,
         tutor_calls=spent[0],
         tutor_usd=spent[1],
+        refusals=dict(sorted(refusals.items())),
     )

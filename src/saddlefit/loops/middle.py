@@ -21,7 +21,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
-from typing import Literal, Protocol
+from typing import Final, Literal, Protocol
 
 from saddlefit.config import TokenPrices
 from saddlefit.eval.decisions import (
@@ -103,6 +103,12 @@ class Tried:
     held_out: HeldOutComparison | None
 
 
+# why a tutor attempt produced no candidate: the call failed or its answer was unusable, or the
+# proposal was refused (a disallowed file, a failed linter, a patch that does not apply)
+REFUSED_BY_TUTOR: Final = "tutor"
+REFUSED_PROPOSAL: Final = "proposal"
+
+
 @dataclass
 class RoundReport:
     batch: tuple[str, ...]
@@ -110,6 +116,7 @@ class RoundReport:
     accepted: str | None = None  # proposal ID
     records: list[ChangeRecord] = field(default_factory=list)
     refused: int = 0  # tutor errors and proposals refused by validation
+    refusals: list[str] = field(default_factory=list)  # "<kind>: <reason>", one per refusal
     lessons: int = 0
     pruned: list[str] = field(default_factory=list)  # proposal IDs ablation dropped after it
     tutor_calls: int = 0
@@ -150,6 +157,10 @@ class MiddleLoop:
     # every tutor call this loop has paid for, failed rounds included
     spent_calls: int = 0
     spent_usd: float = 0.0
+    # called after every paid tutor call, so its cost can be saved at once
+    on_charge: Callable[[], None] | None = None
+    # called with each refusal's "<kind>: <reason>" as soon as it happens
+    on_refusal: Callable[[str], None] | None = None
 
     def round(self, index: int) -> RoundReport:
         batch = pick_batch(self.train_tasks, index, self.batch_size)
@@ -174,9 +185,16 @@ class MiddleLoop:
         report.tutor_calls, report.tutor_usd = budget.calls, budget.usd
         return report
 
+    def _refused(self, report: RoundReport, reason: str) -> None:
+        report.refusals.append(reason)
+        if self.on_refusal is not None:
+            self.on_refusal(reason)
+
     def _charged(self, usd: float) -> None:
         self.spent_calls += 1
         self.spent_usd += usd
+        if self.on_charge is not None:
+            self.on_charge()
 
     def _decide(
         self, tried: list[Tried], report: RoundReport
@@ -232,12 +250,14 @@ class MiddleLoop:
             except ProviderError as exc:  # TutorError included; the call was paid for
                 budget.charge(exc.usage)
                 report.refused += 1
+                self._refused(report, f"{REFUSED_BY_TUTOR}: {exc}")
                 continue
             budget.charge(result.usage)
             try:
                 ref = apply_proposal(self.store, result.proposal, self.linter)
-            except ProposalError:
+            except ProposalError as exc:
                 report.refused += 1
+                self._refused(report, f"{REFUSED_PROPOSAL}: {exc}")
                 continue
             try:
                 after = self.practice.run_batch(ref, batch)
