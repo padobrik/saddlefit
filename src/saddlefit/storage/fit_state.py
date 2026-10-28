@@ -122,6 +122,14 @@ def ensure_unlocked(root: Path) -> None:
         )
 
 
+def lock_owner(root: Path) -> int | None:
+    """The pid written into the fit lock, or ``None`` when there is no readable lock."""
+    try:
+        return int((root / FIT_LOCK_FILE).read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return None
+
+
 @contextlib.contextmanager
 def fit_lock(root: Path) -> Iterator[None]:
     """Hold the project's fit lock; parallel fits would share the store and the round count.

@@ -10,7 +10,7 @@ from saddlefit import project as project_module
 from saddlefit.cli import fit_progress_line, progress_change, progress_status, status_text
 from saddlefit.loops.progress import FitProgress
 from saddlefit.project import Project
-from saddlefit.storage.fit_state import FitState, save_fit_state
+from saddlefit.storage.fit_state import FitState, fit_lock, save_fit_state
 from saddlefit.storage.progress import load_progress
 
 NOW = datetime(2026, 10, 25, 12, 0, tzinfo=UTC)
@@ -60,16 +60,25 @@ def test_a_dead_pid_shows_as_interrupted(tmp_path: Path, monkeypatch: pytest.Mon
     data = project.status()
     assert data["state"] == "interrupted"
     text = status_text(data, NOW)
-    assert text.startswith("fit interrupted (pid 4206649 is gone) at round 1/2 · candidate 2/3")
+    assert text.startswith("fit interrupted (pid 4206649) at round 1/2 · candidate 2/3")
     assert "started 58 min ago, last update 3 min ago" in text
     assert "fit.lock can be removed" in text
 
 
-def test_a_live_pid_shows_as_running(tmp_path: Path) -> None:
+def test_a_fit_holding_the_lock_shows_as_running(tmp_path: Path) -> None:
     project = project_with(tmp_path)
     progress = tracker(project.state, pid=os.getpid())
     progress.start_round(1)
-    assert project.status()["state"] == "running"
+    with fit_lock(project.state):  # it writes this process's pid
+        assert project.status()["state"] == "running"
+
+
+def test_a_live_pid_without_the_lock_is_interrupted(tmp_path: Path) -> None:
+    # a failed fit drops the lock but keeps progress.json, and its pid may be reused
+    project = project_with(tmp_path)
+    progress = tracker(project.state, pid=os.getpid())
+    progress.start_round(1)
+    assert project.status()["state"] == "interrupted"
 
 
 def test_only_a_finished_run_counts_as_progress_and_a_batch_size_prints_nothing(

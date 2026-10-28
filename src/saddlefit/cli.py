@@ -548,7 +548,7 @@ def status_text(data: dict[str, Any], now: datetime) -> str:
     if data["state"] == "running":
         return f"fit running (pid {record.pid}), {progress_status(record)}\n{when}\n{this}"
     return (
-        f"fit interrupted (pid {record.pid} is gone) at {progress_status(record)}\n{when}\n"
+        f"fit interrupted (pid {record.pid}) at {progress_status(record)}\n{when}\n"
         f"{this}\nif no fit runs, .saddlefit/fit.lock can be removed"
     )
 

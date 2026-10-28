@@ -75,6 +75,7 @@ from saddlefit.storage.fit_state import (
     ensure_unlocked,
     fit_lock,
     load_fit_state,
+    lock_owner,
     save_fit_state,
 )
 from saddlefit.storage.journal import JOURNAL_SCHEMA_VERSION, JournalEntry, task_ref, write_entry
@@ -757,8 +758,10 @@ class Project:
         record = load_progress(self.state)
         if record is None:
             return {"state": "idle", **totals}
+        # a failed fit keeps progress.json but drops the lock, and its pid can be reused
+        active = lock_owner(self.state) == record.pid and process_alive(record.pid)
         return {
-            "state": "running" if process_alive(record.pid) else "interrupted",
+            "state": "running" if active else "interrupted",
             "progress": record.model_dump(mode="json"),
             **totals,
         }
