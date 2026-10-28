@@ -77,6 +77,14 @@ def test_round_line() -> None:
     )
 
 
+def test_round_line_escapes_terminal_controls_in_reasons() -> None:
+    report = RoundReport(batch=("a",), train_before=0, refused=1)
+    osc52 = "\x1b]52;c;ZWNobyBoaQ==\x07"  # would set the clipboard
+    report.refusals = [f"proposal: SC2086 {osc52}\nnext line\u202e"]
+    shown = round_line(1, report).split("\n", 1)[1]
+    assert shown == "  refused proposal: SC2086 \\x1b]52;c;ZWNobyBoaQ==\\x07\\x0anext line\\u202e"
+
+
 def test_round_data_keeps_the_refusal_reasons() -> None:
     report = RoundReport(batch=("a",), train_before=0, refused=2)
     report.refusals = ["tutor: the call failed", "proposal: a disallowed file"]

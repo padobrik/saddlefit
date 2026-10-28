@@ -346,7 +346,15 @@ def round_line(number: int, report: RoundReport) -> str:
         f"round {number}: batch solved {solved}; {len(report.records)} candidates tried, "
         f"{report.refused} refused; {outcome}; {report.lessons} lessons; "
         f"tutor {report.tutor_calls} calls, ${report.tutor_usd:.2f}"
-    ) + "".join(f"\n  refused {reason[:300]}" for reason in report.refusals)
+    ) + "".join(f"\n  refused {_printable(reason[:300])}" for reason in report.refusals)
+
+
+def _printable(text: str) -> str:
+    """Escape what a terminal would act on: a reason can quote the tutor or a linter."""
+    return "".join(
+        c if c.isprintable() else (f"\\x{ord(c):02x}" if ord(c) < 0x100 else f"\\u{ord(c):04x}")
+        for c in text
+    )
 
 
 def round_data(report: RoundReport) -> dict[str, Any]:
