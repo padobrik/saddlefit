@@ -26,6 +26,7 @@ from saddlefit.textdiff import file_diff
 
 TOOL_NAME: Final = "submit_task"
 MAX_EXAMPLES: Final = 3
+MAX_COVERED: Final = 60  # titles, the newest kept when there are more
 # a hidden-test line this long showing up in the task text gives the test away
 DISCLOSED_LINE_CHARS: Final = 25
 FILE_BUDGET_CHARS: Final = 40_000
@@ -106,6 +107,8 @@ class GeneratorRequest:
     examples: Sequence[str]
     protected: Sequence[str]
     existing_paths: frozenset[str]
+    # titles of tasks in the suite and of candidates already tried: not to be repeated
+    covered: Sequence[str] = ()
 
 
 @dataclass(frozen=True)
@@ -154,13 +157,28 @@ def render_system(request: GeneratorRequest) -> str:
     )
 
 
+def task_title(task_md: str) -> str:
+    """A task's first non-empty line without its heading marks, as the generator is shown it."""
+    for line in task_md.splitlines():
+        if line.strip():
+            return line.strip().lstrip("#").strip()[:160]
+    return ""
+
+
 def render_user(request: GeneratorRequest) -> str:
+    """The files to change, example tasks, and the titles the new task must not repeat."""
     parts = ["# Files you may change"]
     for file in request.files:
         parts.append(f"## {file.path}\n\n````\n{file.content.rstrip()}\n````")
     if request.examples:
         parts.append("# Example tasks from this repository")
         parts += [example.strip() for example in request.examples[:MAX_EXAMPLES]]
+    if request.covered:
+        parts.append(
+            "# Already covered\n\nThese tasks exist or were tried already. Do not write "
+            "another task about the same bug, feature or function as any of them.\n\n"
+            + "\n".join(f"- {title}" for title in request.covered[-MAX_COVERED:])
+        )
     parts.append(f"Call `{TOOL_NAME}` exactly once.")
     return "\n\n".join(parts) + "\n"
 

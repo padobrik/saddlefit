@@ -85,6 +85,11 @@ class SuitePaths:
     def lock(self) -> Path:
         return self.root / "suite.lock"
 
+    @property
+    def repeats(self) -> Path:
+        """What each generated task changes, recorded when it was kept, outside the sealed part."""
+        return self.root / "repeats.json"
+
 
 def load_lock(paths: SuitePaths, splits: SplitsConfig) -> SuiteLock:
     """Read ``suite.lock``; only ``init`` creates one, so a missing lock is an error.

@@ -1,5 +1,6 @@
 """The generator call: prompts (snapshot-tested), file sampling and task checks (A11, B13)."""
 
+import dataclasses
 import os
 import random
 import subprocess
@@ -20,6 +21,7 @@ from saddlefit.tasks.generator import (
     render_system,
     render_user,
     select_files,
+    task_title,
 )
 from saddlefit.tasks.mining import _git_env
 from saddlefit.textdiff import file_diff
@@ -190,3 +192,13 @@ def test_a_path_with_a_tab_is_quoted_and_applies(tmp_path: Path) -> None:
         env=_git_env(),
     )
     assert (tmp_path / name).read_bytes() == b"x = 2\n"
+
+
+def test_titles_already_covered_reach_the_prompt() -> None:
+    text = render_user(dataclasses.replace(request(), covered=("Fix `canary`", "Add shout")))
+    assert "# Already covered" in text
+    assert "- Fix `canary`\n- Add shout" in text
+
+
+def test_a_task_title_is_its_first_line_without_heading_marks() -> None:
+    assert task_title("\n# `SealedStore.canary` leaks\n\nbody") == "`SealedStore.canary` leaks"

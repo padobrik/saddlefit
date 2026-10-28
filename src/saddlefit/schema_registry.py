@@ -18,6 +18,7 @@ from saddlefit.storage.library import ChangeRecord
 from saddlefit.storage.progress import ProgressRecord
 from saddlefit.storage.runs import RunEvent, RunSummary
 from saddlefit.tasks.models import SealedTaskInfo, SuiteLock, TaskMeta
+from saddlefit.tasks.overlap import RepeatIndex
 
 # name -> model; the file is written as schemas/<name>.schema.json
 SCHEMA_MODELS: dict[str, type[BaseModel]] = {
@@ -33,6 +34,7 @@ SCHEMA_MODELS: dict[str, type[BaseModel]] = {
     "loop-config": LoopConfig,
     "progress-record": ProgressRecord,
     "proposal": Proposal,
+    "repeat-index": RepeatIndex,
     "run-event": RunEvent,
     "run-summary": RunSummary,
     "sealed-task": SealedTaskInfo,

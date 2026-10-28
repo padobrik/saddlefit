@@ -1,0 +1,26 @@
+{
+  "additionalProperties": false,
+  "description": "The functions each kept generated or mutated task changes.\n\nWritten when the task is kept, from the candidate's own reference patch before it was\nsealed, so the repeat check never reads the sealed store.",
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "tasks": {
+      "additionalProperties": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "title": "Tasks",
+      "type": "object"
+    }
+  },
+  "required": [
+    "schema_version"
+  ],
+  "title": "RepeatIndex",
+  "type": "object"
+}

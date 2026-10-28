@@ -15,6 +15,7 @@ import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
+from functools import partial
 from pathlib import Path
 from typing import Any, Literal
 
@@ -94,6 +95,7 @@ from saddlefit.tasks.generator import (
     render_system,
     render_user,
     select_files,
+    task_title,
 )
 from saddlefit.tasks.mining import STATE_DIR, MiningReport, Runner, _export, _git_bytes, mine
 from saddlefit.tasks.models import TASK_SCHEMA_VERSION, RepoRef, TaskMeta
@@ -106,6 +108,12 @@ from saddlefit.tasks.mutation import (
     pick,
     related_tests,
     write_issue,
+)
+from saddlefit.tasks.overlap import (
+    RepeatGuard,
+    load_repeat_index,
+    save_repeat_index,
+    symbols_between,
 )
 from saddlefit.tasks.splits import add_task, new_lock
 from saddlefit.tasks.suite import SuitePaths, load_lock, load_meta, materialize, save_lock
@@ -139,6 +147,7 @@ class TaskKit:
     calibrate: Callable[[str, GeneratedTask, str], int]
     keep: Callable[[str, GeneratedTask], None]
     exists: Callable[[str], bool]
+    repeats: RepeatGuard  # what a new task must not repeat; keep() adds each kept one
 
 
 @dataclass(frozen=True)
@@ -150,6 +159,26 @@ class ReportBasis:
     before_tree: str
     state: FitState
     suite_hash: str
+
+
+def _refuse_a_repeat(repeats: RepeatGuard, mutation: Mutation) -> None:
+    """A mutation in a function a task in the suite changes is no new task."""
+    undone = symbols_between(mutation.path, mutation.mutated, mutation.original)
+    if repeated := repeats.repeats(undone):
+        raise NoCandidate(f"{mutation.path}:{mutation.site.line}: {repeated}")
+
+
+def _mutated_reader(root: Path, head: str, pending: dict[str, Any]) -> Callable[[str], str | None]:
+    """Old files for a mutation task's reference patch, which undoes the pending mutation."""
+
+    def read(path: str) -> str | None:
+        """The mutated text for the mutated file, the committed one for any other."""
+        mutation = pending["mutation"]
+        if path == mutation.path:
+            return str(mutation.mutated)
+        return generated_files.read_text(root, head, path)
+
+    return read
 
 
 @dataclass(frozen=True)
@@ -293,6 +322,12 @@ class Project:
         train = [m for m in self.tasks() if m.split == "train"][:MAX_EXAMPLES]
         examples = [self.task_text(m.id) for m in train]
         kit = self._task_kit(docker_client, model_client, model_info, "generated", kind)
+        # every title in the suite, then each candidate's as it is tried: none is to be repeated
+        covered = [
+            task_title((self.suite.public_dir / m.id / "task.md").read_text(encoding="utf-8"))
+            for m in self.tasks()
+        ]
+        read_head = partial(generated_files.read_text, self.root, head)
 
         def request(rng: Any) -> GeneratorRequest:
             return GeneratorRequest(
@@ -302,7 +337,15 @@ class Project:
                 examples=examples,
                 protected=protected,
                 existing_paths=frozenset(paths),
+                covered=tuple(covered),
             )
+
+        def call(req: GeneratorRequest) -> GeneratorResult:
+            result = generate(
+                GuardedClient(generator_client, kit.guard), req, GENERATOR_REPLY_TOKENS
+            )
+            covered.append(task_title(result.task.task_md))
+            return result
 
         with tempfile.TemporaryDirectory(prefix="saddlefit-base-") as tmp:
             base = Path(tmp) / "base"
@@ -311,13 +354,14 @@ class Project:
                 kind=kind,
                 budget=config.generator,
                 request=request,
-                call=lambda req: generate(
-                    GuardedClient(generator_client, kit.guard), req, GENERATOR_REPLY_TOKENS
-                ),
+                call=call,
                 seal=lambda task_id, task: seal_generated(kit.sealed_root, task_id, task),
                 accept=lambda task_id, task: accept(kit.evaluator, task_id, base, task),
                 calibrate=lambda task_id, task: kit.calibrate(task_id, task, head),
                 exists=kit.exists,
+                duplicate_of=lambda task_id, task: kit.repeats.check(
+                    task_id, task.reference_patch, read_head
+                ),
                 keep=kit.keep,
                 discard=lambda task_id: generated_files.discard(self.suite, task_id),
                 prompt_chars=lambda req: len(render_system(req)) + len(render_user(req)),
@@ -372,6 +416,7 @@ class Project:
                     passing[key] = runner.run_tests(base, related) == 0
                 if not passing[key]:
                     raise NoCandidate(f"{path}: its tests fail without any mutation")
+                _refuse_a_repeat(kit.repeats, mutation)  # before the call: it costs no max_calls
                 mutated = Path(tmp) / "mutated"
                 if mutated.exists():
                     remove_tree(mutated)
@@ -413,7 +458,7 @@ class Project:
                 if task_id in pending:
                     drop_mutation(self.root, task_id)
 
-            generation = Generation(
+            return Generation(
                 kind="bugfix",
                 id_prefix="mut",
                 budget=config.generator,
@@ -423,14 +468,16 @@ class Project:
                 accept=judge,
                 calibrate=lambda task_id, task: kit.calibrate(task_id, task, pending[task_id]),
                 exists=kit.exists,
+                duplicate_of=lambda task_id, task: kit.repeats.check(
+                    task_id, task.reference_patch, _mutated_reader(self.root, head, pending)
+                ),
                 keep=kit.keep,
                 discard=discard,
                 prompt_chars=lambda req: sum(
                     len(m.content) for m in issue_messages(req[0], req[1])
                 ),
                 max_attempts=config.generator.max_calls * MUTATION_TRIES_PER_CALL,
-            )
-            return generation.run(count)
+            ).run(count)
 
     def _task_kit(
         self,
@@ -502,11 +549,24 @@ class Project:
                 )
             return sum(run.passed for run in counted)
 
+        def recorded() -> dict[str, frozenset[str]]:
+            # read each time: a command running alongside may have kept a task meanwhile
+            in_suite = {meta.id for meta in self.tasks()}
+            index = load_repeat_index(self.suite.repeats).tasks
+            return {task_id: frozenset(s) for task_id, s in index.items() if task_id in in_suite}
+
+        repeats = RepeatGuard({}, recorded=recorded)
+
         def keep(task_id: str, task: GeneratedTask) -> None:
+            # the index first: if it cannot be written, the lock never names the task, so the
+            # discard that follows leaves a consistent suite; an entry for a task the lock
+            # does not name is ignored when the guard is built
+            save_repeat_index(self.suite.repeats, repeats.index(adding=task_id))
             lock = load_lock(self.suite, config.splits)
             save_lock(
                 self.suite, add_task(lock, task_id, source, generated_files.content_hash(task))
             )
+            repeats.kept(task_id)  # later candidates of this command must not repeat it
 
         return TaskKit(
             sealed_root=sealed,
@@ -516,6 +576,7 @@ class Project:
             calibrate=calibrate,
             keep=keep,
             exists=lambda task_id: any(t.id == task_id for t in self.tasks()),
+            repeats=repeats,
         )
 
     def work(
