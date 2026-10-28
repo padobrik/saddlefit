@@ -243,3 +243,15 @@ Assumptions taken where the spec leaves a detail open. Deviations from the spec 
   not a patch, so `proposal_for` diffs whatever the current `loop.yaml` is; a `hooks` list is
   appended. The tutor's prompt lists up to five entries that match its runs' failure tags,
   most matching first. Statistics (`proposed`, `accepted`) stay at zero until the slow loop.
+- **`tasks mutate` (#39).** A mutation flips one token in a Python source file (a comparison,
+  `+`/`-`, `and`/`or`, `is`, `True`/`False`, or an integer by one), found with `tokenize` so the
+  file keeps its exact text, and must still compile. The tests that import the module must
+  pass at `HEAD` and fail (pytest exit 1 or 2) with the mutation; only then does the generator
+  write the issue, which may not quote the original line. The mutated tree is committed with
+  a temporary index as a commit object under `refs/saddlefit/mutations/<task id>` in the
+  repository (the user's branches, index and working tree never move; the ref goes when the
+  task is not kept), and it is the task's base commit. The tests that broke are the hidden
+  tests, the patch that undoes the mutation is the reference, and acceptance, calibration and
+  the generator budget work as for `tasks generate`. Attempts that never reach the model are
+  capped at five per `generator.max_calls`. Mutation tasks are `bugfix` tasks with IDs
+  `mut-bugfix-…`, in train or held-out only.
