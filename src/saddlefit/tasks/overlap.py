@@ -3,7 +3,8 @@
 A symbol is ``path::Qualified.name`` for a function or class whose own code differs between
 the old file and the patched one, or ``path`` for other top-level code that differs. Imports
 do not count: two fixes that each add an import are not the same fix. A file that is not
-Python, or does not parse, counts as a whole.
+Python, does not parse, or that the patch does not apply to counts as a whole,
+``path::*``, which meets every symbol of that file.
 """
 
 from __future__ import annotations
@@ -25,6 +26,9 @@ from saddlefit.errors import UserError
 from saddlefit.storage.migrations import upgrade
 
 _DEFS: Final = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+# a file whose functions cannot be told apart (not Python, not parsed, the patch did not
+# apply): it meets every symbol of that file, while plain ``path`` is only its top-level code
+WHOLE_FILE: Final = "::*"
 # the line endings Python itself counts: a form feed or U+2028 inside a string is no break
 _LINES: Final = re.compile(r"[^\r\n]*(?:\r\n|\r|\n)|[^\r\n]+$")
 
@@ -52,6 +56,8 @@ def load_repeat_index(path: Path) -> RepeatIndex:
         return RepeatIndex(schema_version=REPEAT_INDEX_SCHEMA_VERSION)
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict):
+            raise ValueError("not a JSON object")
         current = upgrade(REPEAT_INDEX_KIND, raw, REPEAT_INDEX_SCHEMA_VERSION)
         return RepeatIndex.model_validate(current)
     except (OSError, ValueError) as exc:  # a ValidationError and a MigrationError are ValueErrors
@@ -91,7 +97,7 @@ class RepeatGuard:
         """The first known task that changes one of ``symbols``, and that symbol."""
         self.known.update(self.recorded())
         for other, theirs in self.known.items():
-            if common := symbols & theirs:
+            if common := _meeting(symbols, theirs):
                 return f"repeats {other}: both change {min(common)}"
         return None
 
@@ -113,6 +119,17 @@ class RepeatGuard:
             schema_version=REPEAT_INDEX_SCHEMA_VERSION,
             tasks={task_id: sorted(symbols) for task_id, symbols in sorted(known.items())},
         )
+
+
+def _meeting(mine: frozenset[str], theirs: frozenset[str]) -> set[str]:
+    """What two symbol sets share; a whole file meets every symbol of that file."""
+    common = set(mine & theirs)
+    for whole, other in ((mine, theirs), (theirs, mine)):
+        for symbol in whole:
+            if symbol.endswith(WHOLE_FILE):
+                path = symbol.removesuffix(WHOLE_FILE)
+                common |= {s for s in other if s == path or s.startswith(f"{path}::")}
+    return common
 
 
 def symbols_between(path: str, old: str | None, new: str | None) -> frozenset[str]:
@@ -166,7 +183,7 @@ def changed_symbols(patch: str, read_old: Callable[[str], str | None]) -> frozen
             check=False,
         )
         if applied.returncode != 0:
-            return frozenset(paths)  # cannot tell which functions: the files as a whole
+            return frozenset(f"{path}{WHOLE_FILE}" for path in paths)  # which functions: unknown
         symbols: set[str] = set()
         for path in paths:
             target = root / path
@@ -190,11 +207,11 @@ def _differences(path: str, old: str | None, new: str | None) -> set[str]:
     if old == new:
         return set()
     if not path.endswith(".py"):
-        return {path}
+        return {f"{path}{WHOLE_FILE}"}
     try:
         before, after = _own_code(old), _own_code(new)
     except SyntaxError:
-        return {path}
+        return {f"{path}{WHOLE_FILE}"}
     changed = {
         name for name in before.keys() | after.keys() if before.get(name, "") != after.get(name, "")
     }

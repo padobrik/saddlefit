@@ -75,12 +75,12 @@ def test_other_top_level_code_counts_as_the_file() -> None:
 
 
 def test_a_file_that_is_not_python_counts_as_a_whole() -> None:
-    assert symbols("b\n", old="a\n", path="docs/notes.md") == {"docs/notes.md"}
+    assert symbols("b\n", old="a\n", path="docs/notes.md") == {"docs/notes.md::*"}
 
 
 def test_a_patch_that_does_not_apply_counts_its_files_as_a_whole() -> None:
     stale = patch("src/store.py", "something else\n", "x\n")
-    assert changed_symbols(stale, {"src/store.py": OLD}.get) == {"src/store.py"}
+    assert changed_symbols(stale, {"src/store.py": OLD}.get) == {"src/store.py::*"}
 
 
 def test_no_patch_changes_nothing() -> None:
@@ -187,6 +187,22 @@ def test_a_function_defined_in_a_try_block_keeps_its_name() -> None:
 
 def test_an_unreadable_repeat_index_is_a_user_error(tmp_path: Path) -> None:
     path = tmp_path / "repeats.json"
-    path.write_text("{not json", encoding="utf-8")
-    with pytest.raises(UserError, match="titles only"):
-        load_repeat_index(path)
+    for text in ("{not json", "null", "[]"):
+        path.write_text(text, encoding="utf-8")
+        with pytest.raises(UserError, match="titles only"):
+            load_repeat_index(path)
+
+
+def test_a_whole_file_meets_every_symbol_in_it_but_top_level_code_does_not() -> None:
+    whole = RepeatGuard({"gen-a": frozenset({"src/store.py::*"})})
+    assert whole.repeats(frozenset({"src/store.py::helper"})) == (
+        "repeats gen-a: both change src/store.py::helper"
+    )
+    top = RepeatGuard({"gen-a": frozenset({"src/store.py"})})
+    assert top.repeats(frozenset({"src/store.py::helper"})) is None
+    assert (
+        RepeatGuard({"gen-a": frozenset({"src/other.py::*"})}).repeats(
+            frozenset({"src/store.py::helper"})
+        )
+        is None
+    )
