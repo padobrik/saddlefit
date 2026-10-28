@@ -6,6 +6,7 @@ import openai
 import pytest
 
 from saddlefit.providers.base import (
+    AccountError,
     ContextLengthError,
     GenParams,
     Message,
@@ -138,7 +139,7 @@ def test_transient_errors_are_retried() -> None:
             status_error(openai.BadRequestError, 400, "exceeds the context length"),
             ContextLengthError,
         ),
-        (status_error(openai.AuthenticationError, 401, "bad key"), ProviderError),
+        (status_error(openai.AuthenticationError, 401, "bad key"), AccountError),
     ],
 )
 def test_error_mapping(exc: Exception, kind: type[ProviderError]) -> None:

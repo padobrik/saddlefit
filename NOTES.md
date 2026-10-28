@@ -307,3 +307,9 @@ Assumptions taken where the spec leaves a detail open. Deviations from the spec 
   lines printed above it; when no run has finished for longer than
   `evaluation.timeout_seconds` the ball stops, the frame turns amber and the line says how
   long. Rich's own output is used, without the `?2026` synchronized-output wrapper.
+- **Account errors (found in the v0.3.0 proof run).** When the Anthropic credit ran out,
+  `tasks generate` treated each `400 credit balance is too low` like one unusable reply: it
+  dropped the attempt and called again, so 57 failing calls used up `max_calls` for both task
+  types. `AccountError` (401, 402, 403, or a credit-balance message; a missing key too) now
+  stops the command at the first such call with exit 3; the tasks kept so far stay. The
+  OpenAI-compatible provider maps 401 to 403 the same way. The tutor is not changed here.

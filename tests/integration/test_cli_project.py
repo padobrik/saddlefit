@@ -18,10 +18,12 @@ from typer.testing import CliRunner
 from saddlefit import cli
 from saddlefit.cli import app
 from saddlefit.doctor import DoctorRecord
-from saddlefit.errors import UserError
+from saddlefit.errors import EnvironmentFailure, UserError
 from saddlefit.harness.store import HarnessStore, HarnessStoreError
 from saddlefit.loops.baseline import MAX_REPLY_TOKENS
+from saddlefit.loops.generate import Attempt, GenerationReport
 from saddlefit.project import Project, remove_tree
+from saddlefit.providers.base import ModelInfo
 from saddlefit.providers.retry import LOCAL_TIMEOUT_S
 
 pytestmark = pytest.mark.integration
@@ -473,3 +475,28 @@ def test_tasks_generate_refuses_before_spending(
     result = runner.invoke(app, ["tasks", command, *[a for a in args if a != "mutate"]])
     assert isinstance(result.exception, UserError)
     assert message in str(result.exception)
+
+
+def test_a_refused_generator_account_exits_with_3(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = build(tmp_path / "repo")
+    invoke(repo, "init", "--model", "qwen3:8b", monkeypatch=monkeypatch)
+    config = repo / ".saddlefit" / "saddlefit.yaml"
+    text = config.read_text(encoding="utf-8")
+    head, generator = text.split("generator:\n", 1)
+    unpriced, priced = "    input: 0.0\n    output: 0.0\n", "    input: 10.0\n    output: 50.0\n"
+    generator = generator.replace(unpriced, priced, 1)
+    config.write_text(f"{head}generator:\n{generator}", encoding="utf-8")
+    report = GenerationReport(
+        attempts=[Attempt("gen-feature-a", True, "the student passed 2 of 5")],
+        calls=2,
+        stopped="the generator's provider refused the account: credit balance is too low",
+        account_refused=True,
+    )
+    monkeypatch.setattr(cli, "_student", lambda p: (ModelInfo(provider="fake", model="m"), None))
+    monkeypatch.setattr(cli, "_docker", object)
+    monkeypatch.setattr(cli.Project, "generate_tasks", lambda self, **kw: report)
+    result = runner.invoke(app, ["tasks", "generate", "--type", "feature", "--count", "3"])
+    assert isinstance(result.exception, EnvironmentFailure)  # main() turns it into exit 3
+    assert "kept gen-feature-a" in result.output  # what was kept is still reported

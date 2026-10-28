@@ -175,6 +175,8 @@ def _generation_output(ctx: typer.Context, report: GenerationReport, count: int)
     if report.stopped:
         lines.append(f"stopped: {report.stopped}")
     _emit(ctx, data, "\n".join(lines))
+    if report.account_refused:  # the tasks kept so far stay; the rest needs a working account
+        raise EnvironmentFailure(report.stopped or "the generator's provider refused the account")
 
 
 @tasks_app.command("mutate")

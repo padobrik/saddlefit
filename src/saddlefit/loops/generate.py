@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from typing import Any, Final
 
 from saddlefit.config import GeneratorConfig
-from saddlefit.providers.base import ProviderError
+from saddlefit.providers.base import AccountError, ProviderError
 from saddlefit.providers.cost import PER_MTOK, cost_usd
 from saddlefit.tasks.acceptance import Acceptance
 from saddlefit.tasks.generator import GeneratedTask, GeneratorResult
@@ -64,6 +64,7 @@ class GenerationReport:
     calls: int = 0
     usd: float = 0.0
     stopped: str | None = None
+    account_refused: bool = False  # the provider refused the account: an environment failure
 
     @property
     def kept(self) -> list[str]:
@@ -113,12 +114,20 @@ class Generation:
                 )
                 break
             report.calls += 1
-            report.attempts.append(self._attempt(request, report))
+            try:
+                report.attempts.append(self._attempt(request, report))
+            except AccountError as exc:
+                # no key, no access or no credit: every further call would fail the same way
+                report.stopped = f"the generator's provider refused the account: {exc}"
+                report.account_refused = True
+                break
         return report
 
     def _attempt(self, request: Any, report: GenerationReport) -> Attempt:
         try:
             result = self.call(request)
+        except AccountError:
+            raise
         except ProviderError as exc:
             if exc.usage is not None:
                 report.usd += cost_usd(exc.usage, self.budget.prices_usd_per_mtok)

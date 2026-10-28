@@ -18,6 +18,7 @@ from typing import Any, Final
 import anthropic
 
 from saddlefit.providers.base import (
+    AccountError,
     ContextLengthError,
     GenParams,
     Message,
@@ -38,6 +39,9 @@ FALLBACK_BETA: Final = "server-side-fallback-2026-07-01"
 _EFFORT: Final = {"off": "low", "low": "low", "high": "high"}  # thinking cannot be disabled
 _TRANSIENT_STATUS: Final = frozenset({408, 409, 429})
 _CONTEXT_MARKERS: Final = ("prompt is too long", "context window", "too many tokens")
+# the account, not the request: every later call fails the same way
+_ACCOUNT_STATUS: Final = frozenset({401, 402, 403})
+_ACCOUNT_MARKERS: Final = ("credit balance",)
 # The SDK reports missing credentials at request time with a TypeError, not an API error.
 _NO_CREDENTIALS: Final = "Could not resolve authentication method"
 NO_KEY_HINT: Final = "no Anthropic credentials found; set ANTHROPIC_API_KEY"
@@ -136,6 +140,8 @@ def classify_error(exc: anthropic.AnthropicError) -> ProviderError:
         message = str(exc.message).lower()
         if exc.status_code in {400, 413} and any(m in message for m in _CONTEXT_MARKERS):
             return ContextLengthError(f"prompt does not fit the context window: {exc.message}")
+        if exc.status_code in _ACCOUNT_STATUS or any(m in message for m in _ACCOUNT_MARKERS):
+            return AccountError(f"Anthropic API error {exc.status_code}: {exc.message}")
         return ProviderError(f"Anthropic API error {exc.status_code}: {exc.message}")
     return ProviderError(f"Anthropic client error: {exc}")
 
@@ -157,7 +163,7 @@ class AnthropicClient:
                 # retries are ours (B5), so the SDK makes exactly one attempt per call
                 client = anthropic.Anthropic(max_retries=0, timeout=timeout_s)
             except anthropic.AnthropicError as exc:
-                raise ProviderError(f"{NO_KEY_HINT}: {exc}") from exc
+                raise AccountError(f"{NO_KEY_HINT}: {exc}") from exc
         self._client = client
 
     def info(self) -> ModelInfo:
@@ -194,7 +200,7 @@ class AnthropicClient:
             except TypeError as exc:
                 if _NO_CREDENTIALS not in str(exc):
                     raise
-                raise ProviderError(NO_KEY_HINT) from exc
+                raise AccountError(NO_KEY_HINT) from exc
             return to_reply(response, time.monotonic() - start)
 
         return call_with_retries(call, sleep=self._sleep)
