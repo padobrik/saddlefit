@@ -335,3 +335,6 @@ Assumptions taken where the spec leaves a detail open. Deviations from the spec 
   only their titles guard against repeats. `git apply` runs with no user or system config and
   a ceiling above its directory (Git for Windows turns on `autocrlf`, which made every line
   look changed), and lines split only where Python counts them.
+  `keep` writes the index before `suite.lock`, and each check and write re-reads the index from
+  disk, so two task commands at once see each other's kept tasks; a lock across commands,
+  which `suite.lock` never had either, is #162.

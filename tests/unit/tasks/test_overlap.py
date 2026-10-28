@@ -153,3 +153,24 @@ def test_the_repeat_index_round_trips_and_starts_empty(tmp_path: Path) -> None:
 def test_a_new_file_names_its_functions_not_itself() -> None:
     new_file = "def shout(text):\n    return text.upper()\n"
     assert symbols(new_file, old="") == {"src/store.py::shout"}
+
+
+def test_two_commands_at_once_see_and_keep_each_others_tasks(tmp_path: Path) -> None:
+    path = tmp_path / "repeats.json"
+
+    def recorded() -> dict[str, frozenset[str]]:
+        return {k: frozenset(v) for k, v in load_repeat_index(path).tasks.items()}
+
+    first, second = RepeatGuard({}, recorded=recorded), RepeatGuard({}, recorded=recorded)
+    fix = patch("src/store.py", OLD, OLD.replace("x + 1", "x + 2"))
+    assert first.check("gen-a", fix, {"src/store.py": OLD}.get) is None
+    save_repeat_index(path, first.index(adding="gen-a"))
+    first.kept("gen-a")
+    # the second command started before gen-a was kept, and still catches its repeat
+    assert second.check("gen-b", fix, {"src/store.py": OLD}.get) == (
+        "repeats gen-a: both change src/store.py::helper"
+    )
+    other = patch("src/store.py", OLD, OLD.replace("return [task_id]", "return []"))
+    assert second.check("gen-c", other, {"src/store.py": OLD}.get) is None
+    save_repeat_index(path, second.index(adding="gen-c"))
+    assert set(load_repeat_index(path).tasks) == {"gen-a", "gen-c"}  # gen-a's entry survives

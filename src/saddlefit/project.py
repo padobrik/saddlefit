@@ -546,11 +546,13 @@ class Project:
                 )
             return sum(run.passed for run in counted)
 
-        in_suite = {meta.id for meta in self.tasks()}
-        recorded = load_repeat_index(self.suite.repeats).tasks
-        repeats = RepeatGuard(
-            {task_id: frozenset(s) for task_id, s in recorded.items() if task_id in in_suite}
-        )
+        def recorded() -> dict[str, frozenset[str]]:
+            # read each time: a command running alongside may have kept a task meanwhile
+            in_suite = {meta.id for meta in self.tasks()}
+            index = load_repeat_index(self.suite.repeats).tasks
+            return {task_id: frozenset(s) for task_id, s in index.items() if task_id in in_suite}
+
+        repeats = RepeatGuard({}, recorded=recorded)
 
         def keep(task_id: str, task: GeneratedTask) -> None:
             # the index first: if it cannot be written, the lock never names the task, so the

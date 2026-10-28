@@ -76,9 +76,12 @@ class RepeatGuard:
 
     known: dict[str, frozenset[str]]
     pending: dict[str, frozenset[str]] = field(default_factory=dict)
+    # what is recorded on disk now: another command may have kept a task since this started
+    recorded: Callable[[], Mapping[str, frozenset[str]]] = dict
 
     def repeats(self, symbols: frozenset[str]) -> str | None:
         """The first known task that changes one of ``symbols``, and that symbol."""
+        self.known.update(self.recorded())
         for other, theirs in self.known.items():
             if common := symbols & theirs:
                 return f"repeats {other}: both change {min(common)}"
@@ -95,7 +98,7 @@ class RepeatGuard:
 
     def index(self, adding: str | None = None) -> RepeatIndex:
         """The known tasks, plus ``adding`` from pending, without recording it yet."""
-        known = dict(self.known)
+        known = {**self.known, **self.recorded()}  # never drop what another command recorded
         if adding is not None:
             known[adding] = self.pending.get(adding, frozenset())
         return RepeatIndex(
