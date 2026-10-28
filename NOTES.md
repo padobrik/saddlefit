@@ -275,9 +275,10 @@ Assumptions taken where the spec leaves a detail open. Deviations from the spec 
   reaches the harness store (required test 7). The answer is a patch in
   `.saddlefit/answers/`, never applied to the working tree; a rescue that needed variants is
   written to `.saddlefit/journal/<entry-id>.json` as a `fast_loop` proposal, `probation` when
-  the composed change passed and `rejected` when it did not. Work mode has no hidden tests,
-  so the protected-files rule is not added and nothing reads the sealed store; probe records
-  go to `.saddlefit/work/`.
+  the composed change passed and `rejected` when it did not. No loop reads the journal yet:
+  #36 asked only for B8, so having `fit` test entries on held-out tasks is #147. Work mode has
+  no hidden tests, so the protected-files rule is not added and nothing reads the sealed
+  store; probe records go to `.saddlefit/work/`.
 - **`run` and exit codes.** The owner left the choice open (2026-10-28); B14 now has code 4,
   "task not solved": `run` exits 4 when the check still fails after the fast loop, so
   `saddlefit run … && git apply <answer>` never applies a failing patch. 1 to 3 keep their
