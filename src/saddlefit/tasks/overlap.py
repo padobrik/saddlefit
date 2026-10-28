@@ -9,15 +9,49 @@ Python, or does not parse, counts as a whole.
 from __future__ import annotations
 
 import ast
+import os
+import re
 import subprocess
 import tempfile
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Final
 
-from saddlefit.tasks.mining import _git_env
-
 _DEFS: Final = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+# the line endings Python itself counts: a form feed or U+2028 inside a string is no break
+_LINES: Final = re.compile(r"[^\r\n]*(?:\r\n|\r|\n)|[^\r\n]+$")
+
+
+@dataclass
+class RepeatGuard:
+    """Which task in the suite, or kept in this command, a new one repeats.
+
+    Two tasks that change the same function let a change learned on one pass the other's
+    check, so a repeat that lands in another split makes the held-out gate measure nothing.
+    """
+
+    known: dict[str, frozenset[str]]
+    pending: dict[str, frozenset[str]] = field(default_factory=dict)
+
+    def repeats(self, symbols: frozenset[str]) -> str | None:
+        for other, theirs in self.known.items():
+            if common := symbols & theirs:
+                return f"repeats {other}: both change {min(common)}"
+        return None
+
+    def check(self, task_id: str, patch: str, read_old: Callable[[str], str | None]) -> str | None:
+        """The repeat ``patch`` makes, if any; its symbols wait for ``kept`` either way."""
+        self.pending[task_id] = changed_symbols(patch, read_old)
+        return self.repeats(self.pending[task_id])
+
+    def kept(self, task_id: str) -> None:
+        self.known[task_id] = self.pending.pop(task_id, frozenset())
+
+
+def symbols_between(path: str, old: str | None, new: str | None) -> frozenset[str]:
+    """The symbols that differ between two versions of one file."""
+    return frozenset(_differences(path, old, new))
 
 
 def patch_paths(patch: str) -> list[str]:
@@ -44,9 +78,9 @@ def changed_symbols(patch: str, read_old: Callable[[str], str | None]) -> frozen
                 (root / path).parent.mkdir(parents=True, exist_ok=True)
                 (root / path).write_bytes(text.encode("utf-8"))
         applied = subprocess.run(
-            ["git", "apply", "--whitespace=nowarn", "-"],  # noqa: S607
+            ["git", "-c", "core.autocrlf=false", "apply", "--whitespace=nowarn", "-"],  # noqa: S607
             cwd=root,
-            env=_git_env(),
+            env=_isolated_git(root),
             input=patch.encode("utf-8"),
             capture_output=True,
             check=False,
@@ -59,6 +93,16 @@ def changed_symbols(patch: str, read_old: Callable[[str], str | None]) -> frozen
             new = target.read_bytes().decode("utf-8") if target.is_file() else None
             symbols |= _differences(path, old[path], new)
     return frozenset(symbols)
+
+
+def _isolated_git(root: Path) -> Mapping[str, str]:
+    """No user or system config (Git for Windows turns on autocrlf), no enclosing repository."""
+    return {
+        "PATH": os.environ.get("PATH", ""),
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_GLOBAL": os.devnull,
+        "GIT_CEILING_DIRECTORIES": str(root.parent),
+    }
 
 
 def _differences(path: str, old: str | None, new: str | None) -> set[str]:
@@ -79,7 +123,7 @@ def _own_code(source: str | None) -> dict[str, str]:
     if source is None:
         return {}
     tree = ast.parse(source)
-    lines = source.splitlines(keepends=True)
+    lines = _LINES.findall(source)
     owned: dict[str, set[int]] = {"": set(range(1, len(lines) + 1))}
     for node in tree.body:
         if isinstance(node, ast.Import | ast.ImportFrom):

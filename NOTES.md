@@ -329,3 +329,7 @@ Assumptions taken where the spec leaves a detail open. Deviations from the spec 
   command, is dropped before sealing and judging, as `repeats <task id>: both change <name>`.
   The existing tasks' symbols come from `Evaluator.reference_symbols`, so the patches never
   leave `saddlefit.eval` (test 11). Mined tasks are not compared: they have no reference patch.
+  A mutation's function is known as soon as it is picked, so `tasks mutate` refuses a repeat
+  before the generator call and it costs no `max_calls`. `git apply` runs with no user or
+  system config and a ceiling above its directory: Git for Windows turns on `autocrlf`, which
+  made every line look changed. Lines split only where Python counts them (\n, \r\n, \r).

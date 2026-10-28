@@ -1,8 +1,15 @@
 """Which functions a reference patch changes: what tells a repeated task from a new one."""
 
 import difflib
+import re
+from pathlib import Path
 
-from saddlefit.tasks.overlap import changed_symbols
+import pytest
+
+from saddlefit.loops.generate import NoCandidate
+from saddlefit.project import _refuse_a_repeat
+from saddlefit.tasks.mutation import Mutation, Site
+from saddlefit.tasks.overlap import RepeatGuard, changed_symbols
 
 OLD = """import os
 
@@ -71,3 +78,35 @@ def test_a_patch_that_does_not_apply_counts_its_files_as_a_whole() -> None:
 
 def test_no_patch_changes_nothing() -> None:
     assert changed_symbols("", {}.get) == frozenset()
+
+
+def test_a_form_feed_inside_a_string_does_not_shift_the_lines() -> None:
+    old = 'def first():\n    return "a\x0cb"\n\n\ndef second():\n    return 1\n'
+    new = old.replace("return 1", "return 2")
+    assert symbols(new, old=old) == {"src/store.py::second"}
+
+
+def test_a_user_git_config_that_converts_line_endings_changes_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # a home whose git config converts line endings, as Git for Windows ships it
+    (tmp_path / ".gitconfig").write_text("[core]\n\tautocrlf = true\n", encoding="utf-8")
+    for name in ("HOME", "USERPROFILE", "XDG_CONFIG_HOME"):
+        monkeypatch.setenv(name, str(tmp_path))
+    new = OLD.replace("return [task_id]", "return sorted([task_id])")
+    assert symbols(new) == {"src/store.py::Store.paths"}
+
+
+def test_a_mutation_in_a_covered_function_is_refused_before_the_generator_call() -> None:
+    mutation = Mutation(
+        path="src/store.py",
+        original=OLD,
+        mutated=OLD.replace("x + 1", "x - 1"),
+        site=Site(line=16, col=13, old="+", new="-"),
+    )
+    covered = RepeatGuard({"mut-bugfix-old": frozenset({"src/store.py::helper"})})
+    with pytest.raises(
+        NoCandidate, match=re.escape("repeats mut-bugfix-old: both change src/store.py::helper")
+    ):
+        _refuse_a_repeat(covered, mutation)
+    _refuse_a_repeat(RepeatGuard({"other": frozenset({"src/store.py::Store.paths"})}), mutation)

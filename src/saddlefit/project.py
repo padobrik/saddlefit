@@ -109,7 +109,7 @@ from saddlefit.tasks.mutation import (
     related_tests,
     write_issue,
 )
-from saddlefit.tasks.overlap import changed_symbols
+from saddlefit.tasks.overlap import RepeatGuard, symbols_between
 from saddlefit.tasks.splits import add_task, new_lock
 from saddlefit.tasks.suite import SuitePaths, load_lock, load_meta, materialize, save_lock
 
@@ -142,6 +142,7 @@ class TaskKit:
     calibrate: Callable[[str, GeneratedTask, str], int]
     keep: Callable[[str, GeneratedTask], None]
     exists: Callable[[str], bool]
+    repeats: RepeatGuard  # what a new task must not repeat; keep() adds each kept one
 
 
 @dataclass(frozen=True)
@@ -153,6 +154,13 @@ class ReportBasis:
     before_tree: str
     state: FitState
     suite_hash: str
+
+
+def _refuse_a_repeat(repeats: RepeatGuard, mutation: Mutation) -> None:
+    """A mutation in a function a task in the suite changes is no new task."""
+    undone = symbols_between(mutation.path, mutation.mutated, mutation.original)
+    if repeated := repeats.repeats(undone):
+        raise NoCandidate(f"{mutation.path}:{mutation.site.line}: {repeated}")
 
 
 def _mutated_reader(root: Path, head: str, pending: dict[str, Any]) -> Callable[[str], str | None]:
@@ -310,9 +318,7 @@ class Project:
         kit = self._task_kit(docker_client, model_client, model_info, "generated", kind)
         # every title in the suite, then each candidate's as it is tried: none is to be repeated
         covered = [task_title(self.task_text(m.id)) for m in self.tasks()]
-        duplicate_of, keep = self._repeat_guard(
-            kit, lambda path: generated_files.read_text(self.root, head, path)
-        )
+        read_head = partial(generated_files.read_text, self.root, head)
 
         def request(rng: Any) -> GeneratorRequest:
             return GeneratorRequest(
@@ -344,8 +350,10 @@ class Project:
                 accept=lambda task_id, task: accept(kit.evaluator, task_id, base, task),
                 calibrate=lambda task_id, task: kit.calibrate(task_id, task, head),
                 exists=kit.exists,
-                duplicate_of=duplicate_of,
-                keep=keep,
+                duplicate_of=lambda task_id, task: kit.repeats.check(
+                    task_id, task.reference_patch, read_head
+                ),
+                keep=kit.keep,
                 discard=lambda task_id: generated_files.discard(self.suite, task_id),
                 prompt_chars=lambda req: len(render_system(req)) + len(render_user(req)),
             )
@@ -399,6 +407,7 @@ class Project:
                     passing[key] = runner.run_tests(base, related) == 0
                 if not passing[key]:
                     raise NoCandidate(f"{path}: its tests fail without any mutation")
+                _refuse_a_repeat(kit.repeats, mutation)  # before the call: it costs no max_calls
                 mutated = Path(tmp) / "mutated"
                 if mutated.exists():
                     remove_tree(mutated)
@@ -440,8 +449,6 @@ class Project:
                 if task_id in pending:
                     drop_mutation(self.root, task_id)
 
-            duplicate_of, keep = self._repeat_guard(kit, _mutated_reader(self.root, head, pending))
-
             return Generation(
                 kind="bugfix",
                 id_prefix="mut",
@@ -452,45 +459,16 @@ class Project:
                 accept=judge,
                 calibrate=lambda task_id, task: kit.calibrate(task_id, task, pending[task_id]),
                 exists=kit.exists,
-                duplicate_of=duplicate_of,
-                keep=keep,
+                duplicate_of=lambda task_id, task: kit.repeats.check(
+                    task_id, task.reference_patch, _mutated_reader(self.root, head, pending)
+                ),
+                keep=kit.keep,
                 discard=discard,
                 prompt_chars=lambda req: sum(
                     len(m.content) for m in issue_messages(req[0], req[1])
                 ),
                 max_attempts=config.generator.max_calls * MUTATION_TRIES_PER_CALL,
             ).run(count)
-
-    def _repeat_guard(
-        self, kit: TaskKit, read_old: Callable[[str], str | None]
-    ) -> tuple[Callable[[str, GeneratedTask], str | None], Callable[[str, GeneratedTask], None]]:
-        """Spot a new task that changes a function a task in the suite, or one kept now, does.
-
-        Two tasks on the same function let a change learned on one pass the other's check, so
-        a repeat that lands in another split makes the held-out gate measure nothing.
-        """
-        known: dict[str, frozenset[str]] = {}
-        for meta in self.tasks():
-            base = meta.repo.base_commit
-            if meta.source in {"generated", "mutation"} and base:
-                known[meta.id] = kit.evaluator.reference_symbols(
-                    meta.id, partial(generated_files.read_text, self.root, base)
-                )
-        pending: dict[str, frozenset[str]] = {}
-
-        def duplicate_of(task_id: str, task: GeneratedTask) -> str | None:
-            mine = changed_symbols(task.reference_patch, read_old)
-            pending[task_id] = mine
-            for other, theirs in known.items():
-                if common := mine & theirs:
-                    return f"repeats {other}: both change {min(common)}"
-            return None
-
-        def keep(task_id: str, task: GeneratedTask) -> None:
-            kit.keep(task_id, task)
-            known[task_id] = pending.pop(task_id, frozenset())
-
-        return duplicate_of, keep
 
     def _task_kit(
         self,
@@ -562,11 +540,22 @@ class Project:
                 )
             return sum(run.passed for run in counted)
 
+        repeats = RepeatGuard(
+            {
+                meta.id: evaluator.reference_symbols(
+                    meta.id, partial(generated_files.read_text, self.root, meta.repo.base_commit)
+                )
+                for meta in self.tasks()
+                if meta.source in {"generated", "mutation"} and meta.repo.base_commit
+            }
+        )
+
         def keep(task_id: str, task: GeneratedTask) -> None:
             lock = load_lock(self.suite, config.splits)
             save_lock(
                 self.suite, add_task(lock, task_id, source, generated_files.content_hash(task))
             )
+            repeats.kept(task_id)  # later candidates of this command must not repeat it
 
         return TaskKit(
             sealed_root=sealed,
@@ -576,6 +565,7 @@ class Project:
             calibrate=calibrate,
             keep=keep,
             exists=lambda task_id: any(t.id == task_id for t in self.tasks()),
+            repeats=repeats,
         )
 
     def work(
