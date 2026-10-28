@@ -53,7 +53,7 @@ from saddlefit.loops.generate import (
 from saddlefit.loops.generate import MAX_REPLY_TOKENS as GENERATOR_REPLY_TOKENS
 from saddlefit.loops.middle import MiddleLoop, RoundReport
 from saddlefit.loops.practice import DockerPractice, without_control
-from saddlefit.loops.work import WorkRunner
+from saddlefit.loops.work import WorkRunner, write_answer
 from saddlefit.playbook import proposal_for
 from saddlefit.providers.base import ModelClient, ModelInfo
 from saddlefit.providers.retry import LOCAL_TIMEOUT_S
@@ -554,7 +554,7 @@ class Project:
         answers = self.state / "answers"
         answers.mkdir(parents=True, exist_ok=True)
         answer = answers / f"{result.probes[-1].run_id}.patch"
-        answer.write_text(result.diff, encoding="utf-8")
+        write_answer(answer, result.diff)
         entry = None
         if result.helped:
             proposal = proposal_for(result.helped, loop_yaml, loop, source="fast_loop")

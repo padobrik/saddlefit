@@ -12,7 +12,7 @@ from saddlefit.errors import EnvironmentFailure
 from saddlefit.harness.loop_config import default_loop_config
 from saddlefit.harness.store import HarnessStore
 from saddlefit.loops import work as work_module
-from saddlefit.loops.work import STUDENT_SHARE, WorkRunner
+from saddlefit.loops.work import STUDENT_SHARE, WorkRunner, write_answer
 from saddlefit.providers.base import ModelReply, ProviderError, ToolCall
 from saddlefit.providers.fake import FakeClient
 from saddlefit.sandbox.container import ExecResult, SandboxError
@@ -350,3 +350,9 @@ def test_a_tool_command_cannot_run_into_the_checks_time(
     tool, check = boxes[0].checks[0], boxes[0].checks[-1]
     assert tool == pytest.approx(TIMEOUT * STUDENT_SHARE)  # asked for 600 s, given its share
     assert check == pytest.approx(TIMEOUT)  # the clock did not move: the check has it all
+
+
+def test_an_answer_with_non_utf8_bytes_is_written_as_is(tmp_path: Path) -> None:
+    raw = b"diff --git a/latin.txt b/latin.txt\n+caf\xe9\n"
+    write_answer(tmp_path / "a.patch", raw.decode("utf-8", "surrogateescape"))
+    assert (tmp_path / "a.patch").read_bytes() == raw

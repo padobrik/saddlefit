@@ -76,6 +76,12 @@ def copy_working_tree(repo: Path, dest: Path) -> None:
         shutil.copy2(source, target)
 
 
+def write_answer(path: Path, diff: str) -> None:
+    """Write the answer patch byte for byte: a non-UTF-8 file's bytes come back from the
+    tracker as surrogate escapes, and must leave the same way."""
+    path.write_bytes(diff.encode("utf-8", "surrogateescape"))
+
+
 @dataclass
 class _Capped:
     """The sandbox as the student's tools see it: no command runs past the student's share,
