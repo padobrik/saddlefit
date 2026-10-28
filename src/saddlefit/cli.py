@@ -348,6 +348,21 @@ def round_line(number: int, report: RoundReport) -> str:
     ) + "".join(f"\n  refused {reason[:300]}" for reason in report.refusals)
 
 
+def round_data(report: RoundReport) -> dict[str, Any]:
+    """One round, as ``--json`` gives it."""
+    return {
+        "batch": list(report.batch),
+        "train_before": report.train_before,
+        "accepted": report.accepted,
+        "records": [rec.model_dump(mode="json") for rec in report.records],
+        "refused": report.refused,
+        "refusals": list(report.refusals),  # "<kind>: <reason>", one per refusal
+        "lessons": report.lessons,
+        "tutor_calls": report.tutor_calls,
+        "tutor_usd": report.tutor_usd,
+    }
+
+
 @app.command()
 def fit(
     ctx: typer.Context,
@@ -385,19 +400,7 @@ def fit(
         rounds=rounds,
         on_round=on_round,
     )
-    data = [
-        {
-            "batch": list(r.batch),
-            "train_before": r.train_before,
-            "accepted": r.accepted,
-            "records": [rec.model_dump(mode="json") for rec in r.records],
-            "refused": r.refused,
-            "lessons": r.lessons,
-            "tutor_calls": r.tutor_calls,
-            "tutor_usd": r.tutor_usd,
-        }
-        for r in reports
-    ]
+    data = [round_data(r) for r in reports]
     _emit(ctx, data, f"{len(reports)} rounds; {sum(bool(r.accepted) for r in reports)} accepted")
 
 

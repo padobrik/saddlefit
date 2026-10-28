@@ -8,7 +8,7 @@ from tests.fixtures.toyrepo.build import build
 from typer.testing import CliRunner
 
 from saddlefit import cli
-from saddlefit.cli import app, round_line
+from saddlefit.cli import app, round_data, round_line
 from saddlefit.loops.middle import RoundReport
 from saddlefit.project import Project
 from saddlefit.providers.base import ModelInfo
@@ -75,6 +75,13 @@ def test_round_line() -> None:
         "round 2: batch solved 1/3; 0 candidates tried, 1 refused; nothing accepted; "
         "1 lessons; tutor 4 calls, $0.12"
     )
+
+
+def test_round_data_keeps_the_refusal_reasons() -> None:
+    report = RoundReport(batch=("a",), train_before=0, refused=2)
+    report.refusals = ["tutor: the call failed", "proposal: a disallowed file"]
+    data = round_data(report)
+    assert (data["refused"], data["refusals"]) == (2, report.refusals)
 
 
 def test_fit_needs_held_out_tasks(project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
