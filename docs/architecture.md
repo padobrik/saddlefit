@@ -67,3 +67,7 @@ flowchart LR
 | `playbook` | the starter playbook: mechanics as `loop.yaml` values, turned into proposals |
 | `storage` | JSONL runs, library, journal, progress; schema migrations |
 | `config`, `cli` | configuration and commands |
+
+The spec's table puts the playbook under `storage`. In the code, the starter playbook is
+read-only package data (`playbook`); `storage` will hold the playbook statistics that the
+slow loop records.
