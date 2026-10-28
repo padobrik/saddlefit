@@ -38,8 +38,8 @@ flowchart LR
 - Every prompt to any model passes through the leak guard, which aborts on any known canary.
 - Only `saddlefit.eval` reads the sealed store, and it is never mounted into the student
   sandbox. A test enforces the import boundary.
-- Budgets and evaluation settings live in `saddlefit.yaml`, which no model can edit; values in
-  the harness's `loop.yaml` are clamped to them.
+- Budgets and evaluation settings live in `.saddlefit/saddlefit.yaml`, which no model can
+  edit; values in the harness's `loop.yaml` are clamped to them.
 - Control tasks are evaluated only by `saddlefit report --final`.
 - Generated and mutated tasks enter the training and held-out splits only, and only after
   the fail-without, pass-with check and calibration on the current student.

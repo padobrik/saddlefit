@@ -107,8 +107,8 @@ Every command also accepts `--json`.
 ### More tasks than your history holds
 
 A fit needs tasks the student solves sometimes. Two commands add them, both through the
-generator model in `saddlefit.yaml`, within its `max_calls` and `max_usd` (fill in its prices
-first):
+generator model in `.saddlefit/saddlefit.yaml`, within its `max_calls` and `max_usd` (fill in
+its prices first):
 
 ```bash
 saddlefit tasks generate --type feature --count 5   # or --type bugfix
