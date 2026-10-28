@@ -119,10 +119,11 @@ def test_a_save_flushes_past_the_drive_cache_when_it_can(
 
 
 def test_a_failed_full_sync_fails_the_save(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    save_fit_state(tmp_path, FitState(schema_version=2, rounds_done=3))
     monkeypatch.setattr(fit_state_module, "fcntl", _FakeFcntl(True, errno.EIO))
     monkeypatch.setattr(fit_state_module.os, "fsync", lambda fd: None)  # would succeed
     with pytest.raises(OSError, match=re.escape(os.strerror(errno.EIO))) as raised:
-        save_fit_state(tmp_path, FitState(schema_version=2, rounds_done=1))
+        save_fit_state(tmp_path, FitState(schema_version=2, rounds_done=4))
     assert raised.value.errno == errno.EIO
-    assert load_fit_state(tmp_path).rounds_done == 0  # the old state stays
+    assert load_fit_state(tmp_path).rounds_done == 3  # the old state stays
     assert list(tmp_path.glob(".tmp-*")) == []
