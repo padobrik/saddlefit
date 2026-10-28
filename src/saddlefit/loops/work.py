@@ -145,6 +145,10 @@ class WorkRunner:
                     labels={"saddlefit.role": "work", "saddlefit.run": run_id},
                     harness_tools=tools_dir if scripts else None,
                 ) as box:
+                    if deadline is not None:  # container start-up counts against the budget
+                        box.limit_to(deadline)
+                    if box.remaining_s <= 0:
+                        return Probe(run_id, False, ("timeout",), "")
                     student = StudentLoop(
                         client=self.client_factory(),
                         tools=Toolbox(
@@ -165,12 +169,12 @@ class WorkRunner:
                         ),
                         recorder=_Recorder(writer),
                         visible_check=self.check,
-                        time_limit_s=run_s * STUDENT_SHARE,
+                        time_limit_s=box.remaining_s * STUDENT_SHARE,
                         workspace_digest=tracker.digest,
                     )
                     result = student.run(context)
                     # the check runs in what the student's share left of the same deadline
-                    verdict_run = box.exec(self.check, run_s)
+                    verdict_run = box.exec(self.check, run_s)  # bounded by the deadline too
                     exit_code = verdict_run.exit_code
                     # a check that ran out of time did not pass, whatever it exited with
                     passed = verdict_run.exit_code == 0 and not verdict_run.timed_out
@@ -180,6 +184,9 @@ class WorkRunner:
                 writer.event("error", {"kind": "sandbox", "message": str(exc)[:2000]})
                 # the check never ran: an environment failure (exit 3), not a failed task
                 raise EnvironmentFailure(f"the sandbox failed: {exc}") from exc
+        if result is not None and result.stop_reason == "provider_error":
+            # the model runner failed: whatever the check says, the student did not work
+            raise EnvironmentFailure("the student's model runner failed during the attempt")
         verdict = Verdict(passed=passed, exit_code=exit_code, duration_s=0.0)
         tags = classify(run_signals(result, verdict, stats, self.config)).tags
         return Probe(run_id, passed, tuple(tags), diff)

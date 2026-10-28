@@ -13,7 +13,7 @@ from saddlefit.harness.loop_config import default_loop_config
 from saddlefit.harness.store import HarnessStore
 from saddlefit.loops import work as work_module
 from saddlefit.loops.work import STUDENT_SHARE, WorkRunner
-from saddlefit.providers.base import ModelReply, ToolCall
+from saddlefit.providers.base import ModelReply, ProviderError, ToolCall
 from saddlefit.providers.fake import FakeClient
 from saddlefit.sandbox.container import ExecResult, SandboxError
 from saddlefit.tasks.mining import _git_env
@@ -39,6 +39,13 @@ class FakeBox:
 
     def __exit__(self, *exc: object) -> None:
         return None
+
+    @property
+    def remaining_s(self) -> float:
+        return max(0.0, self.deadline - self.clock.now)
+
+    def limit_to(self, deadline: float) -> None:
+        self.deadline = min(self.deadline, deadline)
 
     def exec(self, command: str, timeout_s: float) -> ExecResult:
         left = max(0.0, self.deadline - self.clock.now)
@@ -209,9 +216,42 @@ def test_a_check_that_timed_out_did_not_pass(
         harness_dir=store.path,
         state=tmp_path / "state",
         client_factory=lambda: FakeClient(
-            [ModelReply(tool_calls=(ToolCall(id="f", name="finish", arguments={"summary": "x"}),))]
+            lambda m, t, p: ModelReply(
+                tool_calls=(ToolCall(id="f", name="finish", arguments={"summary": "x"}),)
+            )
         ),
         docker_client=object(),
         image="img",
     )
     assert not runner.attempt(loop, seed=7).passed
+
+
+def test_a_failing_model_runner_is_an_environment_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clock = Clock()
+    monkeypatch.setattr(
+        work_module, "Sandbox", lambda *a, run_timeout_s, **k: FakeBox(clock, run_timeout_s)
+    )
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True, env=_git_env())
+    store = HarnessStore(tmp_path / "harness")
+    store.init()
+
+    def down(messages: Any, tools: Any, params: Any) -> ModelReply:
+        raise ProviderError("connection refused")
+
+    runner = WorkRunner(
+        repo=repo,
+        config=Config(schema_version=3, project="p"),
+        task_text="t",
+        check="true",  # would pass: the workspace satisfies it
+        harness_dir=store.path,
+        state=tmp_path / "state",
+        client_factory=lambda: FakeClient(down),
+        docker_client=object(),
+        image="img",
+    )
+    with pytest.raises(EnvironmentFailure, match="model runner failed"):
+        runner.attempt(default_loop_config(), seed=7)

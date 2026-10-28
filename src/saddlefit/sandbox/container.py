@@ -254,6 +254,10 @@ class Sandbox:
     def remaining_s(self) -> float:
         return max(0.0, self._deadline - self._clock())
 
+    def limit_to(self, deadline: float) -> None:
+        """End the run by ``deadline`` (on this sandbox's clock) if that comes first."""
+        self._deadline = min(self._deadline, deadline)
+
     def exec(self, command: str, timeout_s: float) -> ExecResult:
         """Run a shell command in ``/work``, bounded by its own and the run's time limit.
 
