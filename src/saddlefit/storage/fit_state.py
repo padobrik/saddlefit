@@ -7,6 +7,7 @@ start again at the first batch.
 from __future__ import annotations
 
 import contextlib
+import errno
 import json
 import os
 import tempfile
@@ -55,6 +56,10 @@ def load_fit_state(root: Path) -> FitState:
     return FitState.model_validate(upgrade(FIT_STATE_KIND, raw, FIT_STATE_SCHEMA_VERSION))
 
 
+# what a file system without F_FULLFSYNC answers
+_UNSUPPORTED: Final = frozenset({errno.EINVAL, errno.ENOTSUP, errno.ENOTTY})
+
+
 def _flush(fd: int) -> None:
     """Flush to the disk itself: on macOS ``fsync`` stops at the drive's cache."""
     full = getattr(fcntl, "F_FULLFSYNC", None) if fcntl is not None else None
@@ -62,8 +67,10 @@ def _flush(fd: int) -> None:
         try:
             fcntl.fcntl(fd, full)
             return
-        except OSError:
-            pass  # a file system without full sync: fsync is the best there is
+        except OSError as exc:
+            if exc.errno not in _UNSUPPORTED:
+                raise  # a real I/O error: the save did not reach the disk
+            # a file system without full sync: fsync is the best there is
     os.fsync(fd)
 
 

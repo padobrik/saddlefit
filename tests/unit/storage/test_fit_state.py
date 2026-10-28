@@ -1,4 +1,7 @@
+import errno
 import json
+import os
+import re
 from pathlib import Path
 
 import pytest
@@ -87,14 +90,15 @@ def test_a_v1_report_upgrades_with_no_refusals(kind: str) -> None:
 class _FakeFcntl:
     F_FULLFSYNC = 51
 
-    def __init__(self, fails: bool) -> None:
+    def __init__(self, fails: bool, error: int = errno.ENOTSUP) -> None:
         self.fails = fails
+        self.error = error
         self.calls: list[tuple[int, int]] = []
 
     def fcntl(self, fd: int, cmd: int) -> int:
         self.calls.append((fd, cmd))
         if self.fails:
-            raise OSError("not supported")
+            raise OSError(self.error, os.strerror(self.error))
         return 0
 
 
@@ -112,3 +116,13 @@ def test_a_save_flushes_past_the_drive_cache_when_it_can(
     # fsync only where full sync is not supported
     assert len(synced) == (len(fake.calls) if fails else 0)
     assert load_fit_state(tmp_path).rounds_done == 1
+
+
+def test_a_failed_full_sync_fails_the_save(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(fit_state_module, "fcntl", _FakeFcntl(True, errno.EIO))
+    monkeypatch.setattr(fit_state_module.os, "fsync", lambda fd: None)  # would succeed
+    with pytest.raises(OSError, match=re.escape(os.strerror(errno.EIO))) as raised:
+        save_fit_state(tmp_path, FitState(schema_version=2, rounds_done=1))
+    assert raised.value.errno == errno.EIO
+    assert load_fit_state(tmp_path).rounds_done == 0  # the old state stays
+    assert list(tmp_path.glob(".tmp-*")) == []
