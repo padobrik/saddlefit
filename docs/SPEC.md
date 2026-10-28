@@ -816,7 +816,7 @@ saddlefit replay RUN_ID
 saddlefit --version
 ```
 
-Exit codes: 0 success, 1 user error, 2 integrity violation (leak, tamper, sealed access), 3 environment error. Every command supports `--json`.
+Exit codes: 0 success, 1 user error, 2 integrity violation (leak, tamper, sealed access), 3 environment error, 4 task not solved (`run`: the command worked but the check still fails; the answer is the best attempt). Every command supports `--json`.
 
 ### B15. Reports and observability
 
