@@ -195,7 +195,7 @@ def test_the_final_report_reads_the_fit_state_under_the_lock(
 
 def test_zero_context_efficiency_is_shown_as_zero() -> None:
     report: dict[str, Any] = {
-        "schema_version": 1,
+        "schema_version": 2,
         "kind": "final",
         "model": {"id": "m", "digest": None},
         "baseline_harness_commit": "a" * 12,

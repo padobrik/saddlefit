@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -11,6 +12,8 @@ from saddlefit.storage.fit_state import (
     load_fit_state,
     save_fit_state,
 )
+from saddlefit.storage.migrations import upgrade
+from saddlefit.storage.migrations.reports import PROGRESS_KIND
 
 
 def test_no_state_means_no_rounds(tmp_path: Path) -> None:
@@ -52,3 +55,27 @@ def test_the_lock_is_released_when_fit_fails(tmp_path: Path) -> None:
     with pytest.raises(RuntimeError), fit_lock(tmp_path):
         raise RuntimeError("round failed")
     assert not (tmp_path / "fit.lock").exists()
+
+
+def test_a_v1_fit_json_reads_as_v2_with_no_refusals(tmp_path: Path) -> None:
+    v1 = {
+        "schema_version": 1,
+        "rounds_done": 3,
+        "accepted_since_ablation": 1,
+        "student_model": "gemma4:e4b",
+        "student_digest": "sha256:abc",
+        "tutor_calls": 9,
+        "tutor_usd": 1.25,
+    }
+    (tmp_path / "fit.json").write_text(json.dumps(v1), encoding="utf-8")
+    state = load_fit_state(tmp_path)
+    assert state.schema_version == 2
+    assert (state.rounds_done, state.tutor_calls, state.tutor_usd) == (3, 9, 1.25)
+    assert state.student_digest == "sha256:abc"
+    assert state.refusals == {}
+
+
+def test_a_v1_progress_report_upgrades_with_no_refusals() -> None:
+    v1 = {"schema_version": 1, "kind": "progress", "tutor": {"calls": 2, "usd": 0.3}}
+    v2 = upgrade(PROGRESS_KIND, v1, 2)
+    assert v2["tutor"] == {"calls": 2, "usd": 0.3, "refused": {}}

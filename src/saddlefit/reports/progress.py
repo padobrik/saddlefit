@@ -14,7 +14,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Final
 
-PROGRESS_SCHEMA_VERSION: Final = 1
+from saddlefit.storage.migrations import reports as _report_migrations  # noqa: F401 - registers
+
+PROGRESS_SCHEMA_VERSION: Final = 2  # v2: tutor.refused
 
 
 @dataclass(frozen=True)
