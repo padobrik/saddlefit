@@ -58,7 +58,7 @@ Open a pinned issue titled "Owner actions" with these checkboxes, and wait where
 - [ ] Authenticate the GitHub CLI with an account that can create and administer a public repository (`gh auth login`, scopes `repo` and `workflow`).
 - [ ] Install the CodeRabbit GitHub App for this repository only: sign in at app.coderabbit.ai with GitHub and select the repository. CodeRabbit is free for public repositories.
 - [ ] Provide a machine with Docker and a local model runner (Ollama recommended) for live tests and real fitting runs.
-- [ ] Provide `ANTHROPIC_API_KEY` locally for tutor and generator calls. For stage 8, add it as a repository secret used only by scheduled workflows.
+- [ ] Provide `ANTHROPIC_API_KEY` locally for tutor and generator calls. For stage 9, add it as a repository secret used only by scheduled workflows.
 - [ ] Optional, before the first PyPI release: register a PyPI trusted publisher for `.github/workflows/publish.yml`.
 
 Until CodeRabbit is installed, keep opening pull requests but do not merge them.
@@ -66,7 +66,7 @@ Until CodeRabbit is installed, keep opening pull requests but do not merge them.
 ### 0.4 Order of work
 
 1. Bootstrap and protect the repository (C1–C6).
-2. Create GitHub milestones v0.1.0 to v0.6.0 and one issue per work item from C9.
+2. Create GitHub milestones v0.1.0 to v0.7.0 and one issue per work item from C9.
 3. Implement milestone by milestone through small pull requests (C8). Release at the end of each milestone (C7).
 4. After each release, post a summary in the milestone's tracking issue: what shipped, test and coverage numbers, known gaps.
 
@@ -954,7 +954,7 @@ The PyPI distribution is `saddlefit`; if that name is taken, use `saddlefit-harn
 | `release-please.yml` | push to `main` | release PR, tag and GitHub Release |
 | `publish.yml` | release published | build and publish to PyPI with trusted publishing; build and push the sandbox image to GHCR |
 | `scorecard.yml` | weekly | OpenSSF Scorecard |
-| `nightly.yml` | schedule | live smoke tests with a tiny model, non-blocking; from stage 8, nightly fitting on the public suite |
+| `nightly.yml` | schedule | live smoke tests with a tiny model, non-blocking; from stage 9, nightly fitting on the public suite |
 
 Rules for every workflow: least-privilege `permissions`; actions pinned to commit SHAs; `concurrency` cancels superseded runs; no secrets in workflows triggered by `pull_request`; uv caching through `astral-sh/setup-uv`.
 
@@ -1166,7 +1166,7 @@ knowledge_base:
 - **Version source:** `pyproject.toml`; at runtime, `importlib.metadata.version("saddlefit")`.
 - **Persisted formats:** integer `schema_version`; readers accept the current and the previous version; migrations live in `src/saddlefit/storage/migrations/` with tests.
 - **Harness store:** every accepted change is a commit; `report --final` tags the frozen harness `fit-<yyyy-mm-dd>-<n>`.
-- **Harness packs (stage 8):** `harness-packs/<model-id>/<pack-version>/pack.yaml` with schema version, Saddlefit version, model digest, task-suite hash and metrics.
+- **Harness packs (stage 9):** `harness-packs/<model-id>/<pack-version>/pack.yaml` with schema version, Saddlefit version, model digest, task-suite hash and metrics.
 - **Sandbox image:** versioned with the package and referenced by digest.
 
 ### C8. Pull-request workflow
@@ -1195,8 +1195,9 @@ knowledge_base:
 | v0.2.0 | 3–4 | Anthropic provider; tutor; proposals and validation; batch and held-out gates; ablation; EXPERIENCE.md; `fit`, `prune`, `report --final`, `export --format skill`; reports with statistics, delegation map and failure profile | Required tests 1–6 and 8–13 pass; the fake end-to-end fit accepts the right change and prunes the useless one; a real-model fit report, when available |
 | v0.3.0 | 5 | Fast loop, journal and probation; starter playbook; `run`; `tasks mutate` and `tasks generate` | Required test 7 passes; generated tasks pass the fail-without, pass-with check and calibration |
 | v0.4.0 | 6 | Slow loop: statistics, playbook versions, A/B gate, shadow tutor; `playbook update` | A/B and switch rules are covered by table-driven tests; a shadow-tutor comparison report |
-| v0.5.0 | 7 | Reasoning mode; looped-model provider as an optional extra | Reasoning settings are tuned by the middle loop in an integration test; Ouro runs through the looped provider |
-| v0.6.0 | 8 | Nightly CI fitting on a public suite; pull requests with numbers; harness packs | A nightly run opens a pull request with before-and-after numbers that passes every gate |
+| v0.5.0 | 7 | Reasoning mode; looped-model provider as an optional extra; runners on a par with Ollama: llama.cpp, vLLM, LM Studio and MLX (model digest, served context window, tool-call check) | Reasoning settings are tuned by the middle loop in an integration test; Ouro runs through the looped provider; `doctor`, `baseline` and `run` work against each runner in a recorded smoke run |
+| v0.6.0 | 8 | Memory and long context: compaction that drops tool outputs without rewriting them and leaves markers to fetch them again; a task state pinned from facts, not from the model's summary; notes kept with the existing file tools; search over the run's own history; long-context generated tasks | Each mechanism is a `loop.yaml` setting the middle loop can accept or reject; a fit report on long-context tasks with a compact model |
+| v0.7.0 | 9 | Nightly CI fitting on a public suite; pull requests with numbers; harness packs | A nightly run opens a pull request with before-and-after numbers that passes every gate |
 | v1.0.0 | — | Formats stable after real-world use | No breaking format change for one minor release; migration guide published |
 
 ### C10. How much code

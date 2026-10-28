@@ -316,3 +316,4 @@ Assumptions taken where the spec leaves a detail open. Deviations from the spec 
   stops with exit 3 and the round in flight does not count; one at reflection comes after
   the decision is recorded, so the round is saved, counted and shown before `fit` stops.
   Paid calls are saved either way, so a fit without credit never goes on running the student.
+- **Roadmap (2026-10-28).** The owner chose: runners on a par with Ollama (llama.cpp, vLLM, LM Studio, MLX) join v0.5.0; memory and long context become a new v0.6.0 (stage 8); nightly CI, pull requests with numbers and harness packs move to v0.7.0 (stage 9).
