@@ -317,3 +317,15 @@ Assumptions taken where the spec leaves a detail open. Deviations from the spec 
   the decision is recorded, so the round is saved, counted and shown before `fit` stops.
   Paid calls are saved either way, so a fit without credit never goes on running the student.
 - **Roadmap (2026-10-28).** The owner chose: runners on a par with Ollama (llama.cpp, vLLM, LM Studio, MLX) join v0.5.0; memory and long context become a new v0.6.0 (stage 8); nightly CI, pull requests with numbers and harness packs move to v0.7.0 (stage 9).
+- **Repeated tasks (found in the v0.3.0 proof run).** The generator saw three train tasks as
+  examples and nothing else, so it kept finding the same obvious bugs. Of six held-out tasks,
+  four repeated a train task or each other (same function, other wording). That breaks the
+  held-out gate: a change learned on a train task passes its copy. Now the generator is shown
+  the title of every task in the suite, and of every candidate the command already tried,
+  and told not to repeat them. The mechanical check is `tasks.overlap`: it applies the
+  reference patch to the files at the task's base commit and names each function or class
+  whose own code changed (blank and comment lines, and imports, do not count). A candidate
+  that changes a function any task in the suite changes, or one kept earlier in the same
+  command, is dropped before sealing and judging, as `repeats <task id>: both change <name>`.
+  The existing tasks' symbols come from `Evaluator.reference_symbols`, so the patches never
+  leave `saddlefit.eval` (test 11). Mined tasks are not compared: they have no reference patch.

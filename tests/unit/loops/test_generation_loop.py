@@ -61,6 +61,7 @@ class World:
             "accept": self.accept,
             "calibrate": lambda task_id, task: self.passes.pop(0),
             "exists": lambda task_id: task_id in self.existing,
+            "duplicate_of": lambda task_id, task: None,
             "keep": lambda task_id, task: self.kept.append(task_id),
             "discard": self.discarded.append,
             "prompt_chars": lambda request: 4_000,
@@ -209,3 +210,19 @@ def test_a_refused_account_still_counts_what_was_billed() -> None:
     report = world.generation(call=call).run(count=1)
     assert report.account_refused
     assert report.usd == pytest.approx(0.10)
+
+
+def test_a_repeat_is_dropped_before_sealing_and_judging() -> None:
+    world = World(passes=[3])
+    accepted: list[str] = []
+    report = world.generation(
+        duplicate_of=lambda task_id, task: (
+            "repeats gen-feature-old: both change x.py::f" if "number 1" in task.task_md else None
+        ),
+        accept=lambda task_id, task: accepted.append(task_id) or Acceptance(True, "fine"),
+    ).run(count=1)
+    first, second = report.attempts
+    assert (first.kept, first.reason) == (False, "repeats gen-feature-old: both change x.py::f")
+    assert world.sealed == [second.task_id]  # the repeat was never sealed
+    assert accepted == [second.task_id]  # nor judged
+    assert report.kept == [second.task_id]

@@ -15,6 +15,7 @@ import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
+from functools import partial
 from pathlib import Path
 from typing import Any, Literal
 
@@ -94,6 +95,7 @@ from saddlefit.tasks.generator import (
     render_system,
     render_user,
     select_files,
+    task_title,
 )
 from saddlefit.tasks.mining import STATE_DIR, MiningReport, Runner, _export, _git_bytes, mine
 from saddlefit.tasks.models import TASK_SCHEMA_VERSION, RepoRef, TaskMeta
@@ -107,6 +109,7 @@ from saddlefit.tasks.mutation import (
     related_tests,
     write_issue,
 )
+from saddlefit.tasks.overlap import changed_symbols
 from saddlefit.tasks.splits import add_task, new_lock
 from saddlefit.tasks.suite import SuitePaths, load_lock, load_meta, materialize, save_lock
 
@@ -150,6 +153,18 @@ class ReportBasis:
     before_tree: str
     state: FitState
     suite_hash: str
+
+
+def _mutated_reader(root: Path, head: str, pending: dict[str, Any]) -> Callable[[str], str | None]:
+    """Old files for a mutation task's reference patch, which undoes the pending mutation."""
+
+    def read(path: str) -> str | None:
+        mutation = pending["mutation"]
+        if path == mutation.path:
+            return str(mutation.mutated)
+        return generated_files.read_text(root, head, path)
+
+    return read
 
 
 @dataclass(frozen=True)
@@ -293,6 +308,11 @@ class Project:
         train = [m for m in self.tasks() if m.split == "train"][:MAX_EXAMPLES]
         examples = [self.task_text(m.id) for m in train]
         kit = self._task_kit(docker_client, model_client, model_info, "generated", kind)
+        # every title in the suite, then each candidate's as it is tried: none is to be repeated
+        covered = [task_title(self.task_text(m.id)) for m in self.tasks()]
+        duplicate_of, keep = self._repeat_guard(
+            kit, lambda path: generated_files.read_text(self.root, head, path)
+        )
 
         def request(rng: Any) -> GeneratorRequest:
             return GeneratorRequest(
@@ -302,7 +322,15 @@ class Project:
                 examples=examples,
                 protected=protected,
                 existing_paths=frozenset(paths),
+                covered=tuple(covered),
             )
+
+        def call(req: GeneratorRequest) -> GeneratorResult:
+            result = generate(
+                GuardedClient(generator_client, kit.guard), req, GENERATOR_REPLY_TOKENS
+            )
+            covered.append(task_title(result.task.task_md))
+            return result
 
         with tempfile.TemporaryDirectory(prefix="saddlefit-base-") as tmp:
             base = Path(tmp) / "base"
@@ -311,14 +339,13 @@ class Project:
                 kind=kind,
                 budget=config.generator,
                 request=request,
-                call=lambda req: generate(
-                    GuardedClient(generator_client, kit.guard), req, GENERATOR_REPLY_TOKENS
-                ),
+                call=call,
                 seal=lambda task_id, task: seal_generated(kit.sealed_root, task_id, task),
                 accept=lambda task_id, task: accept(kit.evaluator, task_id, base, task),
                 calibrate=lambda task_id, task: kit.calibrate(task_id, task, head),
                 exists=kit.exists,
-                keep=kit.keep,
+                duplicate_of=duplicate_of,
+                keep=keep,
                 discard=lambda task_id: generated_files.discard(self.suite, task_id),
                 prompt_chars=lambda req: len(render_system(req)) + len(render_user(req)),
             )
@@ -413,7 +440,9 @@ class Project:
                 if task_id in pending:
                     drop_mutation(self.root, task_id)
 
-            generation = Generation(
+            duplicate_of, keep = self._repeat_guard(kit, _mutated_reader(self.root, head, pending))
+
+            return Generation(
                 kind="bugfix",
                 id_prefix="mut",
                 budget=config.generator,
@@ -423,14 +452,45 @@ class Project:
                 accept=judge,
                 calibrate=lambda task_id, task: kit.calibrate(task_id, task, pending[task_id]),
                 exists=kit.exists,
-                keep=kit.keep,
+                duplicate_of=duplicate_of,
+                keep=keep,
                 discard=discard,
                 prompt_chars=lambda req: sum(
                     len(m.content) for m in issue_messages(req[0], req[1])
                 ),
                 max_attempts=config.generator.max_calls * MUTATION_TRIES_PER_CALL,
-            )
-            return generation.run(count)
+            ).run(count)
+
+    def _repeat_guard(
+        self, kit: TaskKit, read_old: Callable[[str], str | None]
+    ) -> tuple[Callable[[str, GeneratedTask], str | None], Callable[[str, GeneratedTask], None]]:
+        """Spot a new task that changes a function a task in the suite, or one kept now, does.
+
+        Two tasks on the same function let a change learned on one pass the other's check, so
+        a repeat that lands in another split makes the held-out gate measure nothing.
+        """
+        known: dict[str, frozenset[str]] = {}
+        for meta in self.tasks():
+            base = meta.repo.base_commit
+            if meta.source in {"generated", "mutation"} and base:
+                known[meta.id] = kit.evaluator.reference_symbols(
+                    meta.id, partial(generated_files.read_text, self.root, base)
+                )
+        pending: dict[str, frozenset[str]] = {}
+
+        def duplicate_of(task_id: str, task: GeneratedTask) -> str | None:
+            mine = changed_symbols(task.reference_patch, read_old)
+            pending[task_id] = mine
+            for other, theirs in known.items():
+                if common := mine & theirs:
+                    return f"repeats {other}: both change {min(common)}"
+            return None
+
+        def keep(task_id: str, task: GeneratedTask) -> None:
+            kit.keep(task_id, task)
+            known[task_id] = pending.pop(task_id, frozenset())
+
+        return duplicate_of, keep
 
     def _task_kit(
         self,

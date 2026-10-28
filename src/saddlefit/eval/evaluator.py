@@ -14,6 +14,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -22,6 +23,7 @@ from saddlefit.config import EvaluationConfig, SandboxConfig
 from saddlefit.eval.sealed import SealedStore
 from saddlefit.eval.tamper import diff_paths, tampered_paths
 from saddlefit.sandbox.container import Sandbox, SandboxError
+from saddlefit.tasks.overlap import changed_symbols
 
 log = logging.getLogger(__name__)
 
@@ -104,6 +106,13 @@ class Evaluator:
     ) -> Evaluator:
         """An evaluator over ``tasks/sealed``; callers outside eval never touch the store."""
         return cls(SealedStore(sealed_root), docker_client, image, limits, evaluation)
+
+    def reference_symbols(
+        self, task_id: str, read_old: Callable[[str], str | None]
+    ) -> frozenset[str]:
+        """The functions the task's reference solution changes; the patch itself stays here."""
+        patch = self._store.reference_patch(task_id)
+        return changed_symbols(patch, read_old) if patch else frozenset()
 
     def evaluate(self, task_id: str, base_snapshot: Path, diff: str, run_id: str) -> Verdict:
         """Judge ``diff`` against task ``task_id`` starting from ``base_snapshot``."""

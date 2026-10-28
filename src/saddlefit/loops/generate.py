@@ -84,6 +84,8 @@ class Generation:
     accept: Callable[[str, GeneratedTask], Acceptance]
     calibrate: Callable[[str, GeneratedTask], int]
     exists: Callable[[str], bool]
+    # the task already in the suite this one repeats, with what both change; None if none
+    duplicate_of: Callable[[str, GeneratedTask], str | None]
     keep: Callable[[str, GeneratedTask], None]
     discard: Callable[[str], None]
     prompt_chars: Callable[[Any], int]
@@ -136,9 +138,15 @@ class Generation:
             return Attempt(None, False, f"generator: {exc}")
         report.usd += cost_usd(result.usage, self.budget.prices_usd_per_mtok)
         task_id = task_id_for(self.kind, result.task, self.id_prefix)
-        if self.exists(task_id):
-            # sealing would overwrite the existing task, and discarding would delete it
-            return Attempt(task_id, False, "the same task is already in the suite")
+        # sealing would overwrite an existing task, and discarding would delete it; a repeat
+        # is caught before sealing and judging, so it costs only its generator call
+        repeated = (
+            "the same task is already in the suite"
+            if self.exists(task_id)
+            else self.duplicate_of(task_id, result.task)
+        )
+        if repeated is not None:
+            return Attempt(task_id, False, repeated)
         try:
             self.seal(task_id, result.task)
             acceptance = self.accept(task_id, result.task)
