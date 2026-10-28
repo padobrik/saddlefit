@@ -154,3 +154,48 @@ def test_a_task_that_repeats_one_in_the_suite_is_dropped_before_calibration(
     assert any("# Already covered" in p and "Add shout" in p for p in prompts)
     assert len(find_runs(project.state / "calibration")) == CALIBRATION_RUNS  # none for it
     assert [m.id for m in project.tasks()] == first.kept
+
+
+def test_a_failed_repeat_index_write_leaves_the_suite_consistent(
+    tmp_path: Path, docker_client, sandbox_image: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = build(tmp_path / "repo")
+    project = Project(repo)
+    project.init(model="fake-student")
+    config = project.config()
+    project.config_path.write_text(
+        dump_config(
+            config.model_copy(
+                update={
+                    "sandbox": config.sandbox.model_copy(
+                        update={"image": sandbox_image, "memory": "512m"}
+                    ),
+                    "evaluation": config.evaluation.model_copy(update={"timeout_seconds": 120}),
+                }
+            )
+        ),
+        encoding="utf-8",
+    )
+    runs = {"n": 0}
+
+    def student(messages: Any, tools: Any, params: Any) -> ModelReply:
+        if any(m.role == "tool" for m in messages):
+            return ModelReply(tool_calls=(FINISH,))
+        runs["n"] += 1
+        return ModelReply(tool_calls=(WRITE if runs["n"] in (2, 4) else FINISH,))
+
+    def disk_full(path: Path, index: Any) -> None:
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr("saddlefit.project.save_repeat_index", disk_full)
+    with pytest.raises(OSError, match="No space left"):
+        project.generate_tasks(
+            kind="feature",
+            count=1,
+            docker_client=docker_client,
+            generator_client=FakeClient([ANSWER]),
+            model_client=lambda: FakeClient(student),
+            model_info=FakeClient(student).info(),
+        )
+    assert project.tasks() == []  # the lock never named the task, and its files are gone
+    assert list(project.suite.public_dir.iterdir()) == []

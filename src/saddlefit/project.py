@@ -553,12 +553,15 @@ class Project:
         )
 
         def keep(task_id: str, task: GeneratedTask) -> None:
+            # the index first: if it cannot be written, the lock never names the task, so the
+            # discard that follows leaves a consistent suite; an entry for a task the lock
+            # does not name is ignored when the guard is built
+            save_repeat_index(self.suite.repeats, repeats.index(adding=task_id))
             lock = load_lock(self.suite, config.splits)
             save_lock(
                 self.suite, add_task(lock, task_id, source, generated_files.content_hash(task))
             )
             repeats.kept(task_id)  # later candidates of this command must not repeat it
-            save_repeat_index(self.suite.repeats, repeats.index())
 
         return TaskKit(
             sealed_root=sealed,

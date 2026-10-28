@@ -93,10 +93,14 @@ class RepeatGuard:
         """Record a kept task's symbols, so later candidates must not repeat it either."""
         self.known[task_id] = self.pending.pop(task_id, frozenset())
 
-    def index(self) -> RepeatIndex:
+    def index(self, adding: str | None = None) -> RepeatIndex:
+        """The known tasks, plus ``adding`` from pending, without recording it yet."""
+        known = dict(self.known)
+        if adding is not None:
+            known[adding] = self.pending.get(adding, frozenset())
         return RepeatIndex(
             schema_version=REPEAT_INDEX_SCHEMA_VERSION,
-            tasks={task_id: sorted(symbols) for task_id, symbols in sorted(self.known.items())},
+            tasks={task_id: sorted(symbols) for task_id, symbols in sorted(known.items())},
         )
 
 
