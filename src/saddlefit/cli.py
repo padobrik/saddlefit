@@ -3,25 +3,31 @@
 from __future__ import annotations
 
 import json
+import shlex
+import sys
 from collections.abc import Callable
-from datetime import date
+from datetime import UTC, date, datetime
 from enum import IntEnum
 from pathlib import Path
 from typing import Annotated, Any
 
 import typer
+from rich.live import Live
 
 from saddlefit import __version__
-from saddlefit.config import ConfigError, SandboxConfig, StudentConfig, load_config
+from saddlefit.config import Config, ConfigError, SandboxConfig, StudentConfig, load_config
 from saddlefit.doctor import doctor_for, render
 from saddlefit.errors import EnvironmentFailure, SaddlefitError, UserError
 from saddlefit.loops.ablation import AblationResult
 from saddlefit.loops.baseline import RunOutcome
+from saddlefit.loops.generate import GenerationReport
 from saddlefit.loops.middle import RoundReport
+from saddlefit.orbit import OrbitStatus
 from saddlefit.project import Project
 from saddlefit.providers.anthropic import AnthropicClient
 from saddlefit.providers.base import ModelClient, ModelInfo, ProviderError
 from saddlefit.providers.openai_compat import OpenAICompatibleClient, context_window_problem
+from saddlefit.storage.progress import ProgressRecord
 from saddlefit.tasks.generator import TASK_KINDS
 from saddlefit.tasks.mining import Runner, SandboxRunner
 
@@ -33,6 +39,7 @@ class ExitCode(IntEnum):
     USER_ERROR = 1
     INTEGRITY_VIOLATION = 2
     ENVIRONMENT_ERROR = 3
+    NOT_SOLVED = 4  # run: the check still fails; the answer is the best attempt
 
 
 app = typer.Typer(
@@ -138,21 +145,11 @@ def tasks_mine(
     )
 
 
-@tasks_app.command("generate")
-def tasks_generate(
-    ctx: typer.Context,
-    type_: Annotated[str, typer.Option("--type", help="Task type: feature or bugfix.")],
-    count: Annotated[int, typer.Option(min=1, help="How many tasks to keep.")] = 1,
-) -> None:
-    """Write tasks with the generator; keep those the student solves in 20-80% of 5 runs."""
-    if type_ not in TASK_KINDS:
-        raise UserError(f"unknown task type {type_!r}; known: {', '.join(sorted(TASK_KINDS))}")
-    project = _project()
-    config = project.config()
+def _generator_ready(config: Config, command: str) -> None:
+    """Refuse before any spending: the generator must be real and priced."""
     if config.generator.provider != "anthropic":
         raise UserError(
-            f"tasks generate needs the anthropic generator provider, not "
-            f"{config.generator.provider!r}"
+            f"{command} needs the anthropic generator provider, not {config.generator.provider!r}"
         )
     prices = config.generator.prices_usd_per_mtok
     if not (prices.input and prices.output):
@@ -161,15 +158,9 @@ def tasks_generate(
             "generator prices are not set; fill in generator.prices_usd_per_mtok "
             "(input and output) from your price list"
         )
-    model_info, model_client = _student(project)
-    report = project.generate_tasks(
-        kind=type_,
-        count=count,
-        docker_client=_docker(),
-        generator_client=AnthropicClient(config.generator.model),
-        model_client=model_client,
-        model_info=model_info,
-    )
+
+
+def _generation_output(ctx: typer.Context, report: GenerationReport, count: int) -> None:
     data = {
         "kept": report.kept,
         "attempts": [vars(a) for a in report.attempts],
@@ -184,6 +175,51 @@ def tasks_generate(
     if report.stopped:
         lines.append(f"stopped: {report.stopped}")
     _emit(ctx, data, "\n".join(lines))
+
+
+@tasks_app.command("mutate")
+def tasks_mutate(
+    ctx: typer.Context,
+    count: Annotated[int, typer.Option(min=1, help="How many tasks to keep.")] = 1,
+) -> None:
+    """Inject bugs that break existing tests; keep those the student solves in 20-80% of 5 runs."""
+    project = _project()
+    config = project.config()
+    _generator_ready(config, "tasks mutate")
+    model_info, model_client = _student(project)
+    report = project.mutate_tasks(
+        count=count,
+        docker_client=_docker(),
+        generator_client=AnthropicClient(config.generator.model),
+        model_client=model_client,
+        model_info=model_info,
+        runner=mining_runner(project),
+    )
+    _generation_output(ctx, report, count)
+
+
+@tasks_app.command("generate")
+def tasks_generate(
+    ctx: typer.Context,
+    type_: Annotated[str, typer.Option("--type", help="Task type: feature or bugfix.")],
+    count: Annotated[int, typer.Option(min=1, help="How many tasks to keep.")] = 1,
+) -> None:
+    """Write tasks with the generator; keep those the student solves in 20-80% of 5 runs."""
+    if type_ not in TASK_KINDS:
+        raise UserError(f"unknown task type {type_!r}; known: {', '.join(sorted(TASK_KINDS))}")
+    project = _project()
+    config = project.config()
+    _generator_ready(config, "tasks generate")
+    model_info, model_client = _student(project)
+    report = project.generate_tasks(
+        kind=type_,
+        count=count,
+        docker_client=_docker(),
+        generator_client=AnthropicClient(config.generator.model),
+        model_client=model_client,
+        model_info=model_info,
+    )
+    _generation_output(ctx, report, count)
 
 
 @tasks_app.command("list")
@@ -306,6 +342,40 @@ def _student(project: Project) -> tuple[ModelInfo, Callable[[], ModelClient]]:
     return model_info, model_client
 
 
+def _framed(quiet: bool) -> bool:
+    """The animated frame only on a terminal, never with --json."""
+    return not quiet and sys.stdout.isatty()
+
+
+def _shown(record: ProgressRecord) -> tuple[object, ...]:
+    # what earns a plain line: a stage change or a finished run, not a batch's size alone
+    return (record.round, record.stage, record.candidate, record.done)
+
+
+def progress_change(previous: ProgressRecord | None, record: ProgressRecord) -> tuple[bool, bool]:
+    """(a run finished, something a plain line shows changed) from one update to the next."""
+    if previous is None:
+        return False, True
+    # only a finished run resets the stall timer; a stage change alone is no progress
+    return record.done > previous.done, _shown(previous) != _shown(record)
+
+
+def progress_status(record: ProgressRecord) -> str:
+    """``round 1/2 · candidate 1/3 · held-out 4/6 · $0.84``, the fit's place in one line."""
+    parts = [f"round {record.round}/{record.rounds}"]
+    if record.candidate is not None:
+        parts.append(f"candidate {record.candidate}/{record.candidates}")
+    counter = f" {record.done}/{record.total}" if record.total else ""
+    parts.append(f"{record.stage}{counter}")
+    parts.append(f"${record.tutor_usd:.2f}")
+    return " · ".join(parts)
+
+
+def fit_progress_line(record: ProgressRecord) -> str:
+    """The plain line written when output is not a terminal: a time, then the status."""
+    return f"{record.updated_at.astimezone().strftime('%H:%M:%S')} {progress_status(record)}"
+
+
 def round_line(number: int, report: RoundReport) -> str:
     """One round, as the console shows it."""
     solved = f"{report.train_before}/{len(report.batch)}"
@@ -314,7 +384,30 @@ def round_line(number: int, report: RoundReport) -> str:
         f"round {number}: batch solved {solved}; {len(report.records)} candidates tried, "
         f"{report.refused} refused; {outcome}; {report.lessons} lessons; "
         f"tutor {report.tutor_calls} calls, ${report.tutor_usd:.2f}"
+    ) + "".join(f"\n  refused {_printable(reason[:300])}" for reason in report.refusals)
+
+
+def _printable(text: str) -> str:
+    """Escape what a terminal would act on: a reason can quote the tutor or a linter."""
+    return "".join(
+        c if c.isprintable() else (f"\\x{ord(c):02x}" if ord(c) < 0x100 else f"\\u{ord(c):04x}")
+        for c in text
     )
+
+
+def round_data(report: RoundReport) -> dict[str, Any]:
+    """One round, as ``--json`` gives it."""
+    return {
+        "batch": list(report.batch),
+        "train_before": report.train_before,
+        "accepted": report.accepted,
+        "records": [rec.model_dump(mode="json") for rec in report.records],
+        "refused": report.refused,
+        "refusals": list(report.refusals),  # "<kind>: <reason>", one per refusal
+        "lessons": report.lessons,
+        "tutor_calls": report.tutor_calls,
+        "tutor_usd": report.tutor_usd,
+    }
 
 
 @app.command()
@@ -340,34 +433,140 @@ def fit(
     quiet = bool((ctx.find_root().obj or {}).get("json"))
     done = 0
 
-    def on_round(report: RoundReport) -> None:
-        nonlocal done
-        done += 1
-        if not quiet:
-            typer.echo(round_line(done, report))
+    last: list[ProgressRecord] = []
+    orbit = OrbitStatus(stall_after_s=config.evaluation.timeout_seconds)
+    live = Live(orbit, refresh_per_second=30, transient=True) if _framed(quiet) else None
 
-    reports = project.fit(
+    def on_progress(record: ProgressRecord) -> None:
+        progressed, changed = progress_change(last[-1] if last else None, record)
+        last[:] = [record]
+        if live is not None:
+            orbit.update(progress_status(record), progressed=progressed)
+        elif changed and not quiet:
+            # one line per stage change and finished run; spending alone changes nothing shown
+            typer.echo(fit_progress_line(record))
+
+    def fit_with(echo: Callable[[str], object]) -> list[RoundReport]:
+        def on_round(report: RoundReport) -> None:
+            nonlocal done
+            done += 1
+            if not quiet:
+                echo(round_line(done, report))
+
+        return project.fit(
+            docker_client=_docker(),
+            model_client=model_client,
+            tutor_client=AnthropicClient(config.tutor.model),
+            model_info=model_info,
+            rounds=rounds,
+            on_round=on_round,
+            on_progress=on_progress,
+        )
+
+    if live is None:
+        reports = fit_with(typer.echo)
+    else:
+        with live:  # round lines print above the frame
+            # plain text: a refusal reason must not be read as Rich markup
+            reports = fit_with(lambda s: live.console.print(s, markup=False, highlight=False))
+    data = [round_data(r) for r in reports]
+    _emit(ctx, data, f"{len(reports)} rounds; {sum(bool(r.accepted) for r in reports)} accepted")
+
+
+@app.command()
+def run(
+    ctx: typer.Context,
+    task: Annotated[str, typer.Argument(help="What the student should do.")],
+    check: Annotated[
+        str | None,
+        typer.Option(help="Command that passes when the task is done; loop.yaml's gate if unset."),
+    ] = None,
+) -> None:
+    """Work mode: the student does TASK in a copy of the working tree, with the fast loop."""
+    project = _project()
+    loop, _ = project.effective_loop()
+    command = check or loop.finish_gate.run
+    if not command:
+        raise UserError("run needs --check: loop.yaml has no finish_gate.run to fall back on")
+    model_info, model_client = _student(project)
+    work = project.work(
+        task_text=task,
+        check=command,
         docker_client=_docker(),
         model_client=model_client,
-        tutor_client=AnthropicClient(config.tutor.model),
         model_info=model_info,
-        rounds=rounds,
-        on_round=on_round,
     )
-    data = [
-        {
-            "batch": list(r.batch),
-            "train_before": r.train_before,
-            "accepted": r.accepted,
-            "records": [rec.model_dump(mode="json") for rec in r.records],
-            "refused": r.refused,
-            "lessons": r.lessons,
-            "tutor_calls": r.tutor_calls,
-            "tutor_usd": r.tutor_usd,
-        }
-        for r in reports
-    ]
-    _emit(ctx, data, f"{len(reports)} rounds; {sum(bool(r.accepted) for r in reports)} accepted")
+    result = work.result
+    data = {
+        "passed": result.passed,
+        "answer": str(work.answer),
+        "probes": [
+            {"run_id": p.run_id, "passed": p.passed, "tags": list(p.tags)} for p in result.probes
+        ],
+        "variants": [e.id for e in result.helped],
+        "journal": str(work.journal) if work.journal else None,
+        "stopped": result.stopped,
+    }
+    verdict = "passed" if result.passed else "FAILED (best attempt)"
+    lines = [f"{verdict}: `{command}` after {len(result.probes)} runs"]
+    if result.helped:
+        lines.append(f"with playbook variants: {', '.join(e.id for e in result.helped)}")
+    if work.journal:
+        status = "on probation" if result.passed else "rejected: the composed change failed"
+        lines.append(f"journal ({status}): {work.journal}")
+    apply = f"git apply {shlex.quote(str(work.answer))}"
+    lines.append(f"answer: {work.answer}  (apply with: {apply})")
+    _emit(ctx, data, "\n".join(lines))
+    if not result.passed:
+        raise typer.Exit(ExitCode.NOT_SOLVED)
+
+
+@app.command()
+def status(ctx: typer.Context) -> None:
+    """Show where a running or interrupted fit is, and what fits have cost so far."""
+    data = _project().status()
+    _emit(ctx, data, status_text(data, datetime.now(UTC)))
+
+
+def _ago(then: str, now: datetime) -> str:
+    minutes = int((now - datetime.fromisoformat(then)).total_seconds() // 60)
+    return f"{minutes} min ago" if minutes < 120 else f"{minutes // 60} h ago"
+
+
+def status_text(data: dict[str, Any], now: datetime) -> str:
+    """``saddlefit status`` for people; ``--json`` gives ``data`` itself."""
+    totals = (
+        f"all fits: {data['rounds_done']} rounds, {data['tutor_calls']} tutor calls, "
+        f"${data['tutor_usd']:.2f}"
+    )
+    if data["state"] == "idle":
+        return f"idle; {totals}{_lock_hint(data.get('lock'))}"
+    record = ProgressRecord.model_validate(data["progress"])
+    raw = data["progress"]
+    when = f"started {_ago(raw['started_at'], now)}, last update {_ago(raw['updated_at'], now)}"
+    this = f"tutor this fit: {record.tutor_calls} calls, ${record.tutor_usd:.2f}; {totals}"
+    if data["state"] == "running":
+        return f"fit running (pid {record.pid}), {progress_status(record)}\n{when}\n{this}"
+    return (
+        f"fit interrupted (pid {record.pid}) at {progress_status(record)}\n{when}\n"
+        f"{this}{_lock_hint(data.get('lock'))}"
+    )
+
+
+def _lock_hint(lock: dict[str, Any] | None) -> str:
+    """What to do about fit.lock; it is never safe to remove while its holder runs."""
+    if lock is None:
+        return ""
+    if lock["pid"] is None:
+        return (
+            "\n.saddlefit/fit.lock has no pid; it can be removed if no fit, prune or "
+            "report --final runs"
+        )
+    if lock["alive"]:
+        return (
+            f"\n.saddlefit/fit.lock is held by pid {lock['pid']} (a fit, prune or report --final)"
+        )
+    return f"\n.saddlefit/fit.lock is left by pid {lock['pid']}, which is gone; it can be removed"
 
 
 def ablation_line(result: AblationResult) -> str:

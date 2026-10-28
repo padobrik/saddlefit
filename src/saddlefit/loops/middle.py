@@ -21,7 +21,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
-from typing import Literal, Protocol
+from typing import Final, Literal, Protocol
 
 from saddlefit.config import TokenPrices
 from saddlefit.eval.decisions import (
@@ -34,6 +34,8 @@ from saddlefit.eval.decisions import (
 from saddlefit.eval.tamper import diff_paths
 from saddlefit.harness.proposals import Proposal, ProposalError, ScriptLinter, apply_proposal
 from saddlefit.harness.store import MAIN, HarnessStore, HarnessStoreError
+from saddlefit.loops.progress import ProgressSink
+from saddlefit.playbook import tutor_lines
 from saddlefit.providers.base import ModelClient, ProviderError, Usage
 from saddlefit.providers.cost import cost_usd
 from saddlefit.storage.library import (
@@ -44,6 +46,7 @@ from saddlefit.storage.library import (
     next_change_id,
     write_record,
 )
+from saddlefit.storage.progress import Stage
 from saddlefit.tutor.diagnose import MAX_RUNS, RunDigest, TutorRequest, diagnose
 from saddlefit.tutor.reflect import Decision, record_lesson, reflect
 
@@ -102,6 +105,12 @@ class Tried:
     held_out: HeldOutComparison | None
 
 
+# why a tutor attempt produced no candidate: the call failed or its answer was unusable, or the
+# proposal was refused (a disallowed file, a failed linter, a patch that does not apply)
+REFUSED_BY_TUTOR: Final = "tutor"
+REFUSED_PROPOSAL: Final = "proposal"
+
+
 @dataclass
 class RoundReport:
     batch: tuple[str, ...]
@@ -109,6 +118,7 @@ class RoundReport:
     accepted: str | None = None  # proposal ID
     records: list[ChangeRecord] = field(default_factory=list)
     refused: int = 0  # tutor errors and proposals refused by validation
+    refusals: list[str] = field(default_factory=list)  # "<kind>: <reason>", one per refusal
     lessons: int = 0
     pruned: list[str] = field(default_factory=list)  # proposal IDs ablation dropped after it
     tutor_calls: int = 0
@@ -149,12 +159,18 @@ class MiddleLoop:
     # every tutor call this loop has paid for, failed rounds included
     spent_calls: int = 0
     spent_usd: float = 0.0
+    # called after every paid tutor call, so its cost can be saved at once
+    on_charge: Callable[[], None] | None = None
+    # called with each refusal's "<kind>: <reason>" as soon as it happens
+    on_refusal: Callable[[str], None] | None = None
+    progress: ProgressSink | None = None
 
     def round(self, index: int) -> RoundReport:
         batch = pick_batch(self.train_tasks, index, self.batch_size)
         budget = Budget(
             self.max_calls_per_round, self.max_usd_per_round, self.prices, on_charge=self._charged
         )
+        self._stage("train")
         before = self.practice.run_batch(MAIN, batch)
         report = RoundReport(batch=batch, train_before=_solved(before))
         tried: list[Tried] = []
@@ -168,14 +184,27 @@ class MiddleLoop:
         # main moves only now: every candidate is decided before any lesson is written
         for t, status in decided:
             report.records.append(self._record(t, status, report.train_before, len(batch)))
+        if decided:
+            self._stage("lessons")
         for t, status in decided:
             report.lessons += self._reflect(t, status, report.train_before, len(batch), budget)
         report.tutor_calls, report.tutor_usd = budget.calls, budget.usd
         return report
 
+    def _refused(self, report: RoundReport, reason: str) -> None:
+        report.refusals.append(reason)
+        if self.on_refusal is not None:
+            self.on_refusal(reason)
+
+    def _stage(self, name: Stage, candidate: int | None = None) -> None:
+        if self.progress is not None:
+            self.progress.stage(name, candidate)
+
     def _charged(self, usd: float) -> None:
         self.spent_calls += 1
         self.spent_usd += usd
+        if self.on_charge is not None:
+            self.on_charge()
 
     def _decide(
         self, tried: list[Tried], report: RoundReport
@@ -214,9 +243,10 @@ class MiddleLoop:
         tried: list[Tried],
     ) -> None:
         """Fill ``tried``; a candidate is in it from the moment its branch exists."""
-        for _ in range(self.candidates_per_round):
+        for number in range(1, self.candidates_per_round + 1):
             if not budget.can_call():
                 break
+            self._stage("tutor", number)
             files = self.store.texts()
             request = TutorRequest(
                 runs=before.failures[:MAX_RUNS],
@@ -224,23 +254,28 @@ class MiddleLoop:
                 harness_files={p: t for p, t in files.items() if p != "EXPERIENCE.md"},
                 experience=files.get("EXPERIENCE.md", ""),
                 context_budget=self.context_budget,
+                playbook=tutor_lines(t for d in before.failures[:MAX_RUNS] for t in d.tags),
             )
             try:
                 result = diagnose(self.tutor, request)
             except ProviderError as exc:  # TutorError included; the call was paid for
                 budget.charge(exc.usage)
                 report.refused += 1
+                self._refused(report, f"{REFUSED_BY_TUTOR}: {exc}")
                 continue
             budget.charge(result.usage)
             try:
                 ref = apply_proposal(self.store, result.proposal, self.linter)
-            except ProposalError:
+            except ProposalError as exc:
                 report.refused += 1
+                self._refused(report, f"{REFUSED_PROPOSAL}: {exc}")
                 continue
             try:
+                self._stage("candidate", number)
                 after = self.practice.run_batch(ref, batch)
                 held_out = None
                 if batch_gate(before.solved, after.solved):
+                    self._stage("held-out", number)
                     held_out = self.practice.compare_held_out(MAIN, ref)
             except Exception:
                 with contextlib.suppress(HarnessStoreError):

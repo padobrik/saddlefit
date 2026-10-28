@@ -18,6 +18,8 @@ from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any, Literal
 
+from ulid import ULID
+
 from saddlefit import __version__
 from saddlefit.config import CONFIG_SCHEMA_VERSION, Config, StudentConfig, dump_config, load_config
 from saddlefit.doctor import DoctorRecord
@@ -26,6 +28,7 @@ from saddlefit.eval.control import control_summary
 from saddlefit.eval.evaluator import Evaluator, protected_patterns
 from saddlefit.eval.leak_guard import GuardedClient, guard_for_suite
 from saddlefit.eval.progress import Comparable, harness_progress
+from saddlefit.eval.tamper import matches_any
 from saddlefit.export.skill import export_skill
 from saddlefit.harness.lint import SandboxLinter
 from saddlefit.harness.loop_config import LoopConfig, clamp, load_loop_config
@@ -37,6 +40,7 @@ from saddlefit.loops.baseline import (
     BaselineRunner,
     RunOutcome,
 )
+from saddlefit.loops.fast import FastLoop, FastResult
 from saddlefit.loops.final import ControlRunner
 from saddlefit.loops.fit import run_rounds
 from saddlefit.loops.generate import (
@@ -44,10 +48,14 @@ from saddlefit.loops.generate import (
     CalibrationError,
     Generation,
     GenerationReport,
+    NoCandidate,
 )
 from saddlefit.loops.generate import MAX_REPLY_TOKENS as GENERATOR_REPLY_TOKENS
 from saddlefit.loops.middle import MiddleLoop, RoundReport
 from saddlefit.loops.practice import DockerPractice, without_control
+from saddlefit.loops.progress import FitProgress
+from saddlefit.loops.work import WorkRunner, write_answer
+from saddlefit.playbook import proposal_for
 from saddlefit.providers.base import ModelClient, ModelInfo
 from saddlefit.providers.retry import LOCAL_TIMEOUT_S
 from saddlefit.reports.baseline import ReportContext
@@ -63,20 +71,25 @@ from saddlefit.storage.control_log import (
     log_control_evaluation,
 )
 from saddlefit.storage.fit_state import (
+    FIT_LOCK_FILE,
     FitState,
     ensure_unlocked,
     fit_lock,
     load_fit_state,
+    lock_owner,
     save_fit_state,
 )
+from saddlefit.storage.journal import JOURNAL_SCHEMA_VERSION, JournalEntry, task_ref, write_entry
 from saddlefit.storage.library import ChangeRecord, read_records
+from saddlefit.storage.progress import ProgressRecord, load_progress, process_alive
 from saddlefit.tasks import generated as generated_files
-from saddlefit.tasks.acceptance import accept, seal_generated
+from saddlefit.tasks.acceptance import FAILED_TESTS, Acceptance, accept, seal_generated
 from saddlefit.tasks.generator import (
     MAX_EXAMPLES,
     TASK_KINDS,
     GeneratedTask,
     GeneratorRequest,
+    GeneratorResult,
     generate,
     render_system,
     render_user,
@@ -84,6 +97,16 @@ from saddlefit.tasks.generator import (
 )
 from saddlefit.tasks.mining import STATE_DIR, MiningReport, Runner, _export, _git_bytes, mine
 from saddlefit.tasks.models import TASK_SCHEMA_VERSION, RepoRef, TaskMeta
+from saddlefit.tasks.mutation import (
+    MUTATION_TRIES_PER_CALL,
+    Mutation,
+    commit_mutation,
+    drop_mutation,
+    issue_messages,
+    pick,
+    related_tests,
+    write_issue,
+)
 from saddlefit.tasks.splits import add_task, new_lock
 from saddlefit.tasks.suite import SuitePaths, load_lock, load_meta, materialize, save_lock
 
@@ -96,6 +119,26 @@ def _check_live_model(baseline: dict[str, Any], model_info: ModelInfo) -> None:
             f"the student model is {model_info.model} ({model_info.digest or 'no digest'}), "
             f"not the baseline's {baseline['model']['id']}; run `saddlefit baseline` again"
         )
+
+
+@dataclass(frozen=True)
+class WorkResult:
+    result: FastResult
+    answer: Path  # the patch, possibly empty
+    journal: Path | None  # the probation entry, when playbook variants were needed
+
+
+@dataclass(frozen=True)
+class TaskKit:
+    """What every new task needs, whatever wrote it: the sealed store, judging, calibration."""
+
+    sealed_root: Path
+    guard: Any
+    evaluator: Evaluator
+    image: str
+    calibrate: Callable[[str, GeneratedTask, str], int]
+    keep: Callable[[str, GeneratedTask], None]
+    exists: Callable[[str], bool]
 
 
 @dataclass(frozen=True)
@@ -249,6 +292,156 @@ class Project:
         summary = generated_files.repo_summary(self.root, head, paths)
         train = [m for m in self.tasks() if m.split == "train"][:MAX_EXAMPLES]
         examples = [self.task_text(m.id) for m in train]
+        kit = self._task_kit(docker_client, model_client, model_info, "generated", kind)
+
+        def request(rng: Any) -> GeneratorRequest:
+            return GeneratorRequest(
+                kind=TASK_KINDS[kind],
+                repo_summary=summary,
+                files=select_files(files, rng),
+                examples=examples,
+                protected=protected,
+                existing_paths=frozenset(paths),
+            )
+
+        with tempfile.TemporaryDirectory(prefix="saddlefit-base-") as tmp:
+            base = Path(tmp) / "base"
+            _export(self.root, head, base)
+            generation = Generation(
+                kind=kind,
+                budget=config.generator,
+                request=request,
+                call=lambda req: generate(
+                    GuardedClient(generator_client, kit.guard), req, GENERATOR_REPLY_TOKENS
+                ),
+                seal=lambda task_id, task: seal_generated(kit.sealed_root, task_id, task),
+                accept=lambda task_id, task: accept(kit.evaluator, task_id, base, task),
+                calibrate=lambda task_id, task: kit.calibrate(task_id, task, head),
+                exists=kit.exists,
+                keep=kit.keep,
+                discard=lambda task_id: generated_files.discard(self.suite, task_id),
+                prompt_chars=lambda req: len(render_system(req)) + len(render_user(req)),
+            )
+            return generation.run(count)
+
+    def mutate_tasks(
+        self,
+        *,
+        count: int,
+        docker_client: Any,
+        generator_client: ModelClient,
+        model_client: Callable[[], ModelClient],
+        model_info: ModelInfo,
+        runner: Runner,
+    ) -> GenerationReport:
+        """Inject ``count`` kept bugs into working code; the generator writes each up (A11)."""
+        config = self.config()
+        protected = protected_patterns(config.evaluation)
+        head = _git_bytes(self.root, "rev-parse", "HEAD").decode().strip()
+        paths = generated_files.tracked_paths(self.root, head)
+        # the cheap path filters first: one git show per test file, not per tracked file
+        test_paths = [p for p in paths if p.endswith(".py") and matches_any(p, protected)]
+        tests = {
+            p: t
+            for p in test_paths
+            if (t := generated_files.read_text(self.root, head, p)) is not None
+        }
+        sources = {
+            f.path: f.content
+            for f in generated_files.repo_files(self.root, head, paths, protected)
+            if f.path.endswith(".py") and related_tests(f.path, tests)
+        }
+        if not sources:
+            raise UserError("no Python source file has tests that import it")
+        kit = self._task_kit(docker_client, model_client, model_info, "mutation", "bugfix")
+        pending: dict[str, Any] = {}
+        passing: dict[tuple[str, ...], bool] = {}
+
+        with tempfile.TemporaryDirectory(prefix="saddlefit-mutate-") as tmp:
+            base = Path(tmp) / "base"
+            _export(self.root, head, base)
+
+            def request(rng: Any) -> tuple[Mutation, list[str]]:
+                path = rng.choice(sorted(sources))
+                mutation = pick(path, sources[path], rng)
+                if mutation is None:
+                    raise NoCandidate(f"{path}: no site to mutate")
+                related = related_tests(path, tests)
+                key = tuple(related)
+                if key not in passing:  # the tests must pass before the bug goes in
+                    passing[key] = runner.run_tests(base, related) == 0
+                if not passing[key]:
+                    raise NoCandidate(f"{path}: its tests fail without any mutation")
+                mutated = Path(tmp) / "mutated"
+                if mutated.exists():
+                    remove_tree(mutated)
+                # no bytecode caches: a .pyc with the same mtime and size would hide the bug
+                shutil.copytree(
+                    base, mutated, symlinks=True, ignore=shutil.ignore_patterns("__pycache__")
+                )
+                (mutated / path).write_bytes(mutation.mutated.encode("utf-8"))
+                if runner.run_tests(mutated, related) not in FAILED_TESTS:
+                    raise NoCandidate(f"{path}:{mutation.site.line}: the tests still pass")
+                return mutation, related
+
+            def call(req: tuple[Mutation, list[str]]) -> GeneratorResult:
+                mutation, related = req
+                result = write_issue(
+                    GuardedClient(generator_client, kit.guard),
+                    mutation,
+                    related,
+                    {p: tests[p] for p in related},
+                    # no task-specific check: it would name the hidden tests and print them
+                    visible_check="",
+                )
+                pending["mutation"], pending["related"] = mutation, related
+                return result
+
+            def seal(task_id: str, task: GeneratedTask) -> None:
+                mutation, related = pending["mutation"], pending["related"]
+                pending[task_id] = commit_mutation(self.root, head, mutation, task_id, related)
+                seal_generated(kit.sealed_root, task_id, task)
+
+            def judge(task_id: str, task: GeneratedTask) -> Acceptance:
+                # a fresh directory per attempt: a repeated task ID must not meet old files
+                snapshot = Path(tempfile.mkdtemp(dir=tmp)) / "base"
+                _export(self.root, pending[task_id], snapshot)
+                return accept(kit.evaluator, task_id, snapshot, task)
+
+            def discard(task_id: str) -> None:
+                generated_files.discard(self.suite, task_id)
+                if task_id in pending:
+                    drop_mutation(self.root, task_id)
+
+            generation = Generation(
+                kind="bugfix",
+                id_prefix="mut",
+                budget=config.generator,
+                request=request,
+                call=call,
+                seal=seal,
+                accept=judge,
+                calibrate=lambda task_id, task: kit.calibrate(task_id, task, pending[task_id]),
+                exists=kit.exists,
+                keep=kit.keep,
+                discard=discard,
+                prompt_chars=lambda req: sum(
+                    len(m.content) for m in issue_messages(req[0], req[1])
+                ),
+                max_attempts=config.generator.max_calls * MUTATION_TRIES_PER_CALL,
+            )
+            return generation.run(count)
+
+    def _task_kit(
+        self,
+        docker_client: Any,
+        model_client: Callable[[], ModelClient],
+        model_info: ModelInfo,
+        source: Literal["generated", "mutation"],
+        kind: str,
+    ) -> TaskKit:
+        """Sealing, judging, calibrating and keeping new tasks of one source and type."""
+        config = self.config()
         sealed = self.suite.sealed_dir
         guard = guard_for_suite(sealed, self.incidents)
         image = self.environment_image(docker_client)
@@ -263,36 +456,24 @@ class Project:
                 )
             }
         )
-        metas: dict[str, TaskMeta] = {}
 
-        def request(rng: Any) -> GeneratorRequest:
-            return GeneratorRequest(
-                kind=TASK_KINDS[kind],
-                repo_summary=summary,
-                files=select_files(files, rng),
-                examples=examples,
-                protected=protected,
-                existing_paths=frozenset(paths),
-            )
-
-        def calibrate(task_id: str, task: GeneratedTask) -> int:
+        def calibrate(task_id: str, task: GeneratedTask, base_commit: str) -> int:
             lock = add_task(
                 load_lock(self.suite, config.splits),
                 task_id,
-                "generated",
+                source,
                 generated_files.content_hash(task),
             )
             meta = TaskMeta(
                 schema_version=TASK_SCHEMA_VERSION,
                 id=task_id,
-                source="generated",
+                source=source,
                 type=kind,
                 split=next(t.split for t in lock.tasks if t.id == task_id),
-                repo=RepoRef(base_commit=head),
-                visible_check=task.visible_check,
+                repo=RepoRef(base_commit=base_commit),
+                visible_check=task.visible_check or None,
                 created=date.today(),
             )
-            metas[task_id] = meta
             generated_files.publish(self.suite, meta, task)
             commit = self.harness.head()
             with tempfile.TemporaryDirectory(prefix="saddlefit-harness-") as tmp:
@@ -324,29 +505,78 @@ class Project:
         def keep(task_id: str, task: GeneratedTask) -> None:
             lock = load_lock(self.suite, config.splits)
             save_lock(
-                self.suite,
-                add_task(lock, task_id, "generated", generated_files.content_hash(task)),
+                self.suite, add_task(lock, task_id, source, generated_files.content_hash(task))
             )
 
-        with tempfile.TemporaryDirectory(prefix="saddlefit-base-") as tmp:
-            base = Path(tmp) / "base"
-            _export(self.root, head, base)
-            generation = Generation(
-                kind=kind,
-                budget=config.generator,
-                request=request,
-                call=lambda req: generate(
-                    GuardedClient(generator_client, guard), req, GENERATOR_REPLY_TOKENS
-                ),
-                seal=lambda task_id, task: seal_generated(sealed, task_id, task),
-                accept=lambda task_id, task: accept(evaluator, task_id, base, task),
-                calibrate=calibrate,
-                exists=lambda task_id: any(t.id == task_id for t in self.tasks()),
-                keep=keep,
-                discard=lambda task_id: generated_files.discard(self.suite, task_id),
-                prompt_chars=lambda req: len(render_system(req)) + len(render_user(req)),
+        return TaskKit(
+            sealed_root=sealed,
+            guard=guard,
+            evaluator=evaluator,
+            image=image,
+            calibrate=calibrate,
+            keep=keep,
+            exists=lambda task_id: any(t.id == task_id for t in self.tasks()),
+        )
+
+    def work(
+        self,
+        *,
+        task_text: str,
+        check: str,
+        docker_client: Any,
+        model_client: Callable[[], ModelClient],
+        model_info: ModelInfo,
+    ) -> WorkResult:
+        """Do ``task_text`` in a copy of the working tree with the fast loop (A6, B14).
+
+        The answer is a patch in ``.saddlefit/answers/``; the working tree is not touched.
+        A rescue that needed playbook variants is journaled, on probation.
+        """
+        config = self.config()
+        guard = guard_for_suite(self.suite.sealed_dir, self.incidents)
+        image = self.environment_image(docker_client)
+        loop, _ = self.effective_loop()
+        commit = self.harness.head()
+        with tempfile.TemporaryDirectory(prefix="saddlefit-harness-") as tmp:
+            self.harness.export(commit, Path(tmp))
+            runner = WorkRunner(
+                repo=self.root,
+                config=config,
+                task_text=task_text,
+                check=check,
+                harness_dir=Path(tmp),
+                state=self.state,
+                client_factory=lambda: GuardedClient(model_client(), guard),
+                docker_client=docker_client,
+                image=image,
+                tool_mode=self.tool_mode(model_info.digest),
             )
-            return generation.run(count)
+            result = FastLoop(
+                budget=config.fast_loop, loop=loop, attempt=runner.attempt, seed=config.student.seed
+            ).run()
+            loop_yaml = (Path(tmp) / "loop.yaml").read_text(encoding="utf-8")
+        answers = self.state / "answers"
+        answers.mkdir(parents=True, exist_ok=True)
+        answer = answers / f"{result.probes[-1].run_id}.patch"
+        write_answer(answer, result.diff)
+        entry = None
+        if result.helped:
+            proposal = proposal_for(result.helped, loop_yaml, loop, source="fast_loop")
+            if proposal is not None:
+                entry = write_entry(
+                    self.state,
+                    JournalEntry(
+                        schema_version=JOURNAL_SCHEMA_VERSION,
+                        entry_id=str(ULID()),
+                        created=datetime.now(UTC),
+                        task=task_ref(task_text, check),
+                        proposal=proposal,
+                        probe_run_ids=tuple(p.run_id for p in result.probes),
+                        passed=result.passed,
+                        status="probation" if result.passed else "rejected",
+                    ),
+                )
+        return WorkResult(result=result, answer=answer, journal=entry)
 
     def environment_image(self, docker_client: Any) -> str:
         """The image this repository's tests run in: the sandbox plus its dependencies (B11).
@@ -475,6 +705,7 @@ class Project:
         rounds: int,
         on_run: Callable[[RunOutcome], None] | None = None,
         on_round: Callable[[RoundReport], None] | None = None,
+        on_progress: Callable[[ProgressRecord], None] | None = None,
     ) -> list[RoundReport]:
         """Run ``rounds`` more middle-loop rounds; control tasks are never run (B10).
 
@@ -503,8 +734,46 @@ class Project:
             max_usd_per_round=config.tutor.max_usd_per_round,
             prices=config.tutor.prices_usd_per_mtok,
         )
+        progress = FitProgress(
+            root=self.state,
+            rounds=rounds,
+            candidates=middle.candidates_per_round,
+            on_change=on_progress,
+        )
+        practice.progress = progress
         with fit_lock(self.state):
-            return run_rounds(middle, self.state, rounds, on_round)
+            reports = run_rounds(middle, self.state, rounds, on_round, progress)
+            # under the lock, so it never removes the record of a fit that starts next;
+            # a fit that fails keeps progress.json, so status can say where it stopped
+            progress.finish()
+        return reports
+
+    def status(self) -> dict[str, Any]:
+        """Where a fit is, from progress.json and fit.json; never waits for the fit lock."""
+        state = load_fit_state(self.state)
+        totals = {
+            "rounds_done": state.rounds_done,
+            "tutor_calls": state.tutor_calls,
+            "tutor_usd": round(state.tutor_usd, 4),
+        }
+        # prune and report --final hold the same lock: whoever has it, and whether it runs
+        owner = lock_owner(self.state)
+        lock: dict[str, Any] | None = None
+        if owner is not None:
+            lock = {"pid": owner, "alive": process_alive(owner)}
+        elif (self.state / FIT_LOCK_FILE).exists():  # created, but its pid never written
+            lock = {"pid": None, "alive": None}
+        record = load_progress(self.state)
+        if record is None:
+            return {"state": "idle", "lock": lock, **totals}
+        # a failed fit keeps progress.json but drops the lock, and its pid can be reused
+        active = owner == record.pid and process_alive(record.pid)
+        return {
+            "state": "running" if active else "interrupted",
+            "progress": record.model_dump(mode="json"),
+            "lock": lock,
+            **totals,
+        }
 
     def prune(
         self,
@@ -782,6 +1051,7 @@ class Project:
             tutor_calls=basis.state.tutor_calls,
             tutor_usd=basis.state.tutor_usd,
             control_evaluations=control_count,
+            tutor_refusals=basis.state.refusals,
         )
         return build_progress(progress, ctx)
 

@@ -1,0 +1,179 @@
+{
+  "$defs": {
+    "Proposal": {
+      "additionalProperties": false,
+      "description": "One change to the harness, from the tutor, the fast loop or the playbook (B8).",
+      "properties": {
+        "context_tokens_delta": {
+          "title": "Context Tokens Delta",
+          "type": "integer"
+        },
+        "evidence_run_ids": {
+          "items": {
+            "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+            "type": "string"
+          },
+          "title": "Evidence Run Ids",
+          "type": "array"
+        },
+        "expected_effect": {
+          "title": "Expected Effect",
+          "type": "string"
+        },
+        "failure_tags": {
+          "items": {
+            "enum": [
+              "env_error",
+              "tampered",
+              "timeout",
+              "context_overflow",
+              "malformed_tool_call",
+              "loop",
+              "gave_up",
+              "tool_error",
+              "check_fail",
+              "solved"
+            ],
+            "type": "string"
+          },
+          "title": "Failure Tags",
+          "type": "array"
+        },
+        "level": {
+          "enum": [
+            "mechanics",
+            "tools",
+            "text",
+            "reasoning"
+          ],
+          "title": "Level",
+          "type": "string"
+        },
+        "patch": {
+          "minLength": 1,
+          "title": "Patch",
+          "type": "string"
+        },
+        "proposal_id": {
+          "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+          "title": "Proposal Id",
+          "type": "string"
+        },
+        "rationale": {
+          "title": "Rationale",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": 1,
+          "title": "Schema Version",
+          "type": "integer"
+        },
+        "source": {
+          "enum": [
+            "tutor",
+            "fast_loop",
+            "playbook"
+          ],
+          "title": "Source",
+          "type": "string"
+        },
+        "technique": {
+          "minLength": 1,
+          "title": "Technique",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "proposal_id",
+        "source",
+        "level",
+        "failure_tags",
+        "evidence_run_ids",
+        "technique",
+        "rationale",
+        "patch",
+        "expected_effect",
+        "context_tokens_delta"
+      ],
+      "title": "Proposal",
+      "type": "object"
+    },
+    "TaskRef": {
+      "additionalProperties": false,
+      "description": "The task a rescue was for: its text by hash, and the check that judged it.",
+      "properties": {
+        "check": {
+          "title": "Check",
+          "type": "string"
+        },
+        "text_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Text Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "text_sha256",
+        "check"
+      ],
+      "title": "TaskRef",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "created": {
+      "format": "date-time",
+      "title": "Created",
+      "type": "string"
+    },
+    "entry_id": {
+      "title": "Entry Id",
+      "type": "string"
+    },
+    "passed": {
+      "title": "Passed",
+      "type": "boolean"
+    },
+    "probe_run_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Probe Run Ids",
+      "type": "array"
+    },
+    "proposal": {
+      "$ref": "#/$defs/Proposal"
+    },
+    "schema_version": {
+      "const": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "status": {
+      "enum": [
+        "probation",
+        "accepted",
+        "rejected"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "task": {
+      "$ref": "#/$defs/TaskRef"
+    }
+  },
+  "required": [
+    "schema_version",
+    "entry_id",
+    "created",
+    "task",
+    "proposal",
+    "probe_run_ids",
+    "passed",
+    "status"
+  ],
+  "title": "JournalEntry",
+  "type": "object"
+}

@@ -223,6 +223,15 @@ Assumptions taken where the spec leaves a detail open. Deviations from the spec 
   worst case (the prompt at four characters a token plus a full 8,192-token reply) could pass
   it. Calibration runs go to `.saddlefit/calibration/`, outside baseline and fit records.
   Generated tasks start from the repository's current `HEAD`.
+- **Fit spending and refusals (#113).** `run_rounds` saves `fit.json` after every paid tutor
+  call, so a crash of `fit` loses at most the call in flight. A power loss or system crash
+  loses no more either on Linux and macOS (`F_FULLFSYNC` there, where `fsync` stops at the
+  drive cache), unless the state directory cannot be opened to sync the rename. On Windows
+  the rename is not written through, so a power loss or system crash can lose the last saves. Each refused attempt keeps
+  its reason as `tutor: …` (the call failed or its answer was unusable) or `proposal: …` (a
+  disallowed file, a failed linter, a patch that does not apply); `fit` prints them under the
+  round line, `fit.json` v2 counts them by kind across fits, and the progress report shows
+  the counts.
 - **Harness mechanics (#121).** `loop.yaml` v2 adds `tools` (which tools the student gets,
   `finish` always; `read_line_numbers`; `edit_strips_line_numbers`, which removes `cat -n`
   prefixes from `old` and `new` only when every line of `old` has one), `hooks` (at most
@@ -235,3 +244,64 @@ Assumptions taken where the spec leaves a detail open. Deviations from the spec 
   prompt. v1 files drop `reasoning.language` and `reasoning.latent_depth`, which no run used.
   Defaults keep the v1 behaviour, so a baseline does not move until the tutor proposes a
   mechanic; `edit_lines` was left out.
+- **Starter playbook (#37).** Seven entries ship as package data
+  (`starter_playbook/entries.yaml`): the three A6 mechanics (a finish gate that re-reads the
+  task and retries, loop detection after two identical calls, a tighter context budget) and
+  four from the observed gemma4 failures (edit with line numbers stripped, read without
+  them, tests after every edit, a repo map). An entry holds the `loop.yaml` values to set,
+  not a patch, so `proposal_for` diffs whatever the current `loop.yaml` is; a `hooks` list is
+  appended. The tutor's prompt lists up to five entries that match its runs' failure tags,
+  most matching first. Statistics (`proposed`, `accepted`) stay at zero until the slow loop.
+- **`tasks mutate` (#39).** A mutation flips one token in a Python source file (a comparison,
+  `+`/`-`, `and`/`or`, `is`, `True`/`False`, or an integer by one), found with `tokenize` so the
+  file keeps its exact text, and must still compile. The tests that import the module must
+  pass at `HEAD` and fail (pytest exit 1 or 2) with the mutation; only then does the generator
+  write the issue, which may not quote the original line. The mutated tree is committed with
+  a temporary index as a commit object under `refs/saddlefit/mutations/<task id>` in the
+  repository (the user's branches, index and working tree never move; the ref goes when the
+  task is not kept), and it is the task's base commit. The tests that broke are the hidden
+  tests, the patch that undoes the mutation is the reference, and acceptance, calibration and
+  the generator budget work as for `tasks generate`. Attempts that never reach the model are
+  capped at five per `generator.max_calls`. Mutation tasks are `bugfix` tasks with IDs
+  `mut-bugfix-…`, in train or held-out only.
+- **Fast loop, journal and `run` (#35, #36, #38).** `saddlefit run "TASK" [--check CMD]`
+  copies the working tree (tracked files and untracked ones git does not ignore, never `.git`
+  or `.saddlefit`) into a fresh sandbox for every attempt; the check (default
+  `finish_gate.run`) is the finish gate and is run once more after the student stops. If the
+  first attempt fails, up to `fast_loop.max_variants` starter-playbook entries for its failure
+  tags are probed `runs_per_variant` times each (B12: every run up to two, else a majority),
+  the ones that helped are composed and the check runs once more, all within
+  `time_budget_minutes`. Variants are only loop settings handed to an attempt, so nothing
+  reaches the harness store (required test 7). The answer is a patch in
+  `.saddlefit/answers/`, never applied to the working tree; a rescue that needed variants is
+  written to `.saddlefit/journal/<entry-id>.json` as a `fast_loop` proposal, `probation` when
+  the composed change passed and `rejected` when it did not. Work mode has no hidden tests,
+  so the protected-files rule is not added and nothing reads the sealed store; probe records
+  go to `.saddlefit/work/`.
+- **`run` and exit codes.** The owner left the choice open (2026-10-28); B14 now has code 4,
+  "task not solved": `run` exits 4 when the check still fails after the fast loop, so
+  `saddlefit run … && git apply <answer>` never applies a failing patch. 1 to 3 keep their
+  meaning; a sandbox or model-runner failure is 3.
+- **Work-mode time.** Each `run` attempt has one wall-clock deadline (B11):
+  `evaluation.timeout_seconds`, or less when the fast loop's `time_budget_minutes` has less
+  left, so the whole command, the first attempt included, stays within that budget. The
+  student gets 75% of the attempt; the final check runs in the rest of the same deadline.
+  Tool commands are capped at the student's share; a model call is not cut off mid-request,
+  so one that starts late can still run up to the client timeout past it (as in the baseline).
+  The budget is strict for the sandbox, not for an in-flight model request.
+- **Fit progress and `saddlefit status` (#113).** The loops report to a `ProgressSink`: the
+  middle loop its stages (`train`, `tutor` k, `candidate` k, `held-out` k, `lessons`,
+  `ablation`), the practice the runs it starts and each one that finishes, any split, as a
+  count only. `FitProgress` keeps `.saddlefit/progress.json` (`schema_version: 1`) current and
+  removes it when `fit` ends cleanly; a failed fit keeps it. `saddlefit status` reads it and
+  `fit.json` without the fit lock and tells running, interrupted and idle apart. A fit counts
+  as running only while `fit.lock` holds its pid and that process lives; `prune` and
+  `report --final` take the same lock, so status names the lock's holder and offers its
+  removal only when that process is gone. Known limit: if a fit is killed hard (the lock
+  stays) and the OS gives its pid to another process, status says running; `fit` itself
+  still refuses to start while the lock exists. Telling them apart needs each process's
+  start time, which differs per OS. Off a terminal `fit` prints one plain line per stage change and finished run. On a
+  terminal it shows one framed status line (rich `Live`, 30 fps, about 5 s a lap) with round
+  lines printed above it; when no run has finished for longer than
+  `evaluation.timeout_seconds` the ball stops, the frame turns amber and the line says how
+  long. Rich's own output is used, without the `?2026` synchronized-output wrapper.

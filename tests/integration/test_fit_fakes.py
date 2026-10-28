@@ -16,6 +16,7 @@ from saddlefit.eval.decisions import HeldOutComparison
 from saddlefit.harness.store import HarnessStore, HarnessStoreError
 from saddlefit.loops.fit import run_rounds
 from saddlefit.loops.middle import BatchResult, MiddleLoop, pick_batch
+from saddlefit.loops.progress import FitProgress
 from saddlefit.providers.base import (
     GenParams,
     Message,
@@ -25,8 +26,9 @@ from saddlefit.providers.base import (
     ToolSpec,
     Usage,
 )
-from saddlefit.storage.fit_state import load_fit_state
+from saddlefit.storage.fit_state import FitState, load_fit_state, save_fit_state
 from saddlefit.storage.library import read_records
+from saddlefit.storage.progress import ProgressRecord, load_progress
 from saddlefit.storage.runs import RUN_SCHEMA_VERSION, RunEvent, RunSummary
 from saddlefit.tutor.diagnose import digest_run
 
@@ -406,3 +408,126 @@ def test_an_interrupted_round_still_records_what_the_tutor_cost(tmp_path: Path) 
         run_rounds(loop, tmp_path, 1)
     state = load_fit_state(tmp_path)
     assert (state.rounds_done, state.tutor_calls) == (0, 2)
+
+
+class SpyingPractice(FakePractice):
+    """Reads fit.json during each candidate batch, as a crash at that moment would leave it."""
+
+    def __init__(self, store: HarnessStore, root: Path) -> None:
+        super().__init__(store)
+        self.root = root
+        self.saved_calls: list[int] = []
+
+    def run_batch(self, harness_ref: str, task_ids: Sequence[str]) -> BatchResult:
+        if harness_ref != "main":
+            self.saved_calls.append(load_fit_state(self.root).tutor_calls)
+        return super().run_batch(harness_ref, task_ids)
+
+
+def test_each_tutor_call_is_saved_before_the_round_ends(tmp_path: Path) -> None:
+    loop, _ = make_loop(tmp_path, FakeTutor([USELESS, RIGHT]))
+    spy = SpyingPractice(loop.store, tmp_path)
+    loop.practice = spy
+    run_rounds(loop, tmp_path, 1)
+    # a power loss during either candidate's batch would still have kept its diagnosis
+    assert spy.saved_calls == [1, 2]
+
+
+def test_refusals_keep_their_reason_and_add_up_by_kind(tmp_path: Path) -> None:
+    # context that is not in loop.yaml: the patch cannot apply
+    broken = (
+        "diff --git a/loop.yaml b/loop.yaml\n--- a/loop.yaml\n+++ b/loop.yaml\n"
+        "@@ -1 +1 @@\n-nope\n+x\n"
+    )
+    loop, _ = make_loop(tmp_path, FakeTutor([broken, RIGHT]))
+    (report,) = run_rounds(loop, tmp_path, 1)
+    assert report.refused == 1
+    assert report.refusals[0].startswith("proposal: ")
+    assert load_fit_state(tmp_path).refusals == {"proposal": 1}
+
+
+def test_the_tutor_prompt_lists_playbook_techniques_for_the_failures(tmp_path: Path) -> None:
+    tutor = FakeTutor([USELESS, RIGHT])
+    loop, _ = make_loop(tmp_path, tutor)
+    run_rounds(loop, tmp_path, 1)
+    system = next(p for p in tutor.prompts if "Techniques that worked before" in p)
+    assert "finish gate: re-read the task and retry twice" in system  # for gave_up runs
+
+
+def test_a_refusal_survives_a_round_that_fails_later(tmp_path: Path) -> None:
+    broken = (
+        "diff --git a/loop.yaml b/loop.yaml\n--- a/loop.yaml\n+++ b/loop.yaml\n"
+        "@@ -1 +1 @@\n-nope\n+x\n"
+    )
+    # refused first, then two candidates: the second one's batch crashes the round
+    loop, _ = make_loop(tmp_path, FakeTutor([broken, USELESS, RIGHT]), candidates_per_round=3)
+    loop.practice = CrashingPractice(loop.store)
+    with pytest.raises(RuntimeError):
+        run_rounds(loop, tmp_path, 1)
+    assert load_fit_state(tmp_path).refusals == {"proposal": 1}
+
+
+class SpyingTutor(FakeTutor):
+    """Reads fit.json as each diagnosis starts, before that call can save anything."""
+
+    def __init__(self, patches: Sequence[str], root: Path) -> None:
+        super().__init__(patches)
+        self.root = root
+        self.seen: list[dict[str, int]] = []
+
+    def chat(
+        self, messages: Sequence[Message], tools: Sequence[ToolSpec] | None, params: GenParams
+    ) -> ModelReply:
+        if tools and tools[0].name != "record_lesson":
+            self.seen.append(dict(load_fit_state(self.root).refusals))
+        return super().chat(messages, tools, params)
+
+
+def test_a_refusal_is_saved_before_the_next_tutor_call(tmp_path: Path) -> None:
+    broken = (
+        "diff --git a/loop.yaml b/loop.yaml\n--- a/loop.yaml\n+++ b/loop.yaml\n"
+        "@@ -1 +1 @@\n-nope\n+x\n"
+    )
+    tutor = SpyingTutor([broken, RIGHT], tmp_path)
+    loop, _ = make_loop(tmp_path, tutor)
+    run_rounds(loop, tmp_path, 1)
+    assert tutor.seen[:2] == [{}, {"proposal": 1}]
+
+
+def test_a_fit_reports_its_stages_in_order(tmp_path: Path) -> None:
+    loop, _ = make_loop(tmp_path, FakeTutor([USELESS, RIGHT]))
+    seen: list[tuple[str, int | None]] = []
+
+    def on_change(record: ProgressRecord) -> None:
+        if not seen or seen[-1] != (record.stage, record.candidate):
+            seen.append((record.stage, record.candidate))
+
+    progress = FitProgress(root=tmp_path, rounds=1, candidates=2, on_change=on_change)
+    run_rounds(loop, tmp_path, 1, progress=progress)
+    assert seen[0] == ("train", None)
+    assert ("tutor", 1) in seen
+    assert ("candidate", 1) in seen
+    assert seen.index(("tutor", 2)) > seen.index(("candidate", 1))
+    assert seen[-1] == ("lessons", None)
+    record = load_progress(tmp_path)
+    assert record is not None
+    assert record.tutor_calls >= 2  # what this fit has paid for, kept current
+    progress.finish()
+    assert load_progress(tmp_path) is None
+
+
+def test_an_ablation_before_the_first_round_is_reported(tmp_path: Path) -> None:
+    # the student changed since the last fit: ablation runs before any round
+    save_fit_state(
+        tmp_path, FitState(schema_version=2, rounds_done=1, student_model="older student")
+    )
+    loop, _ = make_loop(tmp_path, FakeTutor([USELESS, RIGHT]))
+    stages: list[str] = []
+
+    def on_change(record: ProgressRecord) -> None:
+        if not stages or stages[-1] != record.stage:
+            stages.append(record.stage)
+
+    progress = FitProgress(root=tmp_path, rounds=1, candidates=2, on_change=on_change)
+    run_rounds(loop, tmp_path, 1, progress=progress)
+    assert stages[:2] == ["ablation", "train"]

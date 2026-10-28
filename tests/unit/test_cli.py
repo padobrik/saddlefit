@@ -26,4 +26,4 @@ def test_no_args_shows_help() -> None:
 
 
 def test_exit_codes_match_spec() -> None:
-    assert [int(c) for c in ExitCode] == [0, 1, 2, 3]
+    assert [int(c) for c in ExitCode] == [0, 1, 2, 3, 4]

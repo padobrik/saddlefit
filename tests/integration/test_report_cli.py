@@ -54,7 +54,7 @@ def test_report_writes_a_progress_report(project: Project) -> None:
     assert report["model"] == {"id": project.config().student.model, "digest": "sha256:m"}
     assert set(report["splits"]) == {"train", "held_out"}  # never control
     assert report["control_evaluations"] == 0
-    assert report["tutor"] == {"calls": 0, "usd": 0.0}
+    assert report["tutor"] == {"calls": 0, "usd": 0.0, "refused": {}}
     written = sorted(p.name for p in project.reports.glob("progress-*"))
     assert [Path(n).suffix for n in written] == [".json", ".md"]
     markdown = runner.invoke(app, ["report"]).output

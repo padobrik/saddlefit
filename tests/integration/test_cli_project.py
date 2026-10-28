@@ -446,6 +446,8 @@ def test_the_environment_image_is_recorded_for_the_project(tmp_path: Path) -> No
     [
         (["--type", "poem"], "", "unknown task type 'poem'"),
         (["--type", "feature"], "", "generator prices are not set"),
+        (["mutate"], "", "generator prices are not set"),
+        (["mutate"], "generator:\n  provider: fake\n", "tasks mutate needs the anthropic"),
         (
             ["--type", "feature"],
             "generator:\n  provider: fake\n",
@@ -467,6 +469,7 @@ def test_tasks_generate_refuses_before_spending(
     if config_extra:
         text = text.replace("generator:\n  provider: anthropic\n", config_extra)
     config.write_text(text, encoding="utf-8")
-    result = runner.invoke(app, ["tasks", "generate", *args])
+    command = "mutate" if args[:1] == ["mutate"] else "generate"
+    result = runner.invoke(app, ["tasks", command, *[a for a in args if a != "mutate"]])
     assert isinstance(result.exception, UserError)
     assert message in str(result.exception)
