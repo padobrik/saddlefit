@@ -1217,9 +1217,11 @@ knowledge_base:
 | Mutation and generated tasks | 300–450 | v0.3 |
 | Slow loop: statistics, playbook, A/B, shadow tutor | 300–450 | v0.4 |
 | Reasoning mode and the looped provider | 150–250 | v0.5 |
-| CI fitting, harness packs, pull-request automation | 200–350 | v0.6 |
+| Runner probes: llama.cpp, vLLM, LM Studio, MLX | 200–350 | v0.5 |
+| Memory: compaction markers, pinned task state, notes, history search, long-context tasks | 400–650 | v0.6 |
+| CI fitting, harness packs, pull-request automation | 200–350 | v0.7 |
 
-About 4,500–6,500 lines of Python through v0.2.0, and 5,700–8,400 for everything. Tests add 2,500–4,000 lines; CI, governance and configuration files about 500–800. Most of the effort is not in code but in prompts and tasks: the diagnosis prompt and the first 20–30 good tasks decide whether anything works.
+About 4,500–6,500 lines of Python through v0.2.0, and 6,300–9,400 for everything. Tests add 2,500–4,000 lines; CI, governance and configuration files about 500–800. Most of the effort is not in code but in prompts and tasks: the diagnosis prompt and the first 20–30 good tasks decide whether anything works.
 
 ---
 
