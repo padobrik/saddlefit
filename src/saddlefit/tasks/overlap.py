@@ -263,7 +263,9 @@ def _code_lines(source: str) -> set[int]:
     """
     quiet = {tokenize.COMMENT, tokenize.NL, tokenize.NEWLINE, tokenize.INDENT, tokenize.DEDENT}
     lines: set[int] = set()
-    for token in tokenize.generate_tokens(io.StringIO(source).readline):
+    # the same physical lines ast counts, \r included, each ended the one way tokenize reads
+    normal = "".join(line.rstrip("\r\n") + "\n" for line in _LINES.findall(source))
+    for token in tokenize.generate_tokens(io.StringIO(normal).readline):
         if token.type not in quiet and token.type != tokenize.ENDMARKER:
             lines.update(range(token.start[0], token.end[0] + 1))
     return lines

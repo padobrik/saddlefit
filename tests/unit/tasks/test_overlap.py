@@ -16,6 +16,7 @@ from saddlefit.tasks.overlap import (
     changed_symbols,
     load_repeat_index,
     save_repeat_index,
+    symbols_between,
 )
 
 OLD = """import os
@@ -215,3 +216,9 @@ def test_a_hash_line_inside_a_string_counts_but_a_comment_does_not() -> None:
     )
     assert symbols(old.replace("# usage: run", "# usage: go"), old=old) == {"src/store.py::usage"}
     assert symbols(old.replace("# note", "# a new note"), old=old) == frozenset()
+
+
+def test_a_file_with_carriage_returns_only_still_names_its_functions() -> None:
+    old = "def f():\r    return 1\r\r\rdef g():\r    return 1\r"
+    new = old.replace("return 1\r\r", "return 2\r\r", 1)
+    assert symbols_between("src/store.py", old, new) == {"src/store.py::f"}
