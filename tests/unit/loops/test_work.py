@@ -305,3 +305,48 @@ def test_container_start_up_counts_against_the_deadline(
     # 42 s were left when the attempt began; 20 went to start-up, so only 22 remain
     assert boxes[0].deadline == pytest.approx(1000.0 + 42)
     assert boxes[0].checks[-1] == pytest.approx(22)
+
+
+def test_a_tool_command_cannot_run_into_the_checks_time(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clock = Clock()
+    boxes: list[FakeBox] = []
+
+    def sandbox(*args: Any, run_timeout_s: float, **kwargs: Any) -> FakeBox:
+        boxes.append(FakeBox(clock, run_timeout_s))
+        return boxes[-1]
+
+    monkeypatch.setattr(work_module, "Sandbox", sandbox)
+    monkeypatch.setattr(work_module.time, "monotonic", lambda: clock.now)
+    calls = iter(
+        [
+            ToolCall(id="b", name="bash", arguments={"command": "sleep 999", "timeout": 600}),
+            ToolCall(id="f", name="finish", arguments={"summary": "x"}),
+        ]
+    )
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True, env=_git_env())
+    store = HarnessStore(tmp_path / "harness")
+    store.init()
+    loop = default_loop_config().model_copy(
+        update={"finish_gate": default_loop_config().finish_gate.model_copy(update={"run": None})}
+    )
+    runner = WorkRunner(
+        repo=repo,
+        config=Config(
+            schema_version=3, project="p", evaluation=EvaluationConfig(timeout_seconds=TIMEOUT)
+        ),
+        task_text="t",
+        check="true",
+        harness_dir=store.path,
+        state=tmp_path / "state",
+        client_factory=lambda: FakeClient(lambda m, t, p: ModelReply(tool_calls=(next(calls),))),
+        docker_client=object(),
+        image="img",
+    )
+    runner.attempt(loop, seed=7)
+    tool, check = boxes[0].checks[0], boxes[0].checks[-1]
+    assert tool == pytest.approx(TIMEOUT * STUDENT_SHARE)  # asked for 600 s, given its share
+    assert check == pytest.approx(TIMEOUT)  # the clock did not move: the check has it all

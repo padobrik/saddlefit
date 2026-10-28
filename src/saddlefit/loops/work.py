@@ -30,7 +30,7 @@ from saddlefit.loops.fast import Probe
 from saddlefit.loops.run_record import run_signals
 from saddlefit.loops.workspace import WorkspaceTracker
 from saddlefit.providers.base import GenParams, ModelClient
-from saddlefit.sandbox.container import Sandbox, SandboxError
+from saddlefit.sandbox.container import ExecResult, Sandbox, SandboxError
 from saddlefit.storage.runs import RunWriter, new_run_id
 from saddlefit.student.loop import StudentLoop
 from saddlefit.tasks.mining import _git_env
@@ -74,6 +74,21 @@ def copy_working_tree(repo: Path, dest: Path) -> None:
         target = dest / rel
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, target)
+
+
+@dataclass
+class _Capped:
+    """The sandbox as the student's tools see it: no command runs past the student's share,
+    so the final check keeps the rest of the run."""
+
+    box: Sandbox
+    deadline: float  # on time.monotonic
+
+    def exec(self, command: str, timeout_s: float) -> ExecResult:
+        left = self.deadline - time.monotonic()
+        if left <= 0:
+            return ExecResult(exit_code=124, output="[timed out]", timed_out=True, duration_s=0.0)
+        return self.box.exec(command, min(timeout_s, left))
 
 
 @dataclass
@@ -149,10 +164,11 @@ class WorkRunner:
                         box.limit_to(deadline)
                     if box.remaining_s <= 0:
                         return Probe(run_id, False, ("timeout",), "")
+                    student_s = box.remaining_s * STUDENT_SHARE
                     student = StudentLoop(
                         client=self.client_factory(),
                         tools=Toolbox(
-                            box,
+                            _Capped(box, time.monotonic() + student_s),
                             max_chars=loop.tool_output.max_chars,
                             enabled=enabled,
                             line_numbers=loop.tools.read_line_numbers,
@@ -169,10 +185,15 @@ class WorkRunner:
                         ),
                         recorder=_Recorder(writer),
                         visible_check=self.check,
-                        time_limit_s=box.remaining_s * STUDENT_SHARE,
+                        time_limit_s=student_s,
                         workspace_digest=tracker.digest,
                     )
                     result = student.run(context)
+                    if result.stop_reason == "provider_error":
+                        # the model runner failed: no check, the student did not really work
+                        raise EnvironmentFailure(
+                            "the student's model runner failed during the attempt"
+                        )
                     # the check runs in what the student's share left of the same deadline
                     verdict_run = box.exec(self.check, run_s)  # bounded by the deadline too
                     exit_code = verdict_run.exit_code
@@ -184,9 +205,6 @@ class WorkRunner:
                 writer.event("error", {"kind": "sandbox", "message": str(exc)[:2000]})
                 # the check never ran: an environment failure (exit 3), not a failed task
                 raise EnvironmentFailure(f"the sandbox failed: {exc}") from exc
-        if result is not None and result.stop_reason == "provider_error":
-            # the model runner failed: whatever the check says, the student did not work
-            raise EnvironmentFailure("the student's model runner failed during the attempt")
         verdict = Verdict(passed=passed, exit_code=exit_code, duration_s=0.0)
         tags = classify(run_signals(result, verdict, stats, self.config)).tags
         return Probe(run_id, passed, tuple(tags), diff)
