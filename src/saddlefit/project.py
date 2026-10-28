@@ -323,7 +323,10 @@ class Project:
         examples = [self.task_text(m.id) for m in train]
         kit = self._task_kit(docker_client, model_client, model_info, "generated", kind)
         # every title in the suite, then each candidate's as it is tried: none is to be repeated
-        covered = [task_title(self.task_text(m.id)) for m in self.tasks()]
+        covered = [
+            task_title((self.suite.public_dir / m.id / "task.md").read_text(encoding="utf-8"))
+            for m in self.tasks()
+        ]
         read_head = partial(generated_files.read_text, self.root, head)
 
         def request(rng: Any) -> GeneratorRequest:

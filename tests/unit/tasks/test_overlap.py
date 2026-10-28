@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from saddlefit.errors import UserError
 from saddlefit.loops.generate import NoCandidate
 from saddlefit.project import _refuse_a_repeat
 from saddlefit.tasks.mutation import Mutation, Site
@@ -174,3 +175,18 @@ def test_two_commands_at_once_see_and_keep_each_others_tasks(tmp_path: Path) -> 
     assert second.check("gen-c", other, {"src/store.py": OLD}.get) is None
     save_repeat_index(path, second.index(adding="gen-c"))
     assert set(load_repeat_index(path).tasks) == {"gen-a", "gen-c"}  # gen-a's entry survives
+
+
+def test_a_function_defined_in_a_try_block_keeps_its_name() -> None:
+    old = (
+        "try:\n    import fast\nexcept ImportError:\n\n    def speed():\n        return 1\n"
+        "\n\nLIMIT = 3\n"
+    )
+    assert symbols(old.replace("return 1", "return 2"), old=old) == {"src/store.py::speed"}
+
+
+def test_an_unreadable_repeat_index_is_a_user_error(tmp_path: Path) -> None:
+    path = tmp_path / "repeats.json"
+    path.write_text("{not json", encoding="utf-8")
+    with pytest.raises(UserError, match="titles only"):
+        load_repeat_index(path)

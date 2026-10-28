@@ -21,6 +21,7 @@ from typing import Final, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from saddlefit.errors import UserError
 from saddlefit.storage.migrations import upgrade
 
 _DEFS: Final = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
@@ -49,8 +50,15 @@ def load_repeat_index(path: Path) -> RepeatIndex:
     """The recorded symbols, or none when no generated task was kept yet."""
     if not path.exists():
         return RepeatIndex(schema_version=REPEAT_INDEX_SCHEMA_VERSION)
-    raw = json.loads(path.read_text(encoding="utf-8"))
-    return RepeatIndex.model_validate(upgrade(REPEAT_INDEX_KIND, raw, REPEAT_INDEX_SCHEMA_VERSION))
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        current = upgrade(REPEAT_INDEX_KIND, raw, REPEAT_INDEX_SCHEMA_VERSION)
+        return RepeatIndex.model_validate(current)
+    except (OSError, ValueError) as exc:  # a ValidationError and a MigrationError are ValueErrors
+        raise UserError(
+            f"cannot read {path}: {exc}; removing it restarts the index, and tasks kept so far "
+            "are then guarded against repeats by their titles only"
+        ) from exc
 
 
 def save_repeat_index(path: Path, index: RepeatIndex) -> None:
@@ -208,6 +216,9 @@ def _own_code(source: str | None) -> dict[str, str]:
         """Give each definition its lines, taking them away from the one around it."""
         for child in ast.iter_child_nodes(parent):
             if not isinstance(child, _DEFS):
+                # definitions under if, try, with or for keep their own name
+                if not isinstance(child, ast.expr):
+                    visit(child, prefix, owner)
                 continue
             name = f"{prefix}{child.name}"
             start = min([d.lineno for d in child.decorator_list] + [child.lineno])
