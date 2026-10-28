@@ -126,7 +126,9 @@ class Generation:
     def _attempt(self, request: Any, report: GenerationReport) -> Attempt:
         try:
             result = self.call(request)
-        except AccountError:
+        except AccountError as exc:
+            if exc.usage is not None:  # billed before the refusal: still counted
+                report.usd += cost_usd(exc.usage, self.budget.prices_usd_per_mtok)
             raise
         except ProviderError as exc:
             if exc.usage is not None:

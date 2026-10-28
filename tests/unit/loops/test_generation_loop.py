@@ -198,3 +198,14 @@ def test_a_refused_account_stops_the_command_and_keeps_what_it_has() -> None:
     assert report.account_refused
     assert report.stopped is not None
     assert "credit balance" in report.stopped
+
+
+def test_a_refused_account_still_counts_what_was_billed() -> None:
+    world = World(passes=[])
+
+    def call(request: GeneratorRequest) -> GeneratorResult:
+        raise AccountError("Anthropic API error 402: payment required", USAGE)
+
+    report = world.generation(call=call).run(count=1)
+    assert report.account_refused
+    assert report.usd == pytest.approx(0.10)
