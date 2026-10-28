@@ -50,7 +50,7 @@ def working_tree_files(repo: Path) -> list[str]:
         env=_git_env(),
         capture_output=True,
         check=True,
-    ).stdout.decode("utf-8")
+    ).stdout.decode("utf-8", "surrogateescape")  # git does not require UTF-8 names
     return sorted(p for p in set(out.split("\0")) if p and p.split("/", 1)[0] not in SKIPPED)
 
 

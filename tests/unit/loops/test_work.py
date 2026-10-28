@@ -1,6 +1,8 @@
 """Work mode: one deadline per run, and the final check always keeps a share of it (B11)."""
 
+import os
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -12,7 +14,7 @@ from saddlefit.errors import EnvironmentFailure
 from saddlefit.harness.loop_config import default_loop_config
 from saddlefit.harness.store import HarnessStore
 from saddlefit.loops import work as work_module
-from saddlefit.loops.work import STUDENT_SHARE, WorkRunner, write_answer
+from saddlefit.loops.work import STUDENT_SHARE, WorkRunner, copy_working_tree, write_answer
 from saddlefit.providers.base import ModelReply, ProviderError, ToolCall
 from saddlefit.providers.fake import FakeClient
 from saddlefit.sandbox.container import ExecResult, SandboxError
@@ -105,6 +107,8 @@ def test_an_attempt_ends_by_the_deadline_it_is_given(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     boxes: list[float] = []
+    clock = Clock()
+    monkeypatch.setattr(work_module.time, "monotonic", lambda: clock.now)
 
     def sandbox(*args: Any, run_timeout_s: float, **kwargs: Any) -> Any:
         boxes.append(run_timeout_s)
@@ -128,8 +132,8 @@ def test_an_attempt_ends_by_the_deadline_it_is_given(
         image="img",
     )
     with pytest.raises(EnvironmentFailure):
-        runner.attempt(default_loop_config(), seed=7, deadline=time.monotonic() + 42)
-    assert 41 < boxes[0] <= 42  # what was left once the workspace was ready
+        runner.attempt(default_loop_config(), seed=7, deadline=clock.now + 42)
+    assert boxes == [42]  # the clock is frozen: what was left once the workspace was ready
 
 
 def test_a_sandbox_that_fails_is_an_environment_failure(
@@ -356,3 +360,18 @@ def test_an_answer_with_non_utf8_bytes_is_written_as_is(tmp_path: Path) -> None:
     raw = b"diff --git a/latin.txt b/latin.txt\n+caf\xe9\n"
     write_answer(tmp_path / "a.patch", raw.decode("utf-8", "surrogateescape"))
     assert (tmp_path / "a.patch").read_bytes() == raw
+
+
+@pytest.mark.skipif(
+    os.name == "nt" or sys.platform == "darwin",
+    reason="needs a filesystem that keeps non-UTF-8 names",
+)
+def test_a_non_utf8_file_name_is_copied(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    name = os.fsdecode(b"caf\xe9.txt")
+    (repo / name).write_text("x\n", encoding="utf-8")
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True, env=_git_env())
+    dest = tmp_path / "copy"
+    copy_working_tree(repo, dest)
+    assert (dest / name).exists()
