@@ -5,6 +5,7 @@ import pytest
 from pydantic import ValidationError
 
 from saddlefit.schema_registry import SCHEMA_MODELS
+from saddlefit.storage import fit_state as fit_state_module
 from saddlefit.storage.fit_state import (
     FitLocked,
     FitState,
@@ -81,3 +82,33 @@ def test_a_v1_report_upgrades_with_no_refusals(kind: str) -> None:
     v2 = upgrade(PROGRESS_KIND, v1, 2)
     assert v2["tutor"] == {"calls": 2, "usd": 0.3, "refused": {}}
     assert (v2["kind"], v2["schema_version"]) == (kind, 2)
+
+
+class _FakeFcntl:
+    F_FULLFSYNC = 51
+
+    def __init__(self, fails: bool) -> None:
+        self.fails = fails
+        self.calls: list[tuple[int, int]] = []
+
+    def fcntl(self, fd: int, cmd: int) -> int:
+        self.calls.append((fd, cmd))
+        if self.fails:
+            raise OSError("not supported")
+        return 0
+
+
+@pytest.mark.parametrize("fails", [False, True])
+def test_a_save_flushes_past_the_drive_cache_when_it_can(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fails: bool
+) -> None:
+    fake = _FakeFcntl(fails)
+    synced: list[int] = []
+    monkeypatch.setattr(fit_state_module, "fcntl", fake)
+    monkeypatch.setattr(fit_state_module.os, "fsync", synced.append)
+    save_fit_state(tmp_path, FitState(schema_version=2, rounds_done=1))
+    assert fake.calls  # F_FULLFSYNC was asked for
+    assert all(cmd == _FakeFcntl.F_FULLFSYNC for _, cmd in fake.calls)
+    # fsync only where full sync is not supported
+    assert len(synced) == (len(fake.calls) if fails else 0)
+    assert load_fit_state(tmp_path).rounds_done == 1

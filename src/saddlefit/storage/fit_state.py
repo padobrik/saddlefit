@@ -16,6 +16,11 @@ from typing import Final, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+try:
+    import fcntl
+except ImportError:  # Windows
+    fcntl = None  # type: ignore[assignment]
+
 from saddlefit.errors import UserError
 from saddlefit.storage.migrations import upgrade
 from saddlefit.storage.migrations.fit_state import FIT_STATE_KIND
@@ -50,6 +55,18 @@ def load_fit_state(root: Path) -> FitState:
     return FitState.model_validate(upgrade(FIT_STATE_KIND, raw, FIT_STATE_SCHEMA_VERSION))
 
 
+def _flush(fd: int) -> None:
+    """Flush to the disk itself: on macOS ``fsync`` stops at the drive's cache."""
+    full = getattr(fcntl, "F_FULLFSYNC", None) if fcntl is not None else None
+    if full is not None:
+        try:
+            fcntl.fcntl(fd, full)
+            return
+        except OSError:
+            pass  # a file system without full sync: fsync is the best there is
+    os.fsync(fd)
+
+
 def _sync_directory(root: Path) -> None:
     """Make the rename itself durable; Windows has no directory handles to sync."""
     if os.name == "nt":
@@ -59,13 +76,17 @@ def _sync_directory(root: Path) -> None:
     except OSError:
         return  # an unreadable directory: the file is replaced, only less durably
     try:
-        os.fsync(fd)
+        _flush(fd)
     finally:
         os.close(fd)
 
 
 def save_fit_state(root: Path, state: FitState) -> None:
-    """Replace the state atomically, so a crash leaves the old count, never a broken file."""
+    """Replace the state atomically, so a crash leaves the old count, never a broken file.
+
+    On Linux and macOS a returned save is on disk. On Windows the rename is not written
+    through, so a power loss right after a save can bring back the previous state.
+    """
     root.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=root, prefix=".tmp-", suffix=".json")
     try:
@@ -73,7 +94,7 @@ def save_fit_state(root: Path, state: FitState) -> None:
             handle.write(state.model_dump_json(indent=2) + "\n")
             # on disk before the rename, so a power loss keeps the old file or the new one
             handle.flush()
-            os.fsync(handle.fileno())
+            _flush(handle.fileno())
         os.replace(tmp, root / FIT_STATE_FILE)
         _sync_directory(root)
     except BaseException:
