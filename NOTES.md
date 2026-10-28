@@ -277,3 +277,6 @@ Assumptions taken where the spec leaves a detail open. Deviations from the spec 
   `evaluation.timeout_seconds`, or less when the fast loop's `time_budget_minutes` has less
   left, so the whole command, the first attempt included, stays within that budget. The
   student gets 75% of the attempt; the final check runs in the rest of the same deadline.
+  Tool commands are capped at the student's share; a model call is not cut off mid-request,
+  so one that starts late can still run up to the client timeout past it (as in the baseline).
+  The budget is strict for the sandbox, not for an in-flight model request.
