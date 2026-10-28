@@ -255,3 +255,53 @@ def test_a_failing_model_runner_is_an_environment_failure(
     )
     with pytest.raises(EnvironmentFailure, match="model runner failed"):
         runner.attempt(default_loop_config(), seed=7)
+
+
+def test_container_start_up_counts_against_the_deadline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clock = Clock()
+
+    class SlowStart(FakeBox):
+        def __enter__(self) -> "FakeBox":
+            clock.now += 20  # Docker takes twenty seconds to start the container
+            self.deadline = clock.now + self.run_s  # what Sandbox.start does
+            return self
+
+    boxes: list[SlowStart] = []
+
+    def sandbox(*args: Any, run_timeout_s: float, **kwargs: Any) -> SlowStart:
+        box = SlowStart(clock, run_timeout_s)
+        box.run_s = run_timeout_s
+        boxes.append(box)
+        return box
+
+    monkeypatch.setattr(work_module, "Sandbox", sandbox)
+    monkeypatch.setattr(work_module.time, "monotonic", lambda: clock.now)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True, env=_git_env())
+    store = HarnessStore(tmp_path / "harness")
+    store.init()
+    loop = default_loop_config().model_copy(
+        update={"finish_gate": default_loop_config().finish_gate.model_copy(update={"run": None})}
+    )
+    runner = WorkRunner(
+        repo=repo,
+        config=Config(schema_version=3, project="p"),
+        task_text="t",
+        check="true",
+        harness_dir=store.path,
+        state=tmp_path / "state",
+        client_factory=lambda: FakeClient(
+            lambda m, t, p: ModelReply(
+                tool_calls=(ToolCall(id="f", name="finish", arguments={"summary": "x"}),)
+            )
+        ),
+        docker_client=object(),
+        image="img",
+    )
+    runner.attempt(loop, seed=7, deadline=clock.now + 42)
+    # 42 s were left when the attempt began; 20 went to start-up, so only 22 remain
+    assert boxes[0].deadline == pytest.approx(1000.0 + 42)
+    assert boxes[0].checks[-1] == pytest.approx(22)
