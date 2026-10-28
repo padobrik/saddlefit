@@ -9,6 +9,7 @@ from pathlib import Path
 from saddlefit.eval.decisions import ablation_due
 from saddlefit.loops.ablation import ablate
 from saddlefit.loops.middle import MiddleLoop, RoundReport
+from saddlefit.loops.progress import FitProgress
 from saddlefit.storage.fit_state import (
     FIT_STATE_SCHEMA_VERSION,
     FitState,
@@ -22,6 +23,7 @@ def run_rounds(
     root: Path,
     rounds: int,
     on_round: Callable[[RoundReport], None] | None = None,
+    progress: FitProgress | None = None,
 ) -> list[RoundReport]:
     """Run ``rounds`` more rounds, continuing the state saved in ``root`` by the last run.
 
@@ -33,8 +35,9 @@ def run_rounds(
     pending: list[str] = []
     model_changed = _model_changed(state, loop.student_model, loop.student_digest)
     # also resumes an ablation that a failure interrupted after its round was saved
+    loop.progress = progress
     if ablation_due(accepted, model_changed=model_changed):
-        pending = [r.proposal_id for r in ablate(loop) if r.pruned]
+        pending = _ablate(loop, progress)
         accepted = 0
     done = state.rounds_done
     base = (state.tutor_calls - loop.spent_calls, state.tutor_usd - loop.spent_usd)
@@ -48,18 +51,28 @@ def run_rounds(
     def save(rounds_done: int) -> None:
         save_fit_state(root, _state(rounds_done, accepted, loop, spent(), refusals))
 
-    # every tutor call is saved as soon as it is paid for: a crash loses at most the one in flight
+    first_calls, first_usd = spent()
+
+    def charged() -> None:
+        # every tutor call is saved as soon as it is paid for: a crash loses at most that one
+        save(current)
+        if progress is not None:
+            calls, usd = spent()
+            progress.charged(calls - first_calls, usd - first_usd)
+
     def refused(reason: str) -> None:
         # counted and saved at once, so a round that fails later still keeps it
         refusals[reason.split(":", 1)[0]] += 1
         save(current)
 
-    loop.on_charge = lambda: save(current)
+    loop.on_charge = charged
     loop.on_refusal = refused
     save(done)
     reports = []
     for index in range(done, done + rounds):
         current = index
+        if progress is not None:
+            progress.start_round(index - done + 1)
         try:
             report = loop.round(index)
         except BaseException:  # Ctrl+C included
@@ -72,13 +85,20 @@ def run_rounds(
         current = index + 1
         save(index + 1)
         if ablation_due(accepted, model_changed=False):
-            report.pruned += [r.proposal_id for r in ablate(loop) if r.pruned]
+            report.pruned += _ablate(loop, progress)
             accepted = 0
             save(index + 1)
         reports.append(report)
         if on_round is not None:
             on_round(report)
     return reports
+
+
+def _ablate(loop: MiddleLoop, progress: FitProgress | None) -> list[str]:
+    """Run ablation, reported as its own stage; the IDs of the changes it pruned."""
+    if progress is not None:
+        progress.stage("ablation")
+    return [r.proposal_id for r in ablate(loop) if r.pruned]
 
 
 def _model_changed(state: FitState, model: str, digest: str | None) -> bool:

@@ -21,6 +21,7 @@ from saddlefit.harness.loop_config import clamp, load_loop_config
 from saddlefit.harness.store import HarnessStore
 from saddlefit.loops.baseline import BaselineResult, BaselineRunner, RunOutcome
 from saddlefit.loops.middle import BatchResult
+from saddlefit.loops.progress import ProgressSink
 from saddlefit.providers.base import ModelClient
 from saddlefit.storage.runs import read_run
 from saddlefit.tasks.models import TaskMeta
@@ -43,6 +44,8 @@ class DockerPractice:
     tool_mode: Literal["native", "json"] = "native"
     # sees training runs only: a held-out run's task ID and outcome stay here (B10)
     on_run: Callable[[RunOutcome], None] | None = None
+    # every run, any split, as a count only
+    progress: ProgressSink | None = None
     _held_out: dict[str, dict[str, bool | None]] = field(default_factory=dict, repr=False)
 
     @property
@@ -82,9 +85,13 @@ class DockerPractice:
                 tool_mode=self.tool_mode,
                 on_run=self._report_training_run,
             )
+            if self.progress is not None:
+                self.progress.batch(len(metas) * self.runs_per_task)
             return runner.run(metas)
 
     def _report_training_run(self, run: RunOutcome) -> None:
+        if self.progress is not None:
+            self.progress.tick()
         if self.on_run is not None and run.split == "train":
             self.on_run(run)
 

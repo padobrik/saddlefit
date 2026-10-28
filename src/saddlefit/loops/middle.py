@@ -34,6 +34,7 @@ from saddlefit.eval.decisions import (
 from saddlefit.eval.tamper import diff_paths
 from saddlefit.harness.proposals import Proposal, ProposalError, ScriptLinter, apply_proposal
 from saddlefit.harness.store import MAIN, HarnessStore, HarnessStoreError
+from saddlefit.loops.progress import ProgressSink
 from saddlefit.playbook import tutor_lines
 from saddlefit.providers.base import ModelClient, ProviderError, Usage
 from saddlefit.providers.cost import cost_usd
@@ -45,6 +46,7 @@ from saddlefit.storage.library import (
     next_change_id,
     write_record,
 )
+from saddlefit.storage.progress import Stage
 from saddlefit.tutor.diagnose import MAX_RUNS, RunDigest, TutorRequest, diagnose
 from saddlefit.tutor.reflect import Decision, record_lesson, reflect
 
@@ -161,12 +163,14 @@ class MiddleLoop:
     on_charge: Callable[[], None] | None = None
     # called with each refusal's "<kind>: <reason>" as soon as it happens
     on_refusal: Callable[[str], None] | None = None
+    progress: ProgressSink | None = None
 
     def round(self, index: int) -> RoundReport:
         batch = pick_batch(self.train_tasks, index, self.batch_size)
         budget = Budget(
             self.max_calls_per_round, self.max_usd_per_round, self.prices, on_charge=self._charged
         )
+        self._stage("train")
         before = self.practice.run_batch(MAIN, batch)
         report = RoundReport(batch=batch, train_before=_solved(before))
         tried: list[Tried] = []
@@ -180,6 +184,8 @@ class MiddleLoop:
         # main moves only now: every candidate is decided before any lesson is written
         for t, status in decided:
             report.records.append(self._record(t, status, report.train_before, len(batch)))
+        if decided:
+            self._stage("lessons")
         for t, status in decided:
             report.lessons += self._reflect(t, status, report.train_before, len(batch), budget)
         report.tutor_calls, report.tutor_usd = budget.calls, budget.usd
@@ -189,6 +195,10 @@ class MiddleLoop:
         report.refusals.append(reason)
         if self.on_refusal is not None:
             self.on_refusal(reason)
+
+    def _stage(self, name: Stage, candidate: int | None = None) -> None:
+        if self.progress is not None:
+            self.progress.stage(name, candidate)
 
     def _charged(self, usd: float) -> None:
         self.spent_calls += 1
@@ -233,9 +243,10 @@ class MiddleLoop:
         tried: list[Tried],
     ) -> None:
         """Fill ``tried``; a candidate is in it from the moment its branch exists."""
-        for _ in range(self.candidates_per_round):
+        for number in range(1, self.candidates_per_round + 1):
             if not budget.can_call():
                 break
+            self._stage("tutor", number)
             files = self.store.texts()
             request = TutorRequest(
                 runs=before.failures[:MAX_RUNS],
@@ -260,9 +271,11 @@ class MiddleLoop:
                 self._refused(report, f"{REFUSED_PROPOSAL}: {exc}")
                 continue
             try:
+                self._stage("candidate", number)
                 after = self.practice.run_batch(ref, batch)
                 held_out = None
                 if batch_gate(before.solved, after.solved):
+                    self._stage("held-out", number)
                     held_out = self.practice.compare_held_out(MAIN, ref)
             except Exception:
                 with contextlib.suppress(HarnessStoreError):

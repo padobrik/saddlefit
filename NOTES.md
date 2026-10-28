@@ -289,3 +289,19 @@ Assumptions taken where the spec leaves a detail open. Deviations from the spec 
   Tool commands are capped at the student's share; a model call is not cut off mid-request,
   so one that starts late can still run up to the client timeout past it (as in the baseline).
   The budget is strict for the sandbox, not for an in-flight model request.
+- **Fit progress and `saddlefit status` (#113).** The loops report to a `ProgressSink`: the
+  middle loop its stages (`train`, `tutor` k, `candidate` k, `held-out` k, `lessons`,
+  `ablation`), the practice the runs it starts and each one that finishes, any split, as a
+  count only. `FitProgress` keeps `.saddlefit/progress.json` (`schema_version: 1`) current and
+  removes it when `fit` ends cleanly; a failed fit keeps it. `saddlefit status` reads it and
+  `fit.json` without the fit lock and tells running, interrupted and idle apart. A fit counts
+  as running only while `fit.lock` holds its pid and that process lives; `prune` and
+  `report --final` take the same lock, so status names the lock's holder and offers its
+  removal only when that process is gone. Known limit: if a fit is killed hard (the lock
+  stays) and the OS gives its pid to another process, status says running; `fit` itself
+  still refuses to start while the lock exists. Telling them apart needs each process's
+  start time, which differs per OS. Off a terminal `fit` prints one plain line per stage change and finished run. On a
+  terminal it shows one framed status line (rich `Live`, 30 fps, about 5 s a lap) with round
+  lines printed above it; when no run has finished for longer than
+  `evaluation.timeout_seconds` the ball stops, the frame turns amber and the line says how
+  long. Rich's own output is used, without the `?2026` synchronized-output wrapper.
