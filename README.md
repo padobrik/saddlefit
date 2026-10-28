@@ -104,6 +104,43 @@ saddlefit report
 
 Every command also accepts `--json`.
 
+### More tasks than your history holds
+
+A fit needs tasks the student solves sometimes. Two commands add them, both through the
+generator model in `.saddlefit/saddlefit.yaml`, within its `max_calls` and `max_usd` (fill in
+its prices first):
+
+```bash
+saddlefit tasks generate --type feature --count 5   # or --type bugfix
+saddlefit tasks mutate --count 5                     # injected bugs that break existing tests
+```
+
+A task is kept only if its hidden tests fail without the reference solution and pass with it
+in a fresh container, and if the current student then passes it in one to four of five runs.
+Generated and mutated tasks join the training and held-out splits, never control.
+
+### Watching a fit
+
+On a terminal `fit` shows one framed status line (round, candidate, stage, runs done,
+spending); the frame turns amber when no run has finished for longer than a run may take.
+From another shell, `saddlefit status` says whether a fit is running, where it is or where
+it stopped, and what fits have cost.
+
+### Work mode
+
+```bash
+saddlefit run "Add a --dry-run flag to the export command" --check "pytest -q tests/test_export.py"
+```
+
+The student works in a copy of your working tree. If the check fails, the fast loop probes a
+few mechanics from the starter playbook, combines the ones that help and checks once more.
+The answer is a patch in `.saddlefit/answers/`; your files are not touched. A change the fast
+loop needed is recorded in `.saddlefit/journal/`: on probation when the combined change
+passed, rejected when it did not. Neither enters the harness by itself; having `fit` test
+probation entries on held-out tasks is planned (#147). `--json` says whether the check
+passed; `run` exits with 4 when it did not, so `saddlefit run … && git apply <answer>` never
+applies a failing patch.
+
 ## Where it comes from
 
 The middle loop follows AutoSaddler; the fast loop and the improver that improves itself

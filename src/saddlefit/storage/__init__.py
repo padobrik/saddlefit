@@ -1,1 +1,1 @@
-"""JSONL runs, library, playbook and journal; schema migrations."""
+"""JSONL runs, library, journal and progress; schema migrations."""
