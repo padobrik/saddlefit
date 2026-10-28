@@ -755,17 +755,18 @@ class Project:
             "tutor_calls": state.tutor_calls,
             "tutor_usd": round(state.tutor_usd, 4),
         }
+        # prune and report --final hold the same lock: whoever has it, and whether it runs
+        owner = lock_owner(self.state)
+        lock = None if owner is None else {"pid": owner, "alive": process_alive(owner)}
         record = load_progress(self.state)
         if record is None:
-            return {"state": "idle", **totals}
+            return {"state": "idle", "lock": lock, **totals}
         # a failed fit keeps progress.json but drops the lock, and its pid can be reused
-        owner = lock_owner(self.state)
         active = owner == record.pid and process_alive(record.pid)
         return {
             "state": "running" if active else "interrupted",
             "progress": record.model_dump(mode="json"),
-            # prune and report --final hold the same lock: whoever has it, and whether it runs
-            "lock": None if owner is None else {"pid": owner, "alive": process_alive(owner)},
+            "lock": lock,
             **totals,
         }
 

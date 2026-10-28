@@ -540,7 +540,7 @@ def status_text(data: dict[str, Any], now: datetime) -> str:
         f"${data['tutor_usd']:.2f}"
     )
     if data["state"] == "idle":
-        return f"idle; {totals}"
+        return f"idle; {totals}{_lock_hint(data.get('lock'))}"
     record = ProgressRecord.model_validate(data["progress"])
     raw = data["progress"]
     when = f"started {_ago(raw['started_at'], now)}, last update {_ago(raw['updated_at'], now)}"

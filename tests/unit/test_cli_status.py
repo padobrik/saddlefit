@@ -119,3 +119,15 @@ def test_only_a_finished_run_counts_as_progress_and_a_batch_size_prints_nothing(
     progress.batch(6)  # the batch's size alone: no line
     progress.tick()  # a run finished
     assert seen == [(False, True), (False, True), (False, True), (False, False), (True, True)]
+
+
+def test_idle_still_names_a_lock_that_prune_holds(tmp_path: Path) -> None:
+    project = project_with(tmp_path)  # a clean fit left no progress.json
+    with fit_lock(project.state):
+        data = project.status()
+    assert data["state"] == "idle"
+    assert data["lock"] == {"pid": os.getpid(), "alive": True}
+    assert status_text(data, NOW) == (
+        "idle; all fits: 1 rounds, 3 tutor calls, $2.41\n"
+        f".saddlefit/fit.lock is held by pid {os.getpid()} (a fit, prune or report --final)"
+    )
