@@ -75,7 +75,9 @@ def test_a_v1_fit_json_reads_as_v2_with_no_refusals(tmp_path: Path) -> None:
     assert state.refusals == {}
 
 
-def test_a_v1_progress_report_upgrades_with_no_refusals() -> None:
-    v1 = {"schema_version": 1, "kind": "progress", "tutor": {"calls": 2, "usd": 0.3}}
+@pytest.mark.parametrize("kind", ["progress", "final"])
+def test_a_v1_report_upgrades_with_no_refusals(kind: str) -> None:
+    v1 = {"schema_version": 1, "kind": kind, "tutor": {"calls": 2, "usd": 0.3}}
     v2 = upgrade(PROGRESS_KIND, v1, 2)
     assert v2["tutor"] == {"calls": 2, "usd": 0.3, "refused": {}}
+    assert (v2["kind"], v2["schema_version"]) == (kind, 2)

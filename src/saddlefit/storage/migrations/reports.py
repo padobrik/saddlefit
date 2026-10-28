@@ -6,6 +6,7 @@ from typing import Final
 
 from saddlefit.storage.migrations import Record, register
 
+# Names the format, like "run-record": progress and final reports share it.
 PROGRESS_KIND: Final = "progress-report"
 
 
