@@ -32,6 +32,7 @@ def run_rounds(
     and after any round that brings the accepted changes since the last ablation to three.
     """
     state = load_fit_state(root)
+    loop.account_refused = None  # a loop can serve more than one fit
     accepted = state.accepted_since_ablation
     pending: list[str] = []
     model_changed = _model_changed(state, loop.student_model, loop.student_digest)
@@ -85,17 +86,23 @@ def run_rounds(
         # the round is saved before ablation, so a failing ablation never repeats it
         current = index + 1
         save(index + 1)
-        if loop.account_refused is not None:
-            # the round is saved whole; a later fit resumes any ablation that is due
-            raise EnvironmentFailure(loop.account_refused)
-        if ablation_due(accepted, model_changed=False):
+        # with the tutor's account refused, the round is saved and shown, then the fit stops;
+        # a later fit resumes any ablation that is due
+        if loop.account_refused is None and ablation_due(accepted, model_changed=False):
             report.pruned += _ablate(loop, progress)
             accepted = 0
             save(index + 1)
         reports.append(report)
         if on_round is not None:
             on_round(report)
+        _stop_if_refused(loop)
     return reports
+
+
+def _stop_if_refused(loop: MiddleLoop) -> None:
+    """End the fit once the tutor's account was refused; its last round is already saved."""
+    if loop.account_refused is not None:
+        raise EnvironmentFailure(loop.account_refused)
 
 
 def _ablate(loop: MiddleLoop, progress: FitProgress | None) -> list[str]:

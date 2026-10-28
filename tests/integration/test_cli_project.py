@@ -505,9 +505,17 @@ def test_a_refused_generator_account_exits_with_3(
 def test_an_unusable_anthropic_account_at_start_exits_with_3(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    repo = build(tmp_path / "repo")
+    invoke(repo, "init", "--model", "qwen3:8b", monkeypatch=monkeypatch)
+    config = repo / ".saddlefit" / "saddlefit.yaml"
+    head, generator = config.read_text(encoding="utf-8").split("generator:\n", 1)
+    unpriced, priced = "    input: 0.0\n    output: 0.0\n", "    input: 10.0\n    output: 50.0\n"
+    config.write_text(f"{head}generator:\n{generator.replace(unpriced, priced, 1)}", "utf-8")
+
     def no_account(model: str) -> None:
         raise AccountError("no Anthropic credentials found; set ANTHROPIC_API_KEY")
 
     monkeypatch.setattr(cli, "AnthropicClient", no_account)
-    with pytest.raises(EnvironmentFailure, match="no Anthropic credentials"):
-        cli._anthropic("claude-fable-5-1")
+    monkeypatch.setattr(cli, "_student", lambda p: (ModelInfo(provider="fake", model="m"), None))
+    monkeypatch.setattr(cli, "_docker", object)
+    assert run_main(monkeypatch, "tasks", "generate", "--type", "feature") == 3

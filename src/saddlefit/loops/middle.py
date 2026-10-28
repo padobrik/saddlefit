@@ -265,6 +265,7 @@ class MiddleLoop:
                 result = diagnose(self.tutor, request)
             except AccountError as exc:
                 # no key, no access or no credit: the rest of the fit would only refuse
+                budget.charge(exc.usage)  # counted like any failed call
                 raise EnvironmentFailure(_REFUSED_ACCOUNT.format(exc)) from exc
             except ProviderError as exc:  # TutorError included; the call was paid for
                 budget.charge(exc.usage)
