@@ -6,6 +6,7 @@ from collections import Counter
 from collections.abc import Callable
 from pathlib import Path
 
+from saddlefit.errors import EnvironmentFailure
 from saddlefit.eval.decisions import ablation_due
 from saddlefit.loops.ablation import ablate
 from saddlefit.loops.middle import MiddleLoop, RoundReport
@@ -84,6 +85,9 @@ def run_rounds(
         # the round is saved before ablation, so a failing ablation never repeats it
         current = index + 1
         save(index + 1)
+        if loop.account_refused is not None:
+            # the round is saved whole; a later fit resumes any ablation that is due
+            raise EnvironmentFailure(loop.account_refused)
         if ablation_due(accepted, model_changed=False):
             report.pruned += _ablate(loop, progress)
             accepted = 0

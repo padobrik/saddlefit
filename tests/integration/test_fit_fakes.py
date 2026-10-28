@@ -549,3 +549,24 @@ def test_a_refused_tutor_account_stops_the_fit(tmp_path: Path) -> None:
     with pytest.raises(EnvironmentFailure, match="credit balance"):
         run_rounds(loop, tmp_path, 1)
     assert load_fit_state(tmp_path).refusals == {}  # not counted as the tutor refusing
+
+
+class BrokeAtReflection(FakeTutor):
+    """Proposes as usual, then the credit runs out at the first lesson."""
+
+    def chat(
+        self, messages: Sequence[Message], tools: Sequence[ToolSpec] | None, params: GenParams
+    ) -> ModelReply:
+        if tools and tools[0].name == "record_lesson":
+            raise AccountError("Anthropic API error 400: Your credit balance is too low")
+        return super().chat(messages, tools, params)
+
+
+def test_a_refused_reflection_still_saves_the_decided_round(tmp_path: Path) -> None:
+    loop, _ = make_loop(tmp_path, BrokeAtReflection([USELESS, RIGHT]))
+    with pytest.raises(EnvironmentFailure, match="credit balance"):
+        run_rounds(loop, tmp_path, 1)
+    state = load_fit_state(tmp_path)
+    # the change was accepted before the lesson: the round counts, so a resumed fit moves on
+    assert state.rounds_done == 1
+    assert state.accepted_since_ablation == 1

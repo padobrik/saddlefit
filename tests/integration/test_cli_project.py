@@ -23,7 +23,7 @@ from saddlefit.harness.store import HarnessStore, HarnessStoreError
 from saddlefit.loops.baseline import MAX_REPLY_TOKENS
 from saddlefit.loops.generate import Attempt, GenerationReport
 from saddlefit.project import Project, remove_tree
-from saddlefit.providers.base import ModelInfo
+from saddlefit.providers.base import AccountError, ModelInfo
 from saddlefit.providers.retry import LOCAL_TIMEOUT_S
 
 pytestmark = pytest.mark.integration
@@ -500,3 +500,14 @@ def test_a_refused_generator_account_exits_with_3(
     result = runner.invoke(app, ["tasks", "generate", "--type", "feature", "--count", "3"])
     assert isinstance(result.exception, EnvironmentFailure)  # main() turns it into exit 3
     assert "kept gen-feature-a" in result.output  # what was kept is still reported
+
+
+def test_an_unusable_anthropic_account_at_start_exits_with_3(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def no_account(model: str) -> None:
+        raise AccountError("no Anthropic credentials found; set ANTHROPIC_API_KEY")
+
+    monkeypatch.setattr(cli, "AnthropicClient", no_account)
+    with pytest.raises(EnvironmentFailure, match="no Anthropic credentials"):
+        cli._anthropic("claude-fable-5-1")

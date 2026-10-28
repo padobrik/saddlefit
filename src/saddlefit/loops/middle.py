@@ -109,6 +109,7 @@ class Tried:
 # why a tutor attempt produced no candidate: the call failed or its answer was unusable, or the
 # proposal was refused (a disallowed file, a failed linter, a patch that does not apply)
 REFUSED_BY_TUTOR: Final = "tutor"
+_REFUSED_ACCOUNT: Final = "the tutor's provider refused the account: {}"
 REFUSED_PROPOSAL: Final = "proposal"
 
 
@@ -164,6 +165,9 @@ class MiddleLoop:
     on_charge: Callable[[], None] | None = None
     # called with each refusal's "<kind>: <reason>" as soon as it happens
     on_refusal: Callable[[str], None] | None = None
+    # set when a reflection found the tutor's account refused: the round still counts, and
+    # the fit stops once it is saved
+    account_refused: str | None = None
     progress: ProgressSink | None = None
 
     def round(self, index: int) -> RoundReport:
@@ -261,9 +265,7 @@ class MiddleLoop:
                 result = diagnose(self.tutor, request)
             except AccountError as exc:
                 # no key, no access or no credit: the rest of the fit would only refuse
-                raise EnvironmentFailure(
-                    f"the tutor's provider refused the account: {exc}"
-                ) from exc
+                raise EnvironmentFailure(_REFUSED_ACCOUNT.format(exc)) from exc
             except ProviderError as exc:  # TutorError included; the call was paid for
                 budget.charge(exc.usage)
                 report.refused += 1
@@ -328,7 +330,7 @@ class MiddleLoop:
         budget: Budget,
     ) -> int:
         """One optional lesson per decision; returns 1 if a lesson was recorded."""
-        if not budget.can_call():
+        if not budget.can_call() or self.account_refused is not None:
             return 0
         decision = Decision(t.proposal, status, before, t.train_after, tasks)
         try:
@@ -337,10 +339,11 @@ class MiddleLoop:
             return 0  # an accepted change may have removed the file; no lesson then
         try:
             result = reflect(self.tutor, decision, experience)
-        except AccountError as exc:
-            raise EnvironmentFailure(f"the tutor's provider refused the account: {exc}") from exc
         except ProviderError as exc:
             budget.charge(exc.usage)
+            if isinstance(exc, AccountError):
+                # the decision is already made and recorded: finish the round, then stop
+                self.account_refused = _REFUSED_ACCOUNT.format(exc)
             return 0
         budget.charge(result.usage)
         if result.lesson is None:

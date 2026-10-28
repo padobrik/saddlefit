@@ -25,7 +25,7 @@ from saddlefit.loops.middle import RoundReport
 from saddlefit.orbit import OrbitStatus
 from saddlefit.project import Project
 from saddlefit.providers.anthropic import AnthropicClient
-from saddlefit.providers.base import ModelClient, ModelInfo, ProviderError
+from saddlefit.providers.base import AccountError, ModelClient, ModelInfo, ProviderError
 from saddlefit.providers.openai_compat import OpenAICompatibleClient, context_window_problem
 from saddlefit.storage.progress import ProgressRecord
 from saddlefit.tasks.generator import TASK_KINDS
@@ -145,6 +145,14 @@ def tasks_mine(
     )
 
 
+def _anthropic(model: str) -> AnthropicClient:
+    """The Anthropic client; an account it cannot use is an environment failure (exit 3)."""
+    try:
+        return AnthropicClient(model)
+    except AccountError as exc:
+        raise EnvironmentFailure(str(exc)) from exc
+
+
 def _generator_ready(config: Config, command: str) -> None:
     """Refuse before any spending: the generator must be real and priced."""
     if config.generator.provider != "anthropic":
@@ -192,7 +200,7 @@ def tasks_mutate(
     report = project.mutate_tasks(
         count=count,
         docker_client=_docker(),
-        generator_client=AnthropicClient(config.generator.model),
+        generator_client=_anthropic(config.generator.model),
         model_client=model_client,
         model_info=model_info,
         runner=mining_runner(project),
@@ -217,7 +225,7 @@ def tasks_generate(
         kind=type_,
         count=count,
         docker_client=_docker(),
-        generator_client=AnthropicClient(config.generator.model),
+        generator_client=_anthropic(config.generator.model),
         model_client=model_client,
         model_info=model_info,
     )
@@ -458,7 +466,7 @@ def fit(
         return project.fit(
             docker_client=_docker(),
             model_client=model_client,
-            tutor_client=AnthropicClient(config.tutor.model),
+            tutor_client=_anthropic(config.tutor.model),
             model_info=model_info,
             rounds=rounds,
             on_round=on_round,
