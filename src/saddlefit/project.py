@@ -109,7 +109,12 @@ from saddlefit.tasks.mutation import (
     related_tests,
     write_issue,
 )
-from saddlefit.tasks.overlap import RepeatGuard, symbols_between
+from saddlefit.tasks.overlap import (
+    RepeatGuard,
+    load_repeat_index,
+    save_repeat_index,
+    symbols_between,
+)
 from saddlefit.tasks.splits import add_task, new_lock
 from saddlefit.tasks.suite import SuitePaths, load_lock, load_meta, materialize, save_lock
 
@@ -167,6 +172,7 @@ def _mutated_reader(root: Path, head: str, pending: dict[str, Any]) -> Callable[
     """Old files for a mutation task's reference patch, which undoes the pending mutation."""
 
     def read(path: str) -> str | None:
+        """The mutated text for the mutated file, the committed one for any other."""
         mutation = pending["mutation"]
         if path == mutation.path:
             return str(mutation.mutated)
@@ -540,14 +546,10 @@ class Project:
                 )
             return sum(run.passed for run in counted)
 
+        in_suite = {meta.id for meta in self.tasks()}
+        recorded = load_repeat_index(self.suite.repeats).tasks
         repeats = RepeatGuard(
-            {
-                meta.id: evaluator.reference_symbols(
-                    meta.id, partial(generated_files.read_text, self.root, meta.repo.base_commit)
-                )
-                for meta in self.tasks()
-                if meta.source in {"generated", "mutation"} and meta.repo.base_commit
-            }
+            {task_id: frozenset(s) for task_id, s in recorded.items() if task_id in in_suite}
         )
 
         def keep(task_id: str, task: GeneratedTask) -> None:
@@ -556,6 +558,7 @@ class Project:
                 self.suite, add_task(lock, task_id, source, generated_files.content_hash(task))
             )
             repeats.kept(task_id)  # later candidates of this command must not repeat it
+            save_repeat_index(self.suite.repeats, repeats.index())
 
         return TaskKit(
             sealed_root=sealed,

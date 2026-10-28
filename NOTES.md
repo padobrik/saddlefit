@@ -323,13 +323,15 @@ Assumptions taken where the spec leaves a detail open. Deviations from the spec 
   held-out gate: a change learned on a train task passes its copy. Now the generator is shown
   the title of every task in the suite, and of every candidate the command already tried,
   and told not to repeat them. The mechanical check is `tasks.overlap`: it applies the
-  reference patch to the files at the task's base commit and names each function or class
-  whose own code changed (blank and comment lines, and imports, do not count). A candidate
-  that changes a function any task in the suite changes, or one kept earlier in the same
-  command, is dropped before sealing and judging, as `repeats <task id>: both change <name>`.
-  The existing tasks' symbols come from `Evaluator.reference_symbols`, so the patches never
-  leave `saddlefit.eval` (test 11). Mined tasks are not compared: they have no reference patch.
-  A mutation's function is known as soon as it is picked, so `tasks mutate` refuses a repeat
-  before the generator call and it costs no `max_calls`. `git apply` runs with no user or
-  system config and a ceiling above its directory: Git for Windows turns on `autocrlf`, which
-  made every line look changed. Lines split only where Python counts them (\n, \r\n, \r).
+  candidate's reference patch to the files at the base commit and names each function or
+  class whose own code changed (blank and comment lines, and imports, do not count). A
+  candidate that changes a function a kept task changes is dropped before sealing and
+  judging, as `repeats <task id>: both change <name>`; `tasks mutate` refuses such a mutation
+  before the generator call. The symbols of each kept task go to `tasks/repeats.json`
+  (`repeat-index`, schema_version 1) when it is kept, computed from the candidate's own patch
+  before sealing, so the check never reads the sealed store: the evaluation-integrity rule
+  forbids the generator any sealed data, and a first version that read the reference patches
+  through `saddlefit.eval` was rejected for it. Tasks kept before this change have no entry;
+  only their titles guard against repeats. `git apply` runs with no user or system config and
+  a ceiling above its directory (Git for Windows turns on `autocrlf`, which made every line
+  look changed), and lines split only where Python counts them.

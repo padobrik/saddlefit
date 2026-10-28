@@ -9,6 +9,7 @@ Python, or does not parse, counts as a whole.
 from __future__ import annotations
 
 import ast
+import json
 import os
 import re
 import subprocess
@@ -16,11 +17,53 @@ import tempfile
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Final
+from typing import Final, Literal
+
+from pydantic import BaseModel, ConfigDict, Field
+
+from saddlefit.storage.migrations import upgrade
 
 _DEFS: Final = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
 # the line endings Python itself counts: a form feed or U+2028 inside a string is no break
 _LINES: Final = re.compile(r"[^\r\n]*(?:\r\n|\r|\n)|[^\r\n]+$")
+
+
+REPEAT_INDEX_SCHEMA_VERSION: Final = 1
+REPEAT_INDEX_KIND: Final = "repeat-index"
+
+
+class RepeatIndex(BaseModel):
+    """The functions each kept generated or mutated task changes.
+
+    Written when the task is kept, from the candidate's own reference patch before it was
+    sealed, so the repeat check never reads the sealed store.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal[1]
+    tasks: dict[str, list[str]] = Field(default_factory=dict)
+
+
+def load_repeat_index(path: Path) -> RepeatIndex:
+    """The recorded symbols, or none when no generated task was kept yet."""
+    if not path.exists():
+        return RepeatIndex(schema_version=REPEAT_INDEX_SCHEMA_VERSION)
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    return RepeatIndex.model_validate(upgrade(REPEAT_INDEX_KIND, raw, REPEAT_INDEX_SCHEMA_VERSION))
+
+
+def save_repeat_index(path: Path, index: RepeatIndex) -> None:
+    """Replace the index atomically: a crash leaves the old one, never a broken file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".tmp-repeats-", suffix=".json")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(index.model_dump_json(indent=2) + "\n")
+        os.replace(tmp, path)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
 
 
 @dataclass
@@ -35,6 +78,7 @@ class RepeatGuard:
     pending: dict[str, frozenset[str]] = field(default_factory=dict)
 
     def repeats(self, symbols: frozenset[str]) -> str | None:
+        """The first known task that changes one of ``symbols``, and that symbol."""
         for other, theirs in self.known.items():
             if common := symbols & theirs:
                 return f"repeats {other}: both change {min(common)}"
@@ -46,7 +90,14 @@ class RepeatGuard:
         return self.repeats(self.pending[task_id])
 
     def kept(self, task_id: str) -> None:
+        """Record a kept task's symbols, so later candidates must not repeat it either."""
         self.known[task_id] = self.pending.pop(task_id, frozenset())
+
+    def index(self) -> RepeatIndex:
+        return RepeatIndex(
+            schema_version=REPEAT_INDEX_SCHEMA_VERSION,
+            tasks={task_id: sorted(symbols) for task_id, symbols in sorted(self.known.items())},
+        )
 
 
 def symbols_between(path: str, old: str | None, new: str | None) -> frozenset[str]:
@@ -120,6 +171,7 @@ def _isolated_git(root: Path) -> Mapping[str, str]:
 
 
 def _differences(path: str, old: str | None, new: str | None) -> set[str]:
+    """The symbols of one file whose own code differs; the whole file when it is not Python."""
     if old == new:
         return set()
     if not path.endswith(".py"):
@@ -128,7 +180,9 @@ def _differences(path: str, old: str | None, new: str | None) -> set[str]:
         before, after = _own_code(old), _own_code(new)
     except SyntaxError:
         return {path}
-    changed = {name for name in before.keys() | after.keys() if before.get(name) != after.get(name)}
+    changed = {
+        name for name in before.keys() | after.keys() if before.get(name, "") != after.get(name, "")
+    }
     return {f"{path}::{name}" if name else path for name in changed}
 
 
@@ -144,6 +198,7 @@ def _own_code(source: str | None) -> dict[str, str]:
             owned[""] -= set(range(node.lineno, (node.end_lineno or node.lineno) + 1))
 
     def visit(parent: ast.AST, prefix: str, owner: str) -> None:
+        """Give each definition its lines, taking them away from the one around it."""
         for child in ast.iter_child_nodes(parent):
             if not isinstance(child, _DEFS):
                 continue
@@ -163,5 +218,6 @@ def _own_code(source: str | None) -> dict[str, str]:
 
 
 def _code(line: str) -> bool:
+    """Whether a line can change behaviour: not blank and not only a comment."""
     stripped = line.strip()
     return bool(stripped) and not stripped.startswith("#")

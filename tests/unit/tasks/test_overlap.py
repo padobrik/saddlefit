@@ -10,7 +10,12 @@ import pytest
 from saddlefit.loops.generate import NoCandidate
 from saddlefit.project import _refuse_a_repeat
 from saddlefit.tasks.mutation import Mutation, Site
-from saddlefit.tasks.overlap import RepeatGuard, changed_symbols
+from saddlefit.tasks.overlap import (
+    RepeatGuard,
+    changed_symbols,
+    load_repeat_index,
+    save_repeat_index,
+)
 
 OLD = """import os
 
@@ -126,3 +131,25 @@ def test_a_quoted_file_name_is_still_read() -> None:
     )
     patch_text = f"diff --git {quoted[0]} {quoted[1]}\n{body}"
     assert changed_symbols(patch_text, {path: OLD}.get) == {f"{path}::helper"}
+
+
+def test_the_repeat_index_round_trips_and_starts_empty(tmp_path: Path) -> None:
+    path = tmp_path / "repeats.json"
+    assert load_repeat_index(path).tasks == {}
+    guard = RepeatGuard({"gen-bugfix-a": frozenset({"src/x.py::f"})})
+    guard.check(
+        "gen-bugfix-b",
+        patch("src/store.py", OLD, OLD.replace("x + 1", "x + 2")),
+        {"src/store.py": OLD}.get,
+    )
+    guard.kept("gen-bugfix-b")
+    save_repeat_index(path, guard.index())
+    assert load_repeat_index(path).tasks == {
+        "gen-bugfix-a": ["src/x.py::f"],
+        "gen-bugfix-b": ["src/store.py::helper"],
+    }
+
+
+def test_a_new_file_names_its_functions_not_itself() -> None:
+    new_file = "def shout(text):\n    return text.upper()\n"
+    assert symbols(new_file, old="") == {"src/store.py::shout"}

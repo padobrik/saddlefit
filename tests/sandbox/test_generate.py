@@ -14,6 +14,7 @@ from saddlefit.providers.base import ModelReply, ToolCall, Usage
 from saddlefit.providers.fake import FakeClient
 from saddlefit.storage.runs import find_runs
 from saddlefit.tasks.generator import SUBMIT_TOOL
+from saddlefit.tasks.overlap import load_repeat_index
 
 pytestmark = pytest.mark.docker
 
@@ -132,6 +133,9 @@ def test_a_task_that_repeats_one_in_the_suite_is_dropped_before_calibration(
 
     first = generate(FakeClient([ANSWER]))
     assert len(first.kept) == 1
+    # recorded at keep time, outside the sealed part, from the candidate's own patch
+    recorded = load_repeat_index(project.suite.repeats).tasks
+    assert recorded == {first.kept[0]: ["src/toykit/shout.py::shout"]}
     # the same reference solution under another title: a repeat, not a new task
     arguments = {**ANSWER.tool_calls[0].arguments, "task_md": "# Shout\n\nMake `shout` loud."}
     repeat = ModelReply(

@@ -166,6 +166,7 @@ def task_title(task_md: str) -> str:
 
 
 def render_user(request: GeneratorRequest) -> str:
+    """The files to change, example tasks, and the titles the new task must not repeat."""
     parts = ["# Files you may change"]
     for file in request.files:
         parts.append(f"## {file.path}\n\n````\n{file.content.rstrip()}\n````")
