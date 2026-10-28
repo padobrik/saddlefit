@@ -4,6 +4,9 @@ import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import pytest
+
+from saddlefit import project as project_module
 from saddlefit.cli import fit_progress_line, progress_status, status_text
 from saddlefit.loops.progress import FitProgress
 from saddlefit.project import Project
@@ -48,9 +51,10 @@ def test_status_is_idle_without_a_progress_file(tmp_path: Path) -> None:
     assert status_text(data, NOW) == "idle; all fits: 1 rounds, 3 tutor calls, $2.41"
 
 
-def test_a_dead_pid_shows_as_interrupted(tmp_path: Path) -> None:
+def test_a_dead_pid_shows_as_interrupted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(project_module, "process_alive", lambda pid: False)
     project = project_with(tmp_path)
-    progress = tracker(project.state, pid=2**22 + 12345)  # no such process
+    progress = tracker(project.state, pid=4206649)
     progress.start_round(1)
     progress.stage("candidate", 2)
     data = project.status()

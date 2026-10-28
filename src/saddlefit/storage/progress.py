@@ -6,6 +6,7 @@ the command ends cleanly; one left behind with a dead process shows where a run 
 
 from __future__ import annotations
 
+import ctypes
 import json
 import os
 import tempfile
@@ -68,14 +69,36 @@ def clear_progress(root: Path) -> None:
     (root / PROGRESS_FILE).unlink(missing_ok=True)
 
 
+# Windows API values for process_alive
+_QUERY_LIMITED_INFORMATION: Final = 0x1000
+_ACCESS_DENIED: Final = 5
+_STILL_ACTIVE: Final = 259
+
+
 def process_alive(pid: int) -> bool:
-    """Whether ``pid`` still runs; a process we may not signal still counts as alive."""
+    """Whether ``pid`` still runs; a process we may not inspect still counts as alive."""
+    if os.name == "nt":
+        return _windows_process_alive(pid)
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
         return False
     except PermissionError:
         return True
-    except OSError:  # Windows raises a plain OSError for a pid that does not exist
-        return False
     return True
+
+
+def _windows_process_alive(pid: int) -> bool:
+    # os.kill(pid, 0) is no probe on Windows: 0 is CTRL_C_EVENT, sent to the process group
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
+    handle = kernel32.OpenProcess(_QUERY_LIMITED_INFORMATION, False, pid)
+    if not handle:
+        error: int = ctypes.get_last_error()  # type: ignore[attr-defined]
+        return error == _ACCESS_DENIED
+    try:
+        code = ctypes.c_ulong()
+        if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+            return True  # it exists; only its state is unknown
+        return code.value == _STILL_ACTIVE
+    finally:
+        kernel32.CloseHandle(handle)
