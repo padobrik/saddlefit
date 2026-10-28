@@ -98,13 +98,13 @@ def test_the_call_budget_stops_the_command() -> None:
 
 def test_the_dollar_budget_stops_before_a_call_that_could_pass_it() -> None:
     world = World(passes=[0, 0, 0])
-    # each call costs 0.10; its worst case is about 0.21 (1,000 prompt tokens, a full reply),
-    # so after three calls 0.30 + 0.21 could pass 0.5
-    budget = GeneratorConfig(max_usd=0.5, prices_usd_per_mtok=PRICES)
+    # each call costs 0.10; its worst case is about 0.41 (1,000 prompt tokens, a full reply),
+    # so after two calls 0.20 + 0.41 could pass 0.6
+    budget = GeneratorConfig(max_usd=0.6, prices_usd_per_mtok=PRICES)
     report = world.generation(budget).run(count=1)
-    assert world.calls == 3
-    assert report.usd == pytest.approx(0.30)
-    assert report.stopped == "the next call could pass generator.max_usd (0.5)"
+    assert world.calls == 2
+    assert report.usd == pytest.approx(0.20)
+    assert report.stopped == "the next call could pass generator.max_usd (0.6)"
 
 
 def test_a_refused_answer_still_costs_money() -> None:
@@ -141,7 +141,7 @@ def test_task_ids_are_readable_and_unique_per_text() -> None:
 
 def test_worst_case_counts_a_full_reply() -> None:
     budget = GeneratorConfig(prices_usd_per_mtok=PRICES)
-    assert worst_case_usd(4_000, budget) == pytest.approx((1_000 * 5 + 8_192 * 25) / 1e6)
+    assert worst_case_usd(4_000, budget) == pytest.approx((1_000 * 5 + 16_000 * 25) / 1e6)
 
 
 def test_the_same_seed_shows_the_same_files() -> None:
