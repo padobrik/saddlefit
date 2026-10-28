@@ -1,6 +1,7 @@
 """Which functions a reference patch changes: what tells a repeated task from a new one."""
 
 import difflib
+import os
 import re
 from pathlib import Path
 
@@ -110,3 +111,18 @@ def test_a_mutation_in_a_covered_function_is_refused_before_the_generator_call()
     ):
         _refuse_a_repeat(covered, mutation)
     _refuse_a_repeat(RepeatGuard({"other": frozenset({"src/store.py::Store.paths"})}), mutation)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows has no quote in file names")
+def test_a_quoted_file_name_is_still_read() -> None:
+    path = 'src/we"ird.py'
+    quoted = '"a/src/we\\"ird.py"', '"b/src/we\\"ird.py"'  # how git writes such a name
+    body = "".join(
+        difflib.unified_diff(
+            OLD.splitlines(keepends=True),
+            OLD.replace("x + 1", "x + 2").splitlines(keepends=True),
+            *quoted,
+        )
+    )
+    patch_text = f"diff --git {quoted[0]} {quoted[1]}\n{body}"
+    assert changed_symbols(patch_text, {path: OLD}.get) == {f"{path}::helper"}

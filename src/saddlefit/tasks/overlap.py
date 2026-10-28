@@ -55,13 +55,27 @@ def symbols_between(path: str, old: str | None, new: str | None) -> frozenset[st
 
 
 def patch_paths(patch: str) -> list[str]:
-    """The files a ``git diff`` patch changes, from its ``diff --git`` headers."""
-    paths = []
-    for line in patch.splitlines():
-        if line.startswith("diff --git a/"):
-            path = line.split(" b/", 1)[-1]
-            if path not in paths:
-                paths.append(path)
+    """The files a patch changes, by git's own parser, so quoted names are read right."""
+    with tempfile.TemporaryDirectory(prefix="saddlefit-numstat-") as tmp:
+        listed = subprocess.run(
+            ["git", "apply", "--numstat", "-z", "-"],  # noqa: S607
+            cwd=tmp,
+            env=_isolated_git(Path(tmp)),
+            input=patch.encode("utf-8"),
+            capture_output=True,
+            check=False,
+        )
+    if listed.returncode != 0:
+        return []
+    paths: list[str] = []
+    fields = listed.stdout.decode("utf-8", errors="surrogateescape").split("\0")
+    i = 0
+    while i < len(fields):
+        parts = fields[i].split("\t", 2)
+        # a rename or copy leaves the third part empty; both names follow as their own fields
+        names = [parts[2]] if len(parts) == 3 and parts[2] else fields[i + 1 : i + 3]
+        i += 1 if len(parts) == 3 and parts[2] else 3
+        paths += [name for name in names if name and name not in paths]
     return paths
 
 
