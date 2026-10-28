@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Final, Literal, Protocol
 
 from saddlefit.config import TokenPrices
+from saddlefit.errors import EnvironmentFailure
 from saddlefit.eval.decisions import (
     Candidate,
     HeldOutComparison,
@@ -36,7 +37,7 @@ from saddlefit.harness.proposals import Proposal, ProposalError, ScriptLinter, a
 from saddlefit.harness.store import MAIN, HarnessStore, HarnessStoreError
 from saddlefit.loops.progress import ProgressSink
 from saddlefit.playbook import tutor_lines
-from saddlefit.providers.base import ModelClient, ProviderError, Usage
+from saddlefit.providers.base import AccountError, ModelClient, ProviderError, Usage
 from saddlefit.providers.cost import cost_usd
 from saddlefit.storage.library import (
     CHANGE_SCHEMA_VERSION,
@@ -258,6 +259,11 @@ class MiddleLoop:
             )
             try:
                 result = diagnose(self.tutor, request)
+            except AccountError as exc:
+                # no key, no access or no credit: the rest of the fit would only refuse
+                raise EnvironmentFailure(
+                    f"the tutor's provider refused the account: {exc}"
+                ) from exc
             except ProviderError as exc:  # TutorError included; the call was paid for
                 budget.charge(exc.usage)
                 report.refused += 1
@@ -331,6 +337,8 @@ class MiddleLoop:
             return 0  # an accepted change may have removed the file; no lesson then
         try:
             result = reflect(self.tutor, decision, experience)
+        except AccountError as exc:
+            raise EnvironmentFailure(f"the tutor's provider refused the account: {exc}") from exc
         except ProviderError as exc:
             budget.charge(exc.usage)
             return 0

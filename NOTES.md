@@ -312,4 +312,6 @@ Assumptions taken where the spec leaves a detail open. Deviations from the spec 
   dropped the attempt and called again, so 57 failing calls used up `max_calls` for both task
   types. `AccountError` (401, 402, 403, or a credit-balance message; a missing key too) now
   stops the command at the first such call with exit 3; the tasks kept so far stay. The
-  OpenAI-compatible provider maps 401 to 403 the same way. The tutor is not changed here.
+  OpenAI-compatible provider maps 401, 402 and 403 the same way. A tutor call that gets one
+  stops `fit` with exit 3 instead of counting a refusal, so a fit without credit does not
+  go on running the student; the round in flight does not count, its paid calls do.

@@ -12,12 +12,14 @@ import pytest
 import yaml
 
 from saddlefit.config import TokenPrices
+from saddlefit.errors import EnvironmentFailure
 from saddlefit.eval.decisions import HeldOutComparison
 from saddlefit.harness.store import HarnessStore, HarnessStoreError
 from saddlefit.loops.fit import run_rounds
 from saddlefit.loops.middle import BatchResult, MiddleLoop, pick_batch
 from saddlefit.loops.progress import FitProgress
 from saddlefit.providers.base import (
+    AccountError,
     GenParams,
     Message,
     ModelInfo,
@@ -531,3 +533,19 @@ def test_an_ablation_before_the_first_round_is_reported(tmp_path: Path) -> None:
     progress = FitProgress(root=tmp_path, rounds=1, candidates=2, on_change=on_change)
     run_rounds(loop, tmp_path, 1, progress=progress)
     assert stages[:2] == ["ablation", "train"]
+
+
+class BrokeTutor(FakeTutor):
+    """An account without credit: every call is refused before any answer."""
+
+    def chat(
+        self, messages: Sequence[Message], tools: Sequence[ToolSpec] | None, params: GenParams
+    ) -> ModelReply:
+        raise AccountError("Anthropic API error 400: Your credit balance is too low")
+
+
+def test_a_refused_tutor_account_stops_the_fit(tmp_path: Path) -> None:
+    loop, _ = make_loop(tmp_path, BrokeTutor([USELESS, RIGHT]))
+    with pytest.raises(EnvironmentFailure, match="credit balance"):
+        run_rounds(loop, tmp_path, 1)
+    assert load_fit_state(tmp_path).refusals == {}  # not counted as the tutor refusing
