@@ -57,12 +57,30 @@ def test_a_dead_pid_shows_as_interrupted(tmp_path: Path, monkeypatch: pytest.Mon
     progress = tracker(project.state, pid=4206649)
     progress.start_round(1)
     progress.stage("candidate", 2)
+    (project.state / "fit.lock").write_text("4206649\n", encoding="utf-8")  # left by a crash
     data = project.status()
     assert data["state"] == "interrupted"
     text = status_text(data, NOW)
     assert text.startswith("fit interrupted (pid 4206649) at round 1/2 · candidate 2/3")
     assert "started 58 min ago, last update 3 min ago" in text
-    assert "fit.lock can be removed" in text
+    assert text.endswith("fit.lock is left by pid 4206649, which is gone; it can be removed")
+
+
+def test_a_lock_another_command_holds_is_never_called_removable(tmp_path: Path) -> None:
+    project = project_with(tmp_path)
+    progress = tracker(project.state, pid=4206649)  # an earlier fit that failed
+    progress.start_round(1)
+    with fit_lock(project.state):  # this process: a prune, say
+        text = status_text(project.status(), NOW)
+    assert text.endswith(f"fit.lock is held by pid {os.getpid()} (a fit, prune or report --final)")
+    assert "removed" not in text
+
+
+def test_no_lock_means_no_lock_hint(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(project_module, "process_alive", lambda pid: False)
+    project = project_with(tmp_path)
+    tracker(project.state, pid=4206649).start_round(1)
+    assert "fit.lock" not in status_text(project.status(), NOW)
 
 
 def test_a_fit_holding_the_lock_shows_as_running(tmp_path: Path) -> None:

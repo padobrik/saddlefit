@@ -294,8 +294,13 @@ Assumptions taken where the spec leaves a detail open. Deviations from the spec 
   `ablation`), the practice the runs it starts and each one that finishes, any split, as a
   count only. `FitProgress` keeps `.saddlefit/progress.json` (`schema_version: 1`) current and
   removes it when `fit` ends cleanly; a failed fit keeps it. `saddlefit status` reads it and
-  `fit.json` without the fit lock and tells running, interrupted (the pid is gone) and idle
-  apart. Off a terminal `fit` prints one plain line per stage change and finished run. On a
+  `fit.json` without the fit lock and tells running, interrupted and idle apart. A fit counts
+  as running only while `fit.lock` holds its pid and that process lives; `prune` and
+  `report --final` take the same lock, so status names the lock's holder and offers its
+  removal only when that process is gone. Known limit: if a fit is killed hard (the lock
+  stays) and the OS gives its pid to another process, status says running; `fit` itself
+  still refuses to start while the lock exists. Telling them apart needs each process's
+  start time, which differs per OS. Off a terminal `fit` prints one plain line per stage change and finished run. On a
   terminal it shows one framed status line (rich `Live`, 30 fps, about 5 s a lap) with round
   lines printed above it; when no run has finished for longer than
   `evaluation.timeout_seconds` the ball stops, the frame turns amber and the line says how

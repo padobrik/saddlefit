@@ -549,8 +549,19 @@ def status_text(data: dict[str, Any], now: datetime) -> str:
         return f"fit running (pid {record.pid}), {progress_status(record)}\n{when}\n{this}"
     return (
         f"fit interrupted (pid {record.pid}) at {progress_status(record)}\n{when}\n"
-        f"{this}\nif no fit runs, .saddlefit/fit.lock can be removed"
+        f"{this}{_lock_hint(data.get('lock'))}"
     )
+
+
+def _lock_hint(lock: dict[str, Any] | None) -> str:
+    """What to do about fit.lock; it is never safe to remove while its holder runs."""
+    if lock is None:
+        return ""
+    if lock["alive"]:
+        return (
+            f"\n.saddlefit/fit.lock is held by pid {lock['pid']} (a fit, prune or report --final)"
+        )
+    return f"\n.saddlefit/fit.lock is left by pid {lock['pid']}, which is gone; it can be removed"
 
 
 def ablation_line(result: AblationResult) -> str:

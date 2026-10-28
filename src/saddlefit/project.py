@@ -759,10 +759,13 @@ class Project:
         if record is None:
             return {"state": "idle", **totals}
         # a failed fit keeps progress.json but drops the lock, and its pid can be reused
-        active = lock_owner(self.state) == record.pid and process_alive(record.pid)
+        owner = lock_owner(self.state)
+        active = owner == record.pid and process_alive(record.pid)
         return {
             "state": "running" if active else "interrupted",
             "progress": record.model_dump(mode="json"),
+            # prune and report --final hold the same lock: whoever has it, and whether it runs
+            "lock": None if owner is None else {"pid": owner, "alive": process_alive(owner)},
             **totals,
         }
 
