@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from saddlefit import project as project_module
-from saddlefit.cli import fit_progress_line, progress_status, status_text
+from saddlefit.cli import fit_progress_line, progress_change, progress_status, status_text
 from saddlefit.loops.progress import FitProgress
 from saddlefit.project import Project
 from saddlefit.storage.fit_state import FitState, save_fit_state
@@ -70,3 +70,25 @@ def test_a_live_pid_shows_as_running(tmp_path: Path) -> None:
     progress = tracker(project.state, pid=os.getpid())
     progress.start_round(1)
     assert project.status()["state"] == "running"
+
+
+def test_only_a_finished_run_counts_as_progress_and_a_batch_size_prints_nothing(
+    tmp_path: Path,
+) -> None:
+    seen: list[tuple[bool, bool]] = []
+    last: list[object] = [None]
+
+    def on_change(record: object) -> None:
+        seen.append(progress_change(last[0], record))  # type: ignore[arg-type]
+        last[0] = record
+
+    times = iter([NOW] * 20)
+    progress = FitProgress(
+        root=tmp_path, rounds=1, candidates=2, on_change=on_change, clock=lambda: next(times)
+    )
+    progress.start_round(1)  # first record: a line, no run yet
+    progress.stage("tutor", 1)  # a new stage: a line, still no finished run
+    progress.stage("candidate", 1)
+    progress.batch(6)  # the batch's size alone: no line
+    progress.tick()  # a run finished
+    assert seen == [(False, True), (False, True), (False, True), (False, False), (True, True)]

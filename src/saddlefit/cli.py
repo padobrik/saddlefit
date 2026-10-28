@@ -348,7 +348,16 @@ def _framed(quiet: bool) -> bool:
 
 
 def _shown(record: ProgressRecord) -> tuple[object, ...]:
-    return (record.round, record.stage, record.candidate, record.done, record.total)
+    # what earns a plain line: a stage change or a finished run, not a batch's size alone
+    return (record.round, record.stage, record.candidate, record.done)
+
+
+def progress_change(previous: ProgressRecord | None, record: ProgressRecord) -> tuple[bool, bool]:
+    """(a run finished, something a plain line shows changed) from one update to the next."""
+    if previous is None:
+        return False, True
+    # only a finished run resets the stall timer; a stage change alone is no progress
+    return record.done > previous.done, _shown(previous) != _shown(record)
 
 
 def progress_status(record: ProgressRecord) -> str:
@@ -429,8 +438,7 @@ def fit(
     live = Live(orbit, refresh_per_second=30, transient=True) if _framed(quiet) else None
 
     def on_progress(record: ProgressRecord) -> None:
-        progressed = not last or (record.done, record.stage) != (last[-1].done, last[-1].stage)
-        changed = not last or _shown(last[-1]) != _shown(record)
+        progressed, changed = progress_change(last[-1] if last else None, record)
         last[:] = [record]
         if live is not None:
             orbit.update(progress_status(record), progressed=progressed)

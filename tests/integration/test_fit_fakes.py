@@ -26,7 +26,7 @@ from saddlefit.providers.base import (
     ToolSpec,
     Usage,
 )
-from saddlefit.storage.fit_state import load_fit_state
+from saddlefit.storage.fit_state import FitState, load_fit_state, save_fit_state
 from saddlefit.storage.library import read_records
 from saddlefit.storage.progress import ProgressRecord, load_progress
 from saddlefit.storage.runs import RUN_SCHEMA_VERSION, RunEvent, RunSummary
@@ -514,3 +514,20 @@ def test_a_fit_reports_its_stages_in_order(tmp_path: Path) -> None:
     assert record.tutor_calls >= 2  # what this fit has paid for, kept current
     progress.finish()
     assert load_progress(tmp_path) is None
+
+
+def test_an_ablation_before_the_first_round_is_reported(tmp_path: Path) -> None:
+    # the student changed since the last fit: ablation runs before any round
+    save_fit_state(
+        tmp_path, FitState(schema_version=2, rounds_done=1, student_model="older student")
+    )
+    loop, _ = make_loop(tmp_path, FakeTutor([USELESS, RIGHT]))
+    stages: list[str] = []
+
+    def on_change(record: ProgressRecord) -> None:
+        if not stages or stages[-1] != record.stage:
+            stages.append(record.stage)
+
+    progress = FitProgress(root=tmp_path, rounds=1, candidates=2, on_change=on_change)
+    run_rounds(loop, tmp_path, 1, progress=progress)
+    assert stages[:2] == ["ablation", "train"]

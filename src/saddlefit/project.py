@@ -741,7 +741,9 @@ class Project:
         practice.progress = progress
         with fit_lock(self.state):
             reports = run_rounds(middle, self.state, rounds, on_round, progress)
-        progress.finish()  # a fit that fails keeps progress.json, so status can say where
+            # under the lock, so it never removes the record of a fit that starts next;
+            # a fit that fails keeps progress.json, so status can say where it stopped
+            progress.finish()
         return reports
 
     def status(self) -> dict[str, Any]:

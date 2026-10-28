@@ -35,8 +35,9 @@ def run_rounds(
     pending: list[str] = []
     model_changed = _model_changed(state, loop.student_model, loop.student_digest)
     # also resumes an ablation that a failure interrupted after its round was saved
+    loop.progress = progress
     if ablation_due(accepted, model_changed=model_changed):
-        pending = [r.proposal_id for r in ablate(loop) if r.pruned]
+        pending = _ablate(loop, progress)
         accepted = 0
     done = state.rounds_done
     base = (state.tutor_calls - loop.spent_calls, state.tutor_usd - loop.spent_usd)
@@ -66,7 +67,6 @@ def run_rounds(
 
     loop.on_charge = charged
     loop.on_refusal = refused
-    loop.progress = progress
     save(done)
     reports = []
     for index in range(done, done + rounds):
@@ -85,15 +85,20 @@ def run_rounds(
         current = index + 1
         save(index + 1)
         if ablation_due(accepted, model_changed=False):
-            if progress is not None:
-                progress.stage("ablation")
-            report.pruned += [r.proposal_id for r in ablate(loop) if r.pruned]
+            report.pruned += _ablate(loop, progress)
             accepted = 0
             save(index + 1)
         reports.append(report)
         if on_round is not None:
             on_round(report)
     return reports
+
+
+def _ablate(loop: MiddleLoop, progress: FitProgress | None) -> list[str]:
+    """Run ablation, reported as its own stage; the IDs of the changes it pruned."""
+    if progress is not None:
+        progress.stage("ablation")
+    return [r.proposal_id for r in ablate(loop) if r.pruned]
 
 
 def _model_changed(state: FitState, model: str, digest: str | None) -> bool:
