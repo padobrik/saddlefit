@@ -20,8 +20,9 @@ from pathlib import PurePosixPath
 from string import Template
 from typing import Any, Final
 
-from saddlefit.eval.tamper import diff_paths, matches_any
+from saddlefit.eval.tamper import matches_any
 from saddlefit.providers.base import GenParams, Message, ModelClient, ProviderError, ToolSpec, Usage
+from saddlefit.textdiff import file_diff
 
 TOOL_NAME: Final = "submit_task"
 MAX_EXAMPLES: Final = 3
@@ -56,7 +57,7 @@ TASK_KINDS: Final[Mapping[str, TaskKind]] = {
 
 SUBMIT_TOOL: Final = ToolSpec(
     name=TOOL_NAME,
-    description="Submit exactly one task with its hidden tests and reference patch.",
+    description="Submit exactly one task with its hidden tests and reference solution.",
     parameters={
         "type": "object",
         "properties": {
@@ -70,10 +71,22 @@ SUBMIT_TOOL: Final = ToolSpec(
                     "additionalProperties": False,
                 },
             },
-            "reference_patch": {"type": "string"},
+            "reference_edits": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string"},
+                        "old": {"type": "string"},
+                        "new": {"type": "string"},
+                    },
+                    "required": ["path", "old", "new"],
+                    "additionalProperties": False,
+                },
+            },
             "visible_check": {"type": "string"},
         },
-        "required": ["task_md", "hidden_tests", "reference_patch", "visible_check"],
+        "required": ["task_md", "hidden_tests", "reference_edits", "visible_check"],
         "additionalProperties": False,
     },
 )
@@ -169,6 +182,49 @@ def _disclosures(task_md: str, tests: list[Any]) -> list[str]:
     return found
 
 
+def reference_patch(edits: Sequence[Any], request: GeneratorRequest) -> str:
+    """The patch the generator's edits make, built here so its context always matches.
+
+    Each edit replaces ``old``, which must occur exactly once in a file shown to the
+    generator, with ``new``; an empty ``old`` creates a file that does not exist yet.
+    """
+    shown = {f.path: f.content for f in request.files}
+    after: dict[str, str] = {}
+    created: set[str] = set()
+    for edit in edits:
+        if not isinstance(edit, dict) or not all(
+            isinstance(edit.get(k), str) for k in ("path", "old", "new")
+        ):
+            raise ValueError("each reference edit needs path, old and new strings")
+        path, old, new = edit["path"], edit["old"], edit["new"]
+        if matches_any(path, request.protected):
+            raise ValueError(f"reference_edits touch protected paths: {path}")
+        if not old:
+            if path in shown or path in request.existing_paths or path in after:
+                raise ValueError(f"reference edit with empty old must create a new file: {path}")
+            rel = PurePosixPath(path)
+            unsafe = "\\" in path or rel.is_absolute() or ".." in rel.parts or not rel.parts
+            if unsafe or posixpath.normpath(path) != path:
+                raise ValueError(f"reference edit path must be relative and normal: {path!r}")
+            after[path] = new
+            created.add(path)
+            continue
+        current = after.get(path, shown.get(path))
+        if current is None:
+            raise ValueError(f"reference edit for a file you were not shown: {path}")
+        count = current.count(old)
+        if count != 1:
+            raise ValueError(f"reference edit old text occurs {count} times in {path}, not once")
+        after[path] = current.replace(old, new, 1)
+    parts = [
+        file_diff(p, None if p in created else shown[p], text) for p, text in sorted(after.items())
+    ]
+    patch = "".join(parts)
+    if not patch:
+        raise ValueError("reference_edits change nothing")
+    return patch
+
+
 def _test_path_problem(path: str, request: GeneratorRequest) -> str | None:
     rel = PurePosixPath(path)
     if "\\" in path or rel.is_absolute() or ".." in rel.parts or not rel.parts:
@@ -197,14 +253,14 @@ def _problems(arguments: Mapping[str, Any], request: GeneratorRequest) -> list[s
             problems.append("each hidden test needs a path and a content string")
         elif problem := _test_path_problem(path, request):
             problems.append(problem)
-    patch = arguments.get("reference_patch")
-    hunks = isinstance(patch, str) and any(line.startswith("@@ ") for line in patch.splitlines())
-    if not isinstance(patch, str) or not diff_paths(patch) or not hunks:
-        problems.append("reference_patch must be a unified diff that changes at least one file")
+    edits = arguments.get("reference_edits")
+    if not isinstance(edits, list) or not edits:
+        problems.append("reference_edits must list at least one edit")
     else:
-        touched = sorted(p for p in diff_paths(patch) if matches_any(p, request.protected))
-        if touched:
-            problems.append(f"reference_patch touches protected paths: {touched}")
+        try:
+            reference_patch(edits, request)
+        except ValueError as exc:
+            problems.append(str(exc))
     if isinstance(task_md, str) and isinstance(tests, list):
         problems += _disclosures(task_md, tests)
     check = arguments.get("visible_check")
@@ -224,7 +280,9 @@ def generate(
         Message(role="system", content=render_system(request)),
         Message(role="user", content=render_user(request)),
     ]
-    reply = client.chat(messages, [SUBMIT_TOOL], GenParams(max_tokens=max_tokens))
+    # low effort: the generator's thinking counts against max_tokens, and a reply cut off
+    # there is paid for and useless
+    reply = client.chat(messages, [SUBMIT_TOOL], GenParams(max_tokens=max_tokens, reasoning="low"))
     names = [c.name for c in reply.tool_calls]
     if names != [TOOL_NAME] or reply.malformed:
         attempted = names + ["<malformed>"] * len(reply.malformed)
@@ -236,7 +294,7 @@ def generate(
     task = GeneratedTask(
         task_md=arguments["task_md"].strip() + "\n",
         hidden_tests={t["path"]: t["content"] for t in arguments["hidden_tests"]},
-        reference_patch=arguments["reference_patch"],
+        reference_patch=reference_patch(arguments["reference_edits"], request),
         visible_check=arguments["visible_check"].strip(),
     )
     served = getattr(reply.raw, "model", None) or client.info().model
