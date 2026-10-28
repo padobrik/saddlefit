@@ -255,3 +255,28 @@ Assumptions taken where the spec leaves a detail open. Deviations from the spec 
   the generator budget work as for `tasks generate`. Attempts that never reach the model are
   capped at five per `generator.max_calls`. Mutation tasks are `bugfix` tasks with IDs
   `mut-bugfix-…`, in train or held-out only.
+- **Fast loop, journal and `run` (#35, #36, #38).** `saddlefit run "TASK" [--check CMD]`
+  copies the working tree (tracked files and untracked ones git does not ignore, never `.git`
+  or `.saddlefit`) into a fresh sandbox for every attempt; the check (default
+  `finish_gate.run`) is the finish gate and is run once more after the student stops. If the
+  first attempt fails, up to `fast_loop.max_variants` starter-playbook entries for its failure
+  tags are probed `runs_per_variant` times each (B12: every run up to two, else a majority),
+  the ones that helped are composed and the check runs once more, all within
+  `time_budget_minutes`. Variants are only loop settings handed to an attempt, so nothing
+  reaches the harness store (required test 7). The answer is a patch in
+  `.saddlefit/answers/`, never applied to the working tree; a rescue that needed variants is
+  written to `.saddlefit/journal/<entry-id>.json` as a `fast_loop` proposal, `probation` when
+  the composed change passed and `rejected` when it did not. Work mode has no hidden tests,
+  so the protected-files rule is not added and nothing reads the sealed store; probe records
+  go to `.saddlefit/work/`.
+- **`run` and exit codes (open question for the owner).** `saddlefit run` exits 0 even when
+  the check still fails: the command worked, and `--json` says `"passed": false`. B14 fixes
+  the codes at 0 to 3 and `test_exit_codes_match_spec` holds the CLI to that, so a separate
+  "task not solved" code needs a spec change first.
+- **Work-mode time.** Each `run` attempt has one wall-clock deadline (B11):
+  `evaluation.timeout_seconds`, or less when the fast loop's `time_budget_minutes` has less
+  left, so the whole command, the first attempt included, stays within that budget. The
+  student gets 75% of the attempt; the final check runs in the rest of the same deadline.
+  Tool commands are capped at the student's share; a model call is not cut off mid-request,
+  so one that starts late can still run up to the client timeout past it (as in the baseline).
+  The budget is strict for the sandbox, not for an in-flight model request.

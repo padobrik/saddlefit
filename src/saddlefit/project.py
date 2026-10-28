@@ -18,6 +18,8 @@ from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any, Literal
 
+from ulid import ULID
+
 from saddlefit import __version__
 from saddlefit.config import CONFIG_SCHEMA_VERSION, Config, StudentConfig, dump_config, load_config
 from saddlefit.doctor import DoctorRecord
@@ -38,6 +40,7 @@ from saddlefit.loops.baseline import (
     BaselineRunner,
     RunOutcome,
 )
+from saddlefit.loops.fast import FastLoop, FastResult
 from saddlefit.loops.final import ControlRunner
 from saddlefit.loops.fit import run_rounds
 from saddlefit.loops.generate import (
@@ -50,6 +53,8 @@ from saddlefit.loops.generate import (
 from saddlefit.loops.generate import MAX_REPLY_TOKENS as GENERATOR_REPLY_TOKENS
 from saddlefit.loops.middle import MiddleLoop, RoundReport
 from saddlefit.loops.practice import DockerPractice, without_control
+from saddlefit.loops.work import WorkRunner, write_answer
+from saddlefit.playbook import proposal_for
 from saddlefit.providers.base import ModelClient, ModelInfo
 from saddlefit.providers.retry import LOCAL_TIMEOUT_S
 from saddlefit.reports.baseline import ReportContext
@@ -71,6 +76,7 @@ from saddlefit.storage.fit_state import (
     load_fit_state,
     save_fit_state,
 )
+from saddlefit.storage.journal import JOURNAL_SCHEMA_VERSION, JournalEntry, task_ref, write_entry
 from saddlefit.storage.library import ChangeRecord, read_records
 from saddlefit.tasks import generated as generated_files
 from saddlefit.tasks.acceptance import FAILED_TESTS, Acceptance, accept, seal_generated
@@ -109,6 +115,13 @@ def _check_live_model(baseline: dict[str, Any], model_info: ModelInfo) -> None:
             f"the student model is {model_info.model} ({model_info.digest or 'no digest'}), "
             f"not the baseline's {baseline['model']['id']}; run `saddlefit baseline` again"
         )
+
+
+@dataclass(frozen=True)
+class WorkResult:
+    result: FastResult
+    answer: Path  # the patch, possibly empty
+    journal: Path | None  # the probation entry, when playbook variants were needed
 
 
 @dataclass(frozen=True)
@@ -500,6 +513,66 @@ class Project:
             keep=keep,
             exists=lambda task_id: any(t.id == task_id for t in self.tasks()),
         )
+
+    def work(
+        self,
+        *,
+        task_text: str,
+        check: str,
+        docker_client: Any,
+        model_client: Callable[[], ModelClient],
+        model_info: ModelInfo,
+    ) -> WorkResult:
+        """Do ``task_text`` in a copy of the working tree with the fast loop (A6, B14).
+
+        The answer is a patch in ``.saddlefit/answers/``; the working tree is not touched.
+        A rescue that needed playbook variants is journaled, on probation.
+        """
+        config = self.config()
+        guard = guard_for_suite(self.suite.sealed_dir, self.incidents)
+        image = self.environment_image(docker_client)
+        loop, _ = self.effective_loop()
+        commit = self.harness.head()
+        with tempfile.TemporaryDirectory(prefix="saddlefit-harness-") as tmp:
+            self.harness.export(commit, Path(tmp))
+            runner = WorkRunner(
+                repo=self.root,
+                config=config,
+                task_text=task_text,
+                check=check,
+                harness_dir=Path(tmp),
+                state=self.state,
+                client_factory=lambda: GuardedClient(model_client(), guard),
+                docker_client=docker_client,
+                image=image,
+                tool_mode=self.tool_mode(model_info.digest),
+            )
+            result = FastLoop(
+                budget=config.fast_loop, loop=loop, attempt=runner.attempt, seed=config.student.seed
+            ).run()
+            loop_yaml = (Path(tmp) / "loop.yaml").read_text(encoding="utf-8")
+        answers = self.state / "answers"
+        answers.mkdir(parents=True, exist_ok=True)
+        answer = answers / f"{result.probes[-1].run_id}.patch"
+        write_answer(answer, result.diff)
+        entry = None
+        if result.helped:
+            proposal = proposal_for(result.helped, loop_yaml, loop, source="fast_loop")
+            if proposal is not None:
+                entry = write_entry(
+                    self.state,
+                    JournalEntry(
+                        schema_version=JOURNAL_SCHEMA_VERSION,
+                        entry_id=str(ULID()),
+                        created=datetime.now(UTC),
+                        task=task_ref(task_text, check),
+                        proposal=proposal,
+                        probe_run_ids=tuple(p.run_id for p in result.probes),
+                        passed=result.passed,
+                        status="probation" if result.passed else "rejected",
+                    ),
+                )
+        return WorkResult(result=result, answer=answer, journal=entry)
 
     def environment_image(self, docker_client: Any) -> str:
         """The image this repository's tests run in: the sandbox plus its dependencies (B11).
