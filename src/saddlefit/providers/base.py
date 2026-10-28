@@ -97,6 +97,10 @@ class ProviderError(Exception):
         self.usage = usage
 
 
+class AccountError(ProviderError):
+    """The provider refuses this account (no key, no access, no credit): no call can succeed."""
+
+
 class TransientProviderError(ProviderError):
     """A model call failed in a way worth retrying: 429, 5xx, connection reset, timeout."""
 

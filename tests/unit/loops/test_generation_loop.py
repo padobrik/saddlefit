@@ -7,7 +7,7 @@ import pytest
 
 from saddlefit.config import GeneratorConfig, TokenPrices
 from saddlefit.loops.generate import CalibrationError, Generation, task_id_for, worst_case_usd
-from saddlefit.providers.base import ProviderError, Usage
+from saddlefit.providers.base import AccountError, ProviderError, Usage
 from saddlefit.tasks.acceptance import Acceptance
 from saddlefit.tasks.generator import (
     TASK_KINDS,
@@ -178,3 +178,34 @@ def test_a_calibration_without_five_real_runs_is_discarded() -> None:
     ).run(count=1)
     assert report.attempts[0].reason == "only 3 of 5 calibration runs counted"
     assert world.discarded == world.sealed
+
+
+def test_a_refused_account_stops_the_command_and_keeps_what_it_has() -> None:
+    world = World(passes=[3])
+    calls = 0
+
+    def call(request: GeneratorRequest) -> GeneratorResult:
+        nonlocal calls
+        calls += 1
+        if calls == 2:  # the credit runs out after the first task
+            raise AccountError("Anthropic API error 400: Your credit balance is too low")
+        return world.call(request)
+
+    report = world.generation(call=call).run(count=5)
+    assert calls == 2  # no third call: every later one would fail the same way
+    assert report.kept == world.kept
+    assert len(report.kept) == 1
+    assert report.account_refused
+    assert report.stopped is not None
+    assert "credit balance" in report.stopped
+
+
+def test_a_refused_account_still_counts_what_was_billed() -> None:
+    world = World(passes=[])
+
+    def call(request: GeneratorRequest) -> GeneratorResult:
+        raise AccountError("Anthropic API error 402: payment required", USAGE)
+
+    report = world.generation(call=call).run(count=1)
+    assert report.account_refused
+    assert report.usd == pytest.approx(0.10)

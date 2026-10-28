@@ -9,6 +9,7 @@ from anthropic.types.beta import BetaMessage
 
 from saddlefit.providers.anthropic import AnthropicClient, classify_error, to_request
 from saddlefit.providers.base import (
+    AccountError,
     ContextLengthError,
     GenParams,
     Message,
@@ -202,7 +203,14 @@ def test_cache_writes_without_a_ttl_breakdown_count_as_1h() -> None:
             ContextLengthError,
         ),
         (status_error(anthropic.BadRequestError, 400, "invalid tool schema"), ProviderError),
-        (status_error(anthropic.AuthenticationError, 401), ProviderError),
+        (status_error(anthropic.AuthenticationError, 401), AccountError),
+        (status_error(anthropic.PermissionDeniedError, 403), AccountError),
+        (
+            status_error(
+                anthropic.BadRequestError, 400, "Your credit balance is too low to access the API."
+            ),
+            AccountError,
+        ),
         (
             anthropic.APIConnectionError(request=httpx2.Request("POST", "https://x")),
             TransientProviderError,

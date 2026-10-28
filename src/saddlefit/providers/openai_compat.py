@@ -18,6 +18,7 @@ from urllib.parse import urlsplit, urlunsplit
 import openai
 
 from saddlefit.providers.base import (
+    AccountError,
     ContextLengthError,
     GenParams,
     Message,
@@ -128,6 +129,8 @@ def map_error(exc: Exception) -> ProviderError:
         return TransientProviderError(f"HTTP {status}: {exc}")
     if any(marker in str(exc).lower() for marker in _CONTEXT_MARKERS):
         return ContextLengthError(str(exc))
+    if status in {401, 402, 403}:  # the key or the account: every later call fails too
+        return AccountError(f"HTTP {status}: {exc}")
     return ProviderError(f"{type(exc).__name__}: {exc}")
 
 

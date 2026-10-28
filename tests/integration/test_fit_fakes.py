@@ -12,12 +12,14 @@ import pytest
 import yaml
 
 from saddlefit.config import TokenPrices
+from saddlefit.errors import EnvironmentFailure
 from saddlefit.eval.decisions import HeldOutComparison
 from saddlefit.harness.store import HarnessStore, HarnessStoreError
 from saddlefit.loops.fit import run_rounds
-from saddlefit.loops.middle import BatchResult, MiddleLoop, pick_batch
+from saddlefit.loops.middle import BatchResult, MiddleLoop, RoundReport, pick_batch
 from saddlefit.loops.progress import FitProgress
 from saddlefit.providers.base import (
+    AccountError,
     GenParams,
     Message,
     ModelInfo,
@@ -531,3 +533,60 @@ def test_an_ablation_before_the_first_round_is_reported(tmp_path: Path) -> None:
     progress = FitProgress(root=tmp_path, rounds=1, candidates=2, on_change=on_change)
     run_rounds(loop, tmp_path, 1, progress=progress)
     assert stages[:2] == ["ablation", "train"]
+
+
+class BrokeTutor(FakeTutor):
+    """An account without credit: every call is refused before any answer."""
+
+    def chat(
+        self, messages: Sequence[Message], tools: Sequence[ToolSpec] | None, params: GenParams
+    ) -> ModelReply:
+        raise AccountError("Anthropic API error 400: Your credit balance is too low")
+
+
+def test_a_refused_tutor_account_stops_the_fit(tmp_path: Path) -> None:
+    loop, _ = make_loop(tmp_path, BrokeTutor([USELESS, RIGHT]))
+    with pytest.raises(EnvironmentFailure, match="credit balance"):
+        run_rounds(loop, tmp_path, 1)
+    assert load_fit_state(tmp_path).refusals == {}  # not counted as the tutor refusing
+
+
+class BrokeAtReflection(FakeTutor):
+    """Proposes as usual, then the credit runs out at the first lesson."""
+
+    def chat(
+        self, messages: Sequence[Message], tools: Sequence[ToolSpec] | None, params: GenParams
+    ) -> ModelReply:
+        if tools and tools[0].name == "record_lesson":
+            raise AccountError("Anthropic API error 400: Your credit balance is too low")
+        return super().chat(messages, tools, params)
+
+
+def test_a_refused_reflection_still_saves_the_decided_round(tmp_path: Path) -> None:
+    loop, _ = make_loop(tmp_path, BrokeAtReflection([USELESS, RIGHT]))
+    shown: list[RoundReport] = []
+    with pytest.raises(EnvironmentFailure, match="credit balance"):
+        run_rounds(loop, tmp_path, 1, on_round=shown.append)
+    assert len(shown) == 1  # the saved round is still shown
+    assert shown[0].accepted is not None
+    state = load_fit_state(tmp_path)
+    # the change was accepted before the lesson: the round counts, so a resumed fit moves on
+    assert state.rounds_done == 1
+    assert state.accepted_since_ablation == 1
+
+
+def test_a_loop_that_hit_a_refused_account_can_fit_again(tmp_path: Path) -> None:
+    loop, _ = make_loop(tmp_path, BrokeAtReflection([USELESS, RIGHT]))
+    with pytest.raises(EnvironmentFailure):
+        run_rounds(loop, tmp_path, 1)
+    loop.tutor = FakeTutor([USELESS, RIGHT])  # the credit is back
+    reports = run_rounds(loop, tmp_path, 1)
+    assert len(reports) == 1
+    assert load_fit_state(tmp_path).rounds_done == 2
+
+
+def test_a_refused_diagnosis_still_counts_the_call(tmp_path: Path) -> None:
+    loop, _ = make_loop(tmp_path, BrokeTutor([USELESS, RIGHT]))
+    with pytest.raises(EnvironmentFailure):
+        run_rounds(loop, tmp_path, 1)
+    assert load_fit_state(tmp_path).tutor_calls == 1
