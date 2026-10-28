@@ -10,11 +10,13 @@ Python, does not parse, or that the patch does not apply to counts as a whole,
 from __future__ import annotations
 
 import ast
+import io
 import json
 import os
 import re
 import subprocess
 import tempfile
+import tokenize
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -224,6 +226,7 @@ def _own_code(source: str | None) -> dict[str, str]:
         return {}
     tree = ast.parse(source)
     lines = _LINES.findall(source)
+    code = _code_lines(source)
     owned: dict[str, set[int]] = {"": set(range(1, len(lines) + 1))}
     for node in tree.body:
         if isinstance(node, ast.Import | ast.ImportFrom):
@@ -247,12 +250,20 @@ def _own_code(source: str | None) -> dict[str, str]:
     visit(tree, "", "")
     # blank and comment-only lines change no behaviour; new functions bring new blank lines
     return {
-        name: "".join(line for i in sorted(span) if _code(line := lines[i - 1]))
+        name: "".join(lines[i - 1] for i in sorted(span) if i in code)
         for name, span in owned.items()
     }
 
 
-def _code(line: str) -> bool:
-    """Whether a line can change behaviour: not blank and not only a comment."""
-    stripped = line.strip()
-    return bool(stripped) and not stripped.startswith("#")
+def _code_lines(source: str) -> set[int]:
+    """Lines with a token that can change behaviour: not blank, not only a comment.
+
+    A ``#`` inside a multi-line string is string content, so each string token covers all
+    of its lines.
+    """
+    quiet = {tokenize.COMMENT, tokenize.NL, tokenize.NEWLINE, tokenize.INDENT, tokenize.DEDENT}
+    lines: set[int] = set()
+    for token in tokenize.generate_tokens(io.StringIO(source).readline):
+        if token.type not in quiet and token.type != tokenize.ENDMARKER:
+            lines.update(range(token.start[0], token.end[0] + 1))
+    return lines

@@ -206,3 +206,12 @@ def test_a_whole_file_meets_every_symbol_in_it_but_top_level_code_does_not() -> 
         )
         is None
     )
+
+
+def test_a_hash_line_inside_a_string_counts_but_a_comment_does_not() -> None:
+    old = (
+        'def usage():\n    return """\n# usage: run\n"""\n'
+        "\n\ndef other():\n    # note\n    return 1\n"
+    )
+    assert symbols(old.replace("# usage: run", "# usage: go"), old=old) == {"src/store.py::usage"}
+    assert symbols(old.replace("# note", "# a new note"), old=old) == frozenset()
