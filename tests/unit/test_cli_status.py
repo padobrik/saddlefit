@@ -131,3 +131,13 @@ def test_idle_still_names_a_lock_that_prune_holds(tmp_path: Path) -> None:
         "idle; all fits: 1 rounds, 3 tutor calls, $2.41\n"
         f".saddlefit/fit.lock is held by pid {os.getpid()} (a fit, prune or report --final)"
     )
+
+
+def test_a_lock_without_a_pid_is_still_reported(tmp_path: Path) -> None:
+    project = project_with(tmp_path)
+    (project.state / "fit.lock").write_text("", encoding="utf-8")  # a crash before the pid
+    data = project.status()
+    assert data["lock"] == {"pid": None, "alive": None}
+    assert status_text(data, NOW).endswith(
+        ".saddlefit/fit.lock has no pid; it can be removed if no fit, prune or report --final runs"
+    )

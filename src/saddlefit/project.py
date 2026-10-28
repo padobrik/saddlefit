@@ -71,6 +71,7 @@ from saddlefit.storage.control_log import (
     log_control_evaluation,
 )
 from saddlefit.storage.fit_state import (
+    FIT_LOCK_FILE,
     FitState,
     ensure_unlocked,
     fit_lock,
@@ -757,7 +758,11 @@ class Project:
         }
         # prune and report --final hold the same lock: whoever has it, and whether it runs
         owner = lock_owner(self.state)
-        lock = None if owner is None else {"pid": owner, "alive": process_alive(owner)}
+        lock: dict[str, Any] | None = None
+        if owner is not None:
+            lock = {"pid": owner, "alive": process_alive(owner)}
+        elif (self.state / FIT_LOCK_FILE).exists():  # created, but its pid never written
+            lock = {"pid": None, "alive": None}
         record = load_progress(self.state)
         if record is None:
             return {"state": "idle", "lock": lock, **totals}

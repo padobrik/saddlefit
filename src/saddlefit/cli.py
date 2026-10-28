@@ -557,6 +557,11 @@ def _lock_hint(lock: dict[str, Any] | None) -> str:
     """What to do about fit.lock; it is never safe to remove while its holder runs."""
     if lock is None:
         return ""
+    if lock["pid"] is None:
+        return (
+            "\n.saddlefit/fit.lock has no pid; it can be removed if no fit, prune or "
+            "report --final runs"
+        )
     if lock["alive"]:
         return (
             f"\n.saddlefit/fit.lock is held by pid {lock['pid']} (a fit, prune or report --final)"
