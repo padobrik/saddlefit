@@ -41,8 +41,8 @@ flowchart LR
 - Budgets and evaluation settings live in `.saddlefit/saddlefit.yaml`, which no model can
   edit; values in the harness's `loop.yaml` are clamped to them.
 - Control tasks are evaluated only by `saddlefit report --final`.
-- Generated and mutated tasks enter the training and held-out splits only, and only after
-  the fail-without, pass-with check and calibration on the current student.
+- Generated and mutated tasks get a training or held-out split, never control, and are kept
+  only after the fail-without, pass-with check and calibration on the current student.
 - Fast-loop variants exist only as loop settings for one attempt; nothing the fast loop finds
   reaches the harness store's `main`. It is journaled on probation instead.
 - No code the tutor or the generator wrote runs on the host: harness tool scripts are mounted

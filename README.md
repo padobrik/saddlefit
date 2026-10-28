@@ -135,10 +135,11 @@ saddlefit run "Add a --dry-run flag to the export command" --check "pytest -q te
 The student works in a copy of your working tree. If the check fails, the fast loop probes a
 few mechanics from the starter playbook, combines the ones that help and checks once more.
 The answer is a patch in `.saddlefit/answers/`; your files are not touched. A change the fast
-loop needed is recorded in `.saddlefit/journal/` on probation and never enters the harness by
-itself; having `fit` test journal entries on held-out tasks is planned (#147). `--json` says
-whether the check passed; `run` exits with 4 when it did not, so
-`saddlefit run … && git apply <answer>` never applies a failing patch.
+loop needed is recorded in `.saddlefit/journal/`: on probation when the combined change
+passed, rejected when it did not. Neither enters the harness by itself; having `fit` test
+probation entries on held-out tasks is planned (#147). `--json` says whether the check
+passed; `run` exits with 4 when it did not, so `saddlefit run … && git apply <answer>` never
+applies a failing patch.
 
 ## Where it comes from
 
