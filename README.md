@@ -136,7 +136,8 @@ The student works in a copy of your working tree. If the check fails, the fast l
 few mechanics from the starter playbook, combines the ones that help and checks once more.
 The answer is a patch in `.saddlefit/answers/`; your files are not touched. A change the fast
 loop needed goes to `.saddlefit/journal/` on probation: it enters the harness only if a later
-fit accepts it on held-out tasks. `--json` says whether the check passed.
+fit accepts it on held-out tasks. `--json` says whether the check passed; `run` exits with 4
+when it did not, so `saddlefit run … && git apply <answer>` never applies a failing patch.
 
 ## Where it comes from
 
