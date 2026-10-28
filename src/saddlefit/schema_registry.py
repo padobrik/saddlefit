@@ -13,6 +13,7 @@ from saddlefit.harness.store import HarnessStoreInfo
 from saddlefit.sandbox.environment import EnvironmentRecord
 from saddlefit.storage.control_log import ControlLog
 from saddlefit.storage.fit_state import FitState
+from saddlefit.storage.journal import JournalEntry
 from saddlefit.storage.library import ChangeRecord
 from saddlefit.storage.runs import RunEvent, RunSummary
 from saddlefit.tasks.models import SealedTaskInfo, SuiteLock, TaskMeta
@@ -27,6 +28,7 @@ SCHEMA_MODELS: dict[str, type[BaseModel]] = {
     "environment-record": EnvironmentRecord,
     "export-manifest": ExportManifest,
     "harness-store": HarnessStoreInfo,
+    "journal-entry": JournalEntry,
     "loop-config": LoopConfig,
     "proposal": Proposal,
     "run-event": RunEvent,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shlex
 from collections.abc import Callable
 from datetime import date
 from enum import IntEnum
@@ -398,6 +399,52 @@ def fit(
         for r in reports
     ]
     _emit(ctx, data, f"{len(reports)} rounds; {sum(bool(r.accepted) for r in reports)} accepted")
+
+
+@app.command()
+def run(
+    ctx: typer.Context,
+    task: Annotated[str, typer.Argument(help="What the student should do.")],
+    check: Annotated[
+        str | None,
+        typer.Option(help="Command that passes when the task is done; loop.yaml's gate if unset."),
+    ] = None,
+) -> None:
+    """Work mode: the student does TASK in a copy of the working tree, with the fast loop."""
+    project = _project()
+    loop, _ = project.effective_loop()
+    command = check or loop.finish_gate.run
+    if not command:
+        raise UserError("run needs --check: loop.yaml has no finish_gate.run to fall back on")
+    model_info, model_client = _student(project)
+    work = project.work(
+        task_text=task,
+        check=command,
+        docker_client=_docker(),
+        model_client=model_client,
+        model_info=model_info,
+    )
+    result = work.result
+    data = {
+        "passed": result.passed,
+        "answer": str(work.answer),
+        "probes": [
+            {"run_id": p.run_id, "passed": p.passed, "tags": list(p.tags)} for p in result.probes
+        ],
+        "variants": [e.id for e in result.helped],
+        "journal": str(work.journal) if work.journal else None,
+        "stopped": result.stopped,
+    }
+    verdict = "passed" if result.passed else "FAILED (best attempt)"
+    lines = [f"{verdict}: `{command}` after {len(result.probes)} runs"]
+    if result.helped:
+        lines.append(f"with playbook variants: {', '.join(e.id for e in result.helped)}")
+    if work.journal:
+        status = "on probation" if result.passed else "rejected: the composed change failed"
+        lines.append(f"journal ({status}): {work.journal}")
+    apply = f"git apply {shlex.quote(str(work.answer))}"
+    lines.append(f"answer: {work.answer}  (apply with: {apply})")
+    _emit(ctx, data, "\n".join(lines))
 
 
 def ablation_line(result: AblationResult) -> str:
