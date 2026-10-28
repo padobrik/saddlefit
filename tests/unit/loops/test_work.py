@@ -46,6 +46,8 @@ class FakeBox:
     def remaining_s(self) -> float:
         return max(0.0, self.deadline - self.clock.now)
 
+    running = True
+
     def limit_to(self, deadline: float) -> None:
         self.deadline = min(self.deadline, deadline)
 
@@ -228,6 +230,47 @@ def test_a_check_that_timed_out_did_not_pass(
         image="img",
     )
     assert not runner.attempt(loop, seed=7).passed
+
+
+def test_a_sandbox_killed_by_a_runaway_is_a_failed_attempt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class KilledBox(FakeBox):
+        def exec(self, command: str, timeout_s: float) -> ExecResult:
+            if not self.running:
+                raise SandboxError("sandbox is not running")  # what Sandbox.exec does
+            # the student's first command outlived its limit: the container was removed
+            self.running = False
+            return ExecResult(exit_code=137, output="[killed]", timed_out=True, duration_s=0)
+
+    clock = Clock()
+    monkeypatch.setattr(
+        work_module, "Sandbox", lambda *a, run_timeout_s, **k: KilledBox(clock, run_timeout_s)
+    )
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True, env=_git_env())
+    store = HarnessStore(tmp_path / "harness")
+    store.init()
+    loop = default_loop_config().model_copy(
+        update={"finish_gate": default_loop_config().finish_gate.model_copy(update={"run": None})}
+    )
+    runner = WorkRunner(
+        repo=repo,
+        config=Config(schema_version=3, project="p"),
+        task_text="t",
+        check="true",
+        harness_dir=store.path,
+        state=tmp_path / "state",
+        client_factory=lambda: FakeClient(
+            lambda m, t, p: ModelReply(
+                tool_calls=(ToolCall(id="f", name="finish", arguments={"summary": "x"}),)
+            )
+        ),
+        docker_client=object(),
+        image="img",
+    )
+    assert not runner.attempt(loop, seed=7).passed  # a failed attempt, no EnvironmentFailure
 
 
 def test_a_failing_model_runner_is_an_environment_failure(

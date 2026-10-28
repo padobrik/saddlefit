@@ -200,11 +200,14 @@ class WorkRunner:
                         raise EnvironmentFailure(
                             "the student's model runner failed during the attempt"
                         )
-                    # the check runs in what the student's share left of the same deadline
-                    verdict_run = box.exec(self.check, run_s)  # bounded by the deadline too
-                    exit_code = verdict_run.exit_code
-                    # a check that ran out of time did not pass, whatever it exited with
-                    passed = verdict_run.exit_code == 0 and not verdict_run.timed_out
+                    # a student command that outlived its limit got the container killed:
+                    # the attempt failed, the environment did not
+                    if box.running:
+                        # the check runs in what the student's share left of the same deadline
+                        verdict_run = box.exec(self.check, run_s)  # bounded by the deadline too
+                        exit_code = verdict_run.exit_code
+                        # a check that ran out of time did not pass, whatever it exited with
+                        passed = verdict_run.exit_code == 0 and not verdict_run.timed_out
                 diff = tracker.diff()
                 stats = tracker.diff_stats()
             except SandboxError as exc:

@@ -251,6 +251,11 @@ class Sandbox:
         self._deadline = self._clock() + self._run_timeout_s
 
     @property
+    def running(self) -> bool:
+        """False once the container is gone, for example after a runaway was killed."""
+        return self._container is not None
+
+    @property
     def remaining_s(self) -> float:
         return max(0.0, self._deadline - self._clock())
 
