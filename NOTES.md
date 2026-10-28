@@ -269,10 +269,10 @@ Assumptions taken where the spec leaves a detail open. Deviations from the spec 
   the composed change passed and `rejected` when it did not. Work mode has no hidden tests,
   so the protected-files rule is not added and nothing reads the sealed store; probe records
   go to `.saddlefit/work/`.
-- **`run` and exit codes (open question for the owner).** `saddlefit run` exits 0 even when
-  the check still fails: the command worked, and `--json` says `"passed": false`. B14 fixes
-  the codes at 0 to 3 and `test_exit_codes_match_spec` holds the CLI to that, so a separate
-  "task not solved" code needs a spec change first.
+- **`run` and exit codes.** The owner left the choice open (2026-10-28); B14 now has code 4,
+  "task not solved": `run` exits 4 when the check still fails after the fast loop, so
+  `saddlefit run … && git apply <answer>` never applies a failing patch. 1 to 3 keep their
+  meaning; a sandbox or model-runner failure is 3.
 - **Work-mode time.** Each `run` attempt has one wall-clock deadline (B11):
   `evaluation.timeout_seconds`, or less when the fast loop's `time_budget_minutes` has less
   left, so the whole command, the first attempt included, stays within that budget. The
