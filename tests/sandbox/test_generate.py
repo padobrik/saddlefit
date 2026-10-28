@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 from tests.fixtures.toyrepo.build import build
-from tests.sandbox.test_acceptance import HIDDEN, PATCH, SOURCE
+from tests.sandbox.test_acceptance import HIDDEN, SOURCE
 
 from saddlefit.config import dump_config
 from saddlefit.loops.generate import CALIBRATION_RUNS
@@ -17,6 +17,8 @@ from saddlefit.tasks.generator import SUBMIT_TOOL
 
 pytestmark = pytest.mark.docker
 
+NEW_SOURCE = "def shout(text: str) -> str:\n    return text.upper() + '!'\n"
+
 ANSWER = ModelReply(
     tool_calls=(
         ToolCall(
@@ -25,7 +27,7 @@ ANSWER = ModelReply(
             arguments={
                 "task_md": "# Add shout\n\n`toykit.shout.shout(text)` upper-cases it and adds !.",
                 "hidden_tests": [{"path": p, "content": c} for p, c in HIDDEN.items()],
-                "reference_patch": PATCH,
+                "reference_edits": [{"path": SOURCE, "old": "", "new": NEW_SOURCE}],
                 "visible_check": "true",
             },
         ),
