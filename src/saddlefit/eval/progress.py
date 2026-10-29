@@ -11,7 +11,7 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Final
 
@@ -56,6 +56,8 @@ class Comparable:
         return None in {self.digest, summary.model.digest} or summary.model.digest == self.digest
 
 
+# the baseline report's `created` has whole seconds: a run started in that second is its own
+_CREATED_PRECISION: Final = timedelta(seconds=1)
 _BEFORE: Final = "before"
 _AFTER: Final = "after"
 
@@ -101,7 +103,8 @@ def harness_progress(
         if tree == after_tree:
             runs[(_AFTER, summary.split, summary.task_id)].append(summary)
         if tree == before_tree and (
-            baseline_until is None or ULID.from_str(summary.run_id).datetime <= baseline_until
+            baseline_until is None
+            or ULID.from_str(summary.run_id).datetime < baseline_until + _CREATED_PRECISION
         ):
             runs[(_BEFORE, summary.split, summary.task_id)].append(summary)
     latest = {key: group[-runs_per_task:] for key, group in runs.items()}

@@ -162,7 +162,7 @@ def test_a_missing_digest_does_not_exclude_runs(tmp_path: Path) -> None:
 def test_before_is_the_baseline_itself_and_an_error_never_counts(tmp_path: Path) -> None:
     run(tmp_path, "aaaaaaa", "t1", "train", True)  # the baseline run
     baseline_done = latest_run_time(tmp_path)
-    time.sleep(0.003)  # run IDs carry milliseconds: later runs must start after it
+    time.sleep(1.1)  # later than the report's one-second precision, as a fit always is
     run(tmp_path, "aaaaaaa", "t1", "train", False)  # a fit's later run of the same tree
     run(tmp_path, "bbbbbbb", "t1", "train", True)  # the closing evaluation
     run(tmp_path, "bbbbbbb", "t1", "train", False, tag="env_error")  # retried, so not counted
@@ -187,7 +187,7 @@ def test_an_unchanged_harness_still_compares_the_baseline_with_the_closing_runs(
 ) -> None:
     run(tmp_path, "aaaaaaa", "t1", "train", False)  # the baseline
     baseline_done = latest_run_time(tmp_path)
-    time.sleep(0.003)  # run IDs carry milliseconds: later runs must start after it
+    time.sleep(1.1)  # later than the report's one-second precision, as a fit always is
     run(tmp_path, "aaaaaaa", "t1", "train", True)  # the closing evaluation, same tree
     report = harness_progress(
         tmp_path,
@@ -203,3 +203,24 @@ def test_an_unchanged_harness_still_compares_the_baseline_with_the_closing_runs(
     )
     train = report["splits"]["train"]
     assert (train["before"]["solved"], train["after"]["solved"]) == (0, 1)
+
+
+def test_a_baseline_run_in_the_reports_last_second_still_counts(tmp_path: Path) -> None:
+    run(tmp_path, "aaaaaaa", "t1", "train", True)
+    run(tmp_path, "bbbbbbb", "t1", "train", True)
+    started = latest_run_time(tmp_path)
+    # the report's `created`, cut to whole seconds, can come out before the run started
+    created = started.replace(microsecond=0)
+    report = harness_progress(
+        tmp_path,
+        tree_of=TREES.get,
+        before_tree="tree-before",
+        after_tree="tree-after",
+        tasks={"train": ["t1"], "held_out": []},
+        task_types=TYPES,
+        comparable=SAME,
+        runs_per_task=1,
+        threshold=1,
+        baseline_until=created,
+    )
+    assert report["splits"]["train"]["tasks"] == 1
