@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import shlex
@@ -26,7 +27,7 @@ from saddlefit.project import Project, remove_tree, train_bound
 from saddlefit.providers.base import AccountError, ModelInfo
 from saddlefit.providers.retry import LOCAL_TIMEOUT_S
 from saddlefit.tasks.splits import add_task
-from saddlefit.tasks.suite import load_lock
+from saddlefit.tasks.suite import load_lock, save_lock
 
 pytestmark = pytest.mark.integration
 runner = CliRunner()
@@ -526,12 +527,20 @@ def test_an_unusable_anthropic_account_at_start_exits_with_3(
 def test_only_candidates_bound_for_train_feed_the_generator(tmp_path: Path) -> None:
     project = Project(build(tmp_path / "repo"))
     project.init()
+    # a fixed salt, so the ids below map onto both splits on every run
+    salt = "5a" * 32
+    digest = f"sha256:{hashlib.sha256(bytes.fromhex(salt)).hexdigest()}"
+    pinned = load_lock(project.suite, project.config().splits).model_copy(
+        update={"salt": salt, "salt_digest": digest}
+    )
+    save_lock(project.suite, pinned)
     lock = load_lock(project.suite, project.config().splits)
+    assert lock.salt == salt
     would_train = train_bound(project.suite, project.config().splits, "generated")
     ids = [f"gen-feature-candidate-{i}" for i in range(30)]
-    digest = "sha256:" + "0" * 64
+    content = "sha256:" + "0" * 64
     splits = {
-        t: next(e.split for e in add_task(lock, t, "generated", digest).tasks if e.id == t)
+        t: next(e.split for e in add_task(lock, t, "generated", content).tasks if e.id == t)
         for t in ids
     }
     assert {"train", "held_out"} <= set(splits.values())  # both kinds are tried
