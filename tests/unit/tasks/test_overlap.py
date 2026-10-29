@@ -3,6 +3,7 @@
 import difflib
 import os
 import re
+from collections import Counter
 from pathlib import Path
 
 import pytest
@@ -14,6 +15,8 @@ from saddlefit.tasks.mutation import Mutation, Site
 from saddlefit.tasks.overlap import (
     RepeatGuard,
     changed_symbols,
+    coverage,
+    files_of,
     load_repeat_index,
     save_repeat_index,
     symbols_between,
@@ -222,3 +225,20 @@ def test_a_file_with_carriage_returns_only_still_names_its_functions() -> None:
     old = "def f():\r    return 1\r\r\rdef g():\r    return 1\r"
     new = old.replace("return 1\r\r", "return 2\r\r", 1)
     assert symbols_between("src/store.py", old, new) == {"src/store.py::f"}
+
+
+def test_a_task_counts_once_per_file_however_many_functions_it_changes() -> None:
+    index = {"gen-a": ["src/a.py::f", "src/a.py::g"], "gen-b": ["src/a.py::f"]}
+    counts = Counter(path for symbols in index.values() for path in files_of(symbols))
+    assert counts["src/a.py"] == 2  # two tasks, not three symbols
+
+
+def test_coverage_puts_the_shown_files_first_and_lists_whole_files() -> None:
+    index = {
+        "gen-a": ["src/a.py::f"],
+        "gen-b": ["src/z.py::g", "src/z.py"],
+        "gen-c": ["docs/notes.md::*"],
+    }
+    functions, whole = coverage(index, shown={"src/z.py"})
+    assert functions == ("src/z.py::g", "src/a.py::f")  # z.py is shown, so it comes first
+    assert whole == ("docs/notes.md",)  # top-level code alone ("src/z.py") is no whole file

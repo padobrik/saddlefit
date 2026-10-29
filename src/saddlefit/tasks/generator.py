@@ -109,8 +109,10 @@ class GeneratorRequest:
     existing_paths: frozenset[str]
     # titles of tasks in the suite and of candidates already tried: not to be repeated
     covered: Sequence[str] = ()
-    # functions kept tasks already change (``path::Name``), from the repeat index
+    # functions kept tasks already change (``path::Name``), from the repeat index, those in
+    # the files shown first; and files a kept task changes as a whole
     covered_functions: Sequence[str] = ()
+    covered_files: Sequence[str] = ()
 
 
 @dataclass(frozen=True)
@@ -186,6 +188,11 @@ def render_user(request: GeneratorRequest) -> str:
     if request.examples:
         parts.append("# Example tasks from this repository")
         parts += [example.strip() for example in request.examples[:MAX_EXAMPLES]]
+    if request.covered_files:
+        parts.append(
+            "# Files tasks change as a whole\n\nDo not write a task that changes these files."
+            "\n\n" + "\n".join(f"- `{path}`" for path in request.covered_files[:MAX_COVERED])
+        )
     if request.covered_functions:
         parts.append(
             "# Functions tasks already change\n\nWrite the task about a function that is not "

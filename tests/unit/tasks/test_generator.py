@@ -222,3 +222,9 @@ def test_covered_functions_reach_the_prompt() -> None:
     )
     assert "# Functions tasks already change" in text
     assert "- `src/a.py::f`\n- `src/b.py::C.g`" in text
+
+
+def test_files_covered_as_a_whole_reach_the_prompt() -> None:
+    text = render_user(dataclasses.replace(request(), covered_files=("docs/notes.md",)))
+    assert "# Files tasks change as a whole" in text
+    assert "- `docs/notes.md`" in text

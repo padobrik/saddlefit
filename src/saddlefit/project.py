@@ -114,6 +114,8 @@ from saddlefit.tasks.mutation import (
 )
 from saddlefit.tasks.overlap import (
     RepeatGuard,
+    coverage,
+    files_of,
     load_repeat_index,
     save_repeat_index,
     symbols_between,
@@ -334,13 +336,16 @@ class Project:
 
         def request(rng: Any) -> GeneratorRequest:
             # what kept tasks already change, from the repeat index (never the sealed store)
-            symbols = sorted({s for t in kit.repeats.index().tasks.values() for s in t})
-            per_file = Counter(s.split("::", 1)[0] for s in symbols)
+            index = kit.repeats.index().tasks
+            per_file = Counter(path for symbols in index.values() for path in files_of(symbols))
+            shown = select_files(files, rng, covered=per_file)
+            functions, whole = coverage(index, {f.path for f in shown})
             return GeneratorRequest(
                 kind=TASK_KINDS[kind],
                 repo_summary=summary,
-                files=select_files(files, rng, covered=per_file),
-                covered_functions=tuple(s for s in symbols if "::" in s and not s.endswith("*")),
+                files=shown,
+                covered_functions=functions,
+                covered_files=whole,
                 examples=examples,
                 protected=protected,
                 existing_paths=frozenset(paths),
