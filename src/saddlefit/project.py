@@ -47,6 +47,7 @@ from saddlefit.loops.fit import run_rounds
 from saddlefit.loops.generate import (
     CALIBRATION_RUNS,
     CalibrationError,
+    Difficulty,
     Generation,
     GenerationReport,
     NoCandidate,
@@ -333,7 +334,7 @@ class Project:
         ]
         read_head = partial(generated_files.read_text, self.root, head)
 
-        def request(rng: Any) -> GeneratorRequest:
+        def request(rng: Any, difficulty: Difficulty) -> GeneratorRequest:
             # what kept tasks already change, from the repeat index (never the sealed store)
             index = kit.repeats.index().tasks
             shown = select_files(files, rng, covered=tasks_per_file(index))
@@ -348,6 +349,8 @@ class Project:
                 protected=protected,
                 existing_paths=frozenset(paths),
                 covered=tuple(covered),
+                too_easy=difficulty.too_easy,
+                too_hard=difficulty.too_hard,
             )
 
         def call(req: GeneratorRequest) -> GeneratorResult:
@@ -415,7 +418,8 @@ class Project:
             base = Path(tmp) / "base"
             _export(self.root, head, base)
 
-            def request(rng: Any) -> tuple[Mutation, list[str]]:
+            def request(rng: Any, difficulty: Difficulty) -> tuple[Mutation, list[str]]:
+                # the bug comes from the mutation operators, not the generator: nothing to aim
                 path = rng.choice(sorted(sources))
                 mutation = pick(path, sources[path], rng)
                 if mutation is None:

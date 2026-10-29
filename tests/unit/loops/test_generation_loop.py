@@ -6,7 +6,13 @@ from typing import Any
 import pytest
 
 from saddlefit.config import GeneratorConfig, TokenPrices
-from saddlefit.loops.generate import CalibrationError, Generation, task_id_for, worst_case_usd
+from saddlefit.loops.generate import (
+    CalibrationError,
+    Difficulty,
+    Generation,
+    task_id_for,
+    worst_case_usd,
+)
 from saddlefit.providers.base import AccountError, ProviderError, Usage
 from saddlefit.tasks.acceptance import Acceptance
 from saddlefit.tasks.generator import (
@@ -53,7 +59,7 @@ class World:
         fields: dict[str, Any] = {
             "kind": "feature",
             "budget": budget or GeneratorConfig(prices_usd_per_mtok=PRICES),
-            "request": lambda rng: GeneratorRequest(
+            "request": lambda rng, difficulty: GeneratorRequest(
                 TASK_KINDS["feature"], "summary", [], [], ("tests/**",), frozenset()
             ),
             "call": self.call,
@@ -148,7 +154,7 @@ def test_worst_case_counts_a_full_reply() -> None:
 def test_the_same_seed_shows_the_same_files() -> None:
     seen: list[list[float]] = []
 
-    def request(rng: random.Random) -> GeneratorRequest:
+    def request(rng: random.Random, difficulty: Difficulty) -> GeneratorRequest:
         seen[-1].append(rng.random())
         return GeneratorRequest(TASK_KINDS["feature"], "s", [], [], ("tests/**",), frozenset())
 
@@ -226,3 +232,23 @@ def test_a_repeat_is_dropped_before_sealing_and_judging() -> None:
     assert world.sealed == [second.task_id]  # the repeat was never sealed
     assert accepted == [second.task_id]  # nor judged
     assert report.kept == [second.task_id]
+
+
+def test_each_request_hears_how_hard_the_dropped_candidates_were() -> None:
+    told: list[Difficulty] = []
+
+    def request(rng: random.Random, difficulty: Difficulty) -> GeneratorRequest:
+        told.append(difficulty)
+        return GeneratorRequest(TASK_KINDS["feature"], "s", [], [], ("tests/**",), frozenset())
+
+    world = World(passes=[5, 0, 2, 5, 3], accepted=[True, True, True, False, True, True])
+    world.generation(request=request).run(count=2)
+    # kept tasks (2 and 3 of 5) and the one that failed acceptance are never counted
+    assert told == [
+        Difficulty(0, 0),
+        Difficulty(1, 0),
+        Difficulty(1, 1),
+        Difficulty(1, 1),
+        Difficulty(1, 1),
+        Difficulty(2, 1),
+    ]

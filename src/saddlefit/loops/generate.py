@@ -5,6 +5,11 @@ its reference patch and pass with it, and is then run five times by the current 
 it is kept only when the student passes it in 20-80% of those runs (one to four). A task
 that is not kept leaves nothing behind. The command stops at the wanted count, or before
 a call that could pass the generator's call or dollar budget.
+
+Each request is told how many candidates of this command calibration dropped as too easy
+(passed in all five runs) or too hard (in none), so the generator can aim between them.
+Only dropped candidates count: they never enter the suite, so this is no train, held-out
+or control outcome, and a kept task's runs are never reported.
 """
 
 from __future__ import annotations
@@ -58,6 +63,22 @@ class Attempt:
     passes: int | None = None
 
 
+@dataclass(frozen=True)
+class Difficulty:
+    """Candidates of this command that calibration dropped, by which end they missed."""
+
+    too_easy: int = 0
+    too_hard: int = 0
+
+    @classmethod
+    def of(cls, attempts: list[Attempt]) -> Difficulty:
+        dropped = [a.passes for a in attempts if not a.kept and a.passes is not None]
+        return cls(
+            too_easy=dropped.count(CALIBRATION_RUNS),
+            too_hard=dropped.count(0),
+        )
+
+
 @dataclass
 class GenerationReport:
     attempts: list[Attempt] = field(default_factory=list)
@@ -78,7 +99,7 @@ class Generation:
     kind: str
     budget: GeneratorConfig
     # may raise NoCandidate; whatever it returns goes to prompt_chars and call
-    request: Callable[[random.Random], Any]
+    request: Callable[[random.Random, Difficulty], Any]
     call: Callable[[Any], GeneratorResult]
     seal: Callable[[str, GeneratedTask], None]
     accept: Callable[[str, GeneratedTask], Acceptance]
@@ -104,7 +125,7 @@ class Generation:
                 report.stopped = f"{self.max_attempts} attempts made"
                 break
             try:
-                request = self.request(rng)
+                request = self.request(rng, Difficulty.of(report.attempts))
             except NoCandidate as exc:
                 report.attempts.append(Attempt(None, False, str(exc)))
                 continue
