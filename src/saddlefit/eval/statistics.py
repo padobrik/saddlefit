@@ -58,6 +58,34 @@ def paired_bootstrap(
     return (low, high)
 
 
+EXACT_FLIPS_UP_TO: Final = 16  # tasks with a difference; 2**16 sign patterns at most
+FLIP_DRAWS: Final = 20_000
+
+
+def paired_sign_flip_p(diffs: Sequence[int], seed: int = 0) -> float:
+    """One-sided p-value that the differences are not above zero (B12).
+
+    ``diffs`` are per-task differences in passing runs, candidate minus current, on the same
+    seeds. Under no effect each difference is as likely to have either sign, so the p-value
+    is the share of sign patterns whose sum is at least the observed one: exact for up to
+    ``EXACT_FLIPS_UP_TO`` nonzero differences, else from a seeded sample.
+    """
+    nonzero = [abs(d) for d in diffs if d]
+    observed = sum(diffs)
+    if not nonzero or observed <= 0:
+        return 1.0
+    if len(nonzero) <= EXACT_FLIPS_UP_TO:
+        sums = [0]
+        for d in nonzero:  # every sum of +d or -d, by dynamic programming over the tasks
+            sums = [s + d for s in sums] + [s - d for s in sums]
+        return sum(s >= observed for s in sums) / len(sums)
+    rng = random.Random(seed)  # noqa: S311 - a seeded resample, not cryptography
+    hits = sum(
+        sum(d if rng.random() < 0.5 else -d for d in nonzero) >= observed for _ in range(FLIP_DRAWS)
+    )
+    return (hits + 1) / (FLIP_DRAWS + 1)  # never 0 from a sample
+
+
 def delegation(outcomes: Sequence[bool]) -> Delegation:
     """Where a task type belongs, from its control outcomes (B12)."""
     n = len(outcomes)
