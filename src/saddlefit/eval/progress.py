@@ -11,8 +11,11 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
+
+from ulid import ULID
 
 from saddlefit.eval.records import read_any_run
 from saddlefit.eval.statistics import paired_bootstrap, wilson
@@ -53,6 +56,10 @@ class Comparable:
         return None in {self.digest, summary.model.digest} or summary.model.digest == self.digest
 
 
+_BEFORE: Final = "before"
+_AFTER: Final = "after"
+
+
 def harness_progress(
     runs_root: Path,
     *,
@@ -64,12 +71,17 @@ def harness_progress(
     comparable: Comparable,
     runs_per_task: int,
     threshold: int,
+    baseline_until: datetime | None = None,
 ) -> dict[str, Any]:
     """Training and held-out success before and after, over tasks decided under both.
 
     ``tasks`` holds the suite's task IDs per split: every one that is not decided under both
     harnesses counts as not measured. A task evaluated more than once under a harness is
-    judged on its latest ``runs_per_task`` runs, one evaluation's worth.
+    judged on its latest ``runs_per_task`` runs, one evaluation's worth. "Before" takes only
+    runs made by ``baseline_until`` (the baseline report's time), so a fit's later runs of the
+    same tree, its control runs or a closing evaluation that changed nothing, never stand in
+    for the baseline. Environment errors are left out: the runner retries them, and the
+    retry is the run that counts.
     """
     runs: dict[tuple[str, str, str], list[RunSummary]] = defaultdict(list)
     trees: dict[str, str | None] = {}
@@ -80,23 +92,29 @@ def harness_progress(
             continue  # a run cut off by a crash has no outcome to compare
         if summary.split not in SPLITS or not comparable.admits(summary):
             continue  # control runs are reported only by `report --final`
+        if summary.primary_tag == "env_error":
+            continue  # decided by its retry, which has its own record
         commit = summary.harness_commit
         if commit not in trees:
             trees[commit] = tree_of(commit)
         tree = trees[commit]
-        if tree in {before_tree, after_tree}:
-            runs[(tree, summary.split, summary.task_id)].append(summary)
+        if tree == after_tree:
+            runs[(_AFTER, summary.split, summary.task_id)].append(summary)
+        if tree == before_tree and (
+            baseline_until is None or ULID.from_str(summary.run_id).datetime <= baseline_until
+        ):
+            runs[(_BEFORE, summary.split, summary.task_id)].append(summary)
     latest = {key: group[-runs_per_task:] for key, group in runs.items()}
     profile: Counter[str] = Counter(
-        r.primary_tag for (tree, _, _), group in latest.items() if tree == after_tree for r in group
+        r.primary_tag for (side, _, _), group in latest.items() if side == _AFTER for r in group
     )
     report: dict[str, Any] = {"splits": {}, "failure_profile": dict(profile.most_common())}
     for split in SPLITS:
         ids = sorted(tasks.get(split, ()))
         decided = {
             t: (
-                _decide(latest.get((before_tree, split, t), []), runs_per_task, threshold),
-                _decide(latest.get((after_tree, split, t), []), runs_per_task, threshold),
+                _decide(latest.get((_BEFORE, split, t), []), runs_per_task, threshold),
+                _decide(latest.get((_AFTER, split, t), []), runs_per_task, threshold),
             )
             for t in ids
         }

@@ -1101,6 +1101,10 @@ class Project:
             ),
             runs_per_task=config.evaluation.runs_per_task,
             threshold=config.evaluation.solved_threshold,
+            # "before" is the baseline itself, not later runs of the same harness
+            baseline_until=(
+                datetime.fromisoformat(baseline["created"]) if "created" in baseline else None
+            ),
         )
         ctx = ProgressContext(
             model=baseline["model"]["id"],

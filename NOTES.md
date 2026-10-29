@@ -350,3 +350,9 @@ Assumptions taken where the spec leaves a detail open. Deviations from the spec 
   runner's retry stops `fit` with exit 3 and counts only, never a held-out task's name; the
   rounds stay saved. It costs one evaluation of the suite (about an hour for 17
   tasks on gemma4:e4b). Held-out outcomes go only into the report's aggregates, as B10 allows.
+  The report's "before" is now the baseline's own runs: runs of the baseline tree made by the
+  baseline report's `created` time. Before, it took the latest runs of that tree, and in the
+  proof run that was a fit's control run (held-out 2/6) instead of the baseline (4/6); with
+  an unchanged harness, the closing runs would have stood in for the baseline as well. "After"
+  is the latest runs of the head's tree. Environment-error records are left out of both: the
+  runner retries them, and the retry is the run that counts.
