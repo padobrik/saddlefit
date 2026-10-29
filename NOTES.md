@@ -359,3 +359,16 @@ Assumptions taken where the spec leaves a detail open. Deviations from the spec 
   The baseline report is now schema_version 2: `created` has microseconds, so the cut is
   exact. A v1 report (whole seconds, as v0.2.0 wrote) is read through a migration that takes
   the last moment of its second, the latest it can have been written.
+- **Paired held-out gate (#167, found in the v0.3.0 proof run).** With one run per task, fit
+  accepted `tool_output.max_chars` 4000→12000 on held-out 3 wins to 1 loss; a 5-run re-measure
+  showed none of it (73% against 70% of runs). Simulated with that run's per-task pass rates,
+  B12's `wins − losses ≥ max(1, ⌈0.1·n⌉)` accepted a change that does nothing 17–33% of the
+  time on 6–20 held-out tasks, with 1, 3 or 5 runs alike: tasks solved "sometimes" flip
+  either way. The gate now compares passing runs per task in pairs: accept when they rise and
+  a one-sided sign-flip test gives p < 0.05 / candidates tried in the round (exact up to 16
+  differing tasks, a seeded sample above). The same simulation accepts a no-change candidate
+  under 5% of the time. The tie-break orders by passes gained. Ablation keeps a change only if
+  removing it is clearly worse (p < 0.05), so a change that cannot show it helps goes, as "no
+  extra context" asks. `fit` refuses `runs_per_task < 3` and warns below 20 held-out tasks:
+  there, only large gains can pass (a perfect gain on five of six tasks has p = 1/32).
+  Change records keep wins and losses, so their format does not change.

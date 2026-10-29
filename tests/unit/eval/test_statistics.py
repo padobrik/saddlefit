@@ -7,6 +7,7 @@ from saddlefit.eval.statistics import (
     delegation,
     delegation_map,
     paired_bootstrap,
+    paired_sign_flip_p,
     wilson,
 )
 
@@ -77,3 +78,26 @@ def test_context_efficiency() -> None:
     assert context_efficiency(0.6, 3000) == pytest.approx(0.2)
     with pytest.raises(ValueError, match="positive"):
         context_efficiency(0.6, 0)
+
+
+SIGN_FLIP = [
+    # (differences, exact one-sided p)
+    ((1, 1, 1), 1 / 8),
+    ((2, 2, 2, 2, 2, 2), 1 / 64),
+    ((2, 2, 2, 2, 2, -1), 2 / 64),
+    ((1, -1), 1.0),  # no gain
+    ((0, 0), 1.0),
+    ((), 1.0),
+    ((3, 0, 0), 1 / 2),
+]
+
+
+@pytest.mark.parametrize(("diffs", "p"), SIGN_FLIP)
+def test_paired_sign_flip_p_is_exact_for_few_tasks(diffs: tuple[int, ...], p: float) -> None:
+    assert paired_sign_flip_p(diffs) == pytest.approx(p)
+
+
+def test_paired_sign_flip_p_samples_many_tasks_and_is_never_zero() -> None:
+    many = (2,) * 30
+    assert 0 < paired_sign_flip_p(many) < 1e-3
+    assert paired_sign_flip_p(many) == paired_sign_flip_p(many)  # seeded: the same every time

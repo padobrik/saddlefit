@@ -88,6 +88,12 @@ class BaselineResult:
                 passes[run.task_id] += run.passed
         return passes, counted
 
+    def pass_counts(self) -> dict[str, int]:
+        """Passing runs per task, for tasks whose every run counted; the paired gates compare
+        these, so a task an environment error left short is left out of them."""
+        passes, counted = self._counted()
+        return {t: passes[t] for t in sorted(counted) if counted[t] >= self.runs_per_task}
+
     def solved(self) -> dict[str, bool]:
         """Decided tasks only.
 

@@ -26,6 +26,7 @@ from typing import Final, Literal, Protocol
 from saddlefit.config import TokenPrices
 from saddlefit.errors import EnvironmentFailure
 from saddlefit.eval.decisions import (
+    HELD_OUT_ALPHA,
     Candidate,
     HeldOutComparison,
     batch_gate,
@@ -58,6 +59,7 @@ class BatchResult:
 
     solved: dict[str, bool | None]
     failures: tuple[RunDigest, ...] = ()
+    passes: dict[str, int] = field(default_factory=dict)  # passing runs, for paired gates
 
 
 class Practice(Protocol):
@@ -218,7 +220,9 @@ class MiddleLoop:
         passing = [
             Candidate(t.proposal.proposal_id, i, t.held_out, t.proposal.context_tokens_delta)
             for i, t in enumerate(tried)
-            if t.held_out is not None and held_out_gate(t.held_out)
+            # each candidate tried is a chance to accept noise: the round shares one alpha
+            if t.held_out is not None
+            and held_out_gate(t.held_out, HELD_OUT_ALPHA / max(1, len(tried)))
         ]
         winner = tie_break(passing)
         decided: list[tuple[Tried, Literal["accepted", "rejected"]]] = []

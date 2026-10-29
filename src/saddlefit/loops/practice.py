@@ -47,7 +47,9 @@ class DockerPractice:
     on_run: Callable[[RunOutcome], None] | None = None
     # every run, any split, as a count only
     progress: ProgressSink | None = None
-    _held_out: dict[str, dict[str, bool | None]] = field(default_factory=dict, repr=False)
+    _held_out: dict[str, tuple[dict[str, bool | None], dict[str, int]]] = field(
+        default_factory=dict, repr=False
+    )
 
     @property
     def runs_per_task(self) -> int:
@@ -101,6 +103,7 @@ class DockerPractice:
         result = self._run(harness_ref, metas)
         decided = result.solved()
         solved = {m.id: decided.get(m.id) for m in metas}
+        passes = result.pass_counts()
         texts = {
             m.id: (self.public_dir / m.id / "task.md").read_text(encoding="utf-8") for m in metas
         }
@@ -113,7 +116,7 @@ class DockerPractice:
                 raise FileNotFoundError(f"run record {run.run_id} is missing")
             events, summary = read_run(path)  # refuses anything but training runs
             failures.append(digest_run(events, summary, texts[run.task_id]))
-        return BatchResult(solved=solved, failures=tuple(failures))
+        return BatchResult(solved=solved, failures=tuple(failures), passes=passes)
 
     def compare_held_out(self, current_ref: str, candidate_ref: str) -> HeldOutComparison:
         metas = self._metas("held_out")
@@ -121,7 +124,8 @@ class DockerPractice:
         if current not in self._held_out:  # the current harness is run once per commit
             self._held_out[current] = self._outcomes(current, metas)
         candidate = self._outcomes(self.store.head(candidate_ref), metas)
-        return compare_held_out(self._held_out[current], candidate)
+        (before, before_passes), (after, after_passes) = self._held_out[current], candidate
+        return compare_held_out(before, after, before_passes, after_passes)
 
     def evaluate(self, ref: str) -> int:
         """Run the harness at ``ref`` once over training and held-out tasks; the run count.
@@ -142,9 +146,12 @@ class DockerPractice:
             )
         return len(runs)
 
-    def _outcomes(self, commit: str, metas: Sequence[TaskMeta]) -> dict[str, bool | None]:
-        decided = self._run(commit, metas).solved()
-        return {m.id: decided.get(m.id) for m in metas}
+    def _outcomes(
+        self, commit: str, metas: Sequence[TaskMeta]
+    ) -> tuple[dict[str, bool | None], dict[str, int]]:
+        result = self._run(commit, metas)
+        decided = result.solved()
+        return {m.id: decided.get(m.id) for m in metas}, result.pass_counts()
 
 
 def without_control(tasks: Sequence[TaskMeta]) -> list[TaskMeta]:
