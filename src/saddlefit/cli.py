@@ -18,6 +18,7 @@ from saddlefit import __version__
 from saddlefit.config import Config, ConfigError, SandboxConfig, StudentConfig, load_config
 from saddlefit.doctor import doctor_for, render
 from saddlefit.errors import EnvironmentFailure, SaddlefitError, UserError
+from saddlefit.eval.decisions import ADVISED_HELD_OUT, MIN_GATE_RUNS
 from saddlefit.loops.ablation import AblationResult
 from saddlefit.loops.baseline import RunOutcome
 from saddlefit.loops.generate import GenerationReport
@@ -430,6 +431,21 @@ def fit(
     config = project.config()
     if config.tutor.provider != "anthropic":
         raise UserError(f"fit needs the anthropic tutor provider, not {config.tutor.provider!r}")
+    runs = config.evaluation.runs_per_task
+    if runs < MIN_GATE_RUNS:
+        # B12: with fewer runs a task's result is mostly chance, and the gates accept noise
+        raise UserError(
+            f"fit needs evaluation.runs_per_task of at least {MIN_GATE_RUNS}, not {runs}: "
+            "with fewer runs the gates cannot tell a change from noise; set it, then run "
+            "`saddlefit baseline` again"
+        )
+    held_out = sum(m.split == "held_out" for m in project.tasks())
+    if held_out < ADVISED_HELD_OUT:
+        typer.echo(
+            f"warning: {held_out} held-out tasks; below about {ADVISED_HELD_OUT}, the held-out "
+            "gate can only tell large gains from noise, so most changes will be rejected",
+            err=True,
+        )
     prices = config.tutor.prices_usd_per_mtok.model_dump()
     # the kinds of tokens a tutor call is billed for; 5-minute cache writes are never made
     unset = [k for k in ("input", "output", "cache_write_1h", "cache_read") if not prices[k]]

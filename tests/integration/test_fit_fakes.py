@@ -13,7 +13,7 @@ import yaml
 
 from saddlefit.config import TokenPrices
 from saddlefit.errors import EnvironmentFailure
-from saddlefit.eval.decisions import HeldOutComparison
+from saddlefit.eval.decisions import HeldOutComparison, compare_held_out
 from saddlefit.harness.store import HarnessStore, HarnessStoreError
 from saddlefit.loops.fit import run_rounds
 from saddlefit.loops.middle import BatchResult, MiddleLoop, RoundReport, pick_batch
@@ -35,7 +35,9 @@ from saddlefit.storage.runs import RUN_SCHEMA_VERSION, RunEvent, RunSummary
 from saddlefit.tutor.diagnose import digest_run
 
 TRAIN = [f"t{i}" for i in range(6)]
-HELD_OUT = [f"h{i}" for i in range(6)]
+# eight held-out tasks: a clear gain on seven of them is significant (p = 1/128); on six,
+# even a perfect gain on five could be chance at the round's alpha (p = 1/32)
+HELD_OUT = [f"h{i}" for i in range(8)]
 CONTROL = [f"c{i}" for i in range(4)]
 # a run ID per training task, so proposals can cite them
 RUN_IDS = {t: f"01JB2Y8Q4V9N1K3D7M5R6T0W{i:02d}" for i, t in enumerate(TRAIN)}
@@ -65,15 +67,20 @@ class FakePractice:
         n = retries(self.store, harness_ref)
         solved = {t: solves(t, n) for t in task_ids}
         failures = tuple(self._failure(t) for t in task_ids if not solved[t])
-        return BatchResult(solved=solved, failures=failures)
+        passes = {t: self.runs_per_task * solved[t] for t in task_ids}  # every run alike
+        return BatchResult(solved=solved, failures=failures, passes=passes)
 
     def compare_held_out(self, current_ref: str, candidate_ref: str) -> HeldOutComparison:
         self.held_out_comparisons += 1
         before = {t: solves(t, retries(self.store, current_ref)) for t in HELD_OUT}
         after = {t: solves(t, retries(self.store, candidate_ref)) for t in HELD_OUT}
-        wins = sum(after[t] and not before[t] for t in HELD_OUT)
-        losses = sum(before[t] and not after[t] for t in HELD_OUT)
-        return HeldOutComparison(wins=wins, losses=losses, tasks=len(HELD_OUT))
+        runs = self.runs_per_task
+        return compare_held_out(
+            dict(before),
+            dict(after),
+            {t: runs * before[t] for t in HELD_OUT},
+            {t: runs * after[t] for t in HELD_OUT},
+        )
 
     def _failure(self, task: str) -> Any:
         event = RunEvent.model_validate(
@@ -201,7 +208,7 @@ def test_fit_accepts_the_change_that_helps_and_rejects_the_useless_one(tmp_path:
     # the useless change failed the batch gate, so it never reached held-out tasks
     assert useless.held_out is None
     assert right.held_out is not None
-    assert (right.held_out.wins, right.held_out.losses) == (5, 0)
+    assert (right.held_out.wins, right.held_out.losses) == (7, 0)
     assert (right.train.before, right.train.after) == (1, 6)
     assert [r.id for r in read_records(tmp_path)] == ["2026-10-22-001", "2026-10-22-002"]
     # one lesson per decision, labelled with the student model

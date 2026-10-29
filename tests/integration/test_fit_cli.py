@@ -165,3 +165,22 @@ def test_a_failed_round_skips_the_closing_evaluation(
             rounds=1,
         )
     assert practice.evaluated == []  # the report then says "not measured", as it should
+
+
+def test_fit_refuses_one_run_per_task(project: Path) -> None:
+    config = project / ".saddlefit" / "saddlefit.yaml"
+    text = config.read_text()
+    assert text.count("  runs_per_task: 3\n") == 1
+    config.write_text(
+        text.replace("  runs_per_task: 3\n", "  runs_per_task: 1\n").replace(
+            "  solved_threshold: 2\n", "  solved_threshold: 1\n"
+        )
+    )
+    result = runner.invoke(app, ["fit"])
+    assert result.exit_code == 1
+    assert "runs_per_task of at least 3, not 1" in str(result.exception)
+
+
+def test_fit_warns_about_a_small_held_out_split(project: Path) -> None:
+    result = runner.invoke(app, ["fit"])
+    assert "warning: 0 held-out tasks; below about 20" in result.output

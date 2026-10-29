@@ -98,7 +98,9 @@ def ablate(loop: Ablatable) -> list[AblationResult]:
             if current is None or current[0] != head:
                 current = (head, loop.practice.run_batch(MAIN, train))
             without = loop.practice.run_batch(ref, train)
-            train_cmp = compare_held_out(current[1].solved, without.solved)
+            train_cmp = compare_held_out(
+                current[1].solved, without.solved, current[1].passes, without.passes
+            )
             held_out = loop.practice.compare_held_out(MAIN, ref)
         finally:
             loop.store.drop_ablation(record.proposal_id)
@@ -106,8 +108,8 @@ def ablate(loop: Ablatable) -> list[AblationResult]:
         if pruned:
             commit = loop.store.prune(
                 merge,
-                f"ablation: without it, training net {train_cmp.net:+d}, "
-                f"held-out net {held_out.net:+d}",
+                f"ablation: without it, training passes {train_cmp.net_passes:+d}, "
+                f"held-out passes {held_out.net_passes:+d}; not clearly worse",
             )
             write_record(
                 loop.root,
