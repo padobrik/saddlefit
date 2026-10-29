@@ -372,3 +372,9 @@ Assumptions taken where the spec leaves a detail open. Deviations from the spec 
   extra context" asks. `fit` refuses `runs_per_task < 3` and warns below 20 held-out tasks:
   there, only large gains can pass (a perfect gain on five of six tasks has p = 1/32).
   Change records keep wins and losses, so their format does not change.
+- **Steering the generator to new code (owner, 2026-10-29).** Titles alone did not stop
+  repeats: what the generator writes about is what it is shown, and files were drawn at random.
+  Now the files a kept task changes are drawn with weight `1 / (1 + tasks in that file)`
+  (weighted sampling without replacement, so no file is ever left out), and the prompt lists
+  the functions kept tasks change, from `repeats.json` only. Tasks kept before #161 have no
+  entry there, so only their titles steer away from them.

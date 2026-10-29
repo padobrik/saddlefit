@@ -113,9 +113,11 @@ from saddlefit.tasks.mutation import (
 )
 from saddlefit.tasks.overlap import (
     RepeatGuard,
+    coverage,
     load_repeat_index,
     save_repeat_index,
     symbols_between,
+    tasks_per_file,
 )
 from saddlefit.tasks.splits import add_task, new_lock
 from saddlefit.tasks.suite import SuitePaths, load_lock, load_meta, materialize, save_lock
@@ -332,10 +334,16 @@ class Project:
         read_head = partial(generated_files.read_text, self.root, head)
 
         def request(rng: Any) -> GeneratorRequest:
+            # what kept tasks already change, from the repeat index (never the sealed store)
+            index = kit.repeats.index().tasks
+            shown = select_files(files, rng, covered=tasks_per_file(index))
+            functions, whole = coverage(index, {f.path for f in shown})
             return GeneratorRequest(
                 kind=TASK_KINDS[kind],
                 repo_summary=summary,
-                files=select_files(files, rng),
+                files=shown,
+                covered_functions=functions,
+                covered_files=whole,
                 examples=examples,
                 protected=protected,
                 existing_paths=frozenset(paths),

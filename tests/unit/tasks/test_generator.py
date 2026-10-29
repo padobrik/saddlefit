@@ -4,6 +4,7 @@ import dataclasses
 import os
 import random
 import subprocess
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -202,3 +203,28 @@ def test_titles_already_covered_reach_the_prompt() -> None:
 
 def test_a_task_title_is_its_first_line_without_heading_marks() -> None:
     assert task_title("\n# `SealedStore.canary` leaks\n\nbody") == "`SealedStore.canary` leaks"
+
+
+def test_files_with_tasks_are_shown_less_often_but_never_left_out() -> None:
+    files = [RepoFile(f"src/m{i}.py", "x" * 100) for i in range(4)]
+    covered = {"src/m0.py": 3}  # three kept tasks are about m0 already
+    rng = random.Random(5)
+    shown = Counter(
+        f.path for _ in range(4000) for f in select_files(files, rng, 100, covered=covered)
+    )
+    assert shown["src/m0.py"] < shown["src/m1.py"] / 2
+    assert shown["src/m0.py"] > 0  # still drawn now and then
+
+
+def test_covered_functions_reach_the_prompt() -> None:
+    text = render_user(
+        dataclasses.replace(request(), covered_functions=("src/a.py::f", "src/b.py::C.g"))
+    )
+    assert "# Functions tasks already change" in text
+    assert "- `src/a.py::f`\n- `src/b.py::C.g`" in text
+
+
+def test_files_covered_as_a_whole_reach_the_prompt() -> None:
+    text = render_user(dataclasses.replace(request(), covered_files=("docs/notes.md",)))
+    assert "# Files tasks change as a whole" in text
+    assert "- `docs/notes.md`" in text

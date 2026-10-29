@@ -152,6 +152,8 @@ def test_a_task_that_repeats_one_in_the_suite_is_dropped_before_calibration(
     assert second.kept == []
     assert second.attempts[0].reason.startswith(f"repeats {first.kept[0]}: both change ")
     assert any("# Already covered" in p and "Add shout" in p for p in prompts)
+    # and the function the first task changes, from the repeat index
+    assert any("`src/toykit/shout.py::shout`" in p for p in prompts)
     assert len(find_runs(project.state / "calibration")) == CALIBRATION_RUNS  # none for it
     assert [m.id for m in project.tasks()] == first.kept
 
