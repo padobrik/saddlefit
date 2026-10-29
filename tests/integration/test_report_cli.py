@@ -9,6 +9,7 @@ from typer.testing import CliRunner
 
 from saddlefit.cli import app
 from saddlefit.project import Project
+from saddlefit.reports.baseline import REPORT_SCHEMA_VERSION
 from saddlefit.tasks.suite import load_lock
 
 pytestmark = pytest.mark.integration
@@ -28,6 +29,7 @@ def fake_baseline(project: Project, commit: str, **changes: object) -> None:
     project.reports.mkdir(parents=True, exist_ok=True)
     config = project.config()
     report = {
+        "schema_version": REPORT_SCHEMA_VERSION,
         "kind": "baseline",
         "model": {"id": config.student.model, "digest": "sha256:m"},
         "harness_commit": commit,
@@ -85,3 +87,11 @@ def test_report_refuses_a_baseline_that_is_not_comparable(
     result = runner.invoke(app, ["report"])
     assert result.exit_code == 1
     assert message in str(result.exception)
+
+
+def test_an_old_baseline_report_is_read_through_its_migration(project: Project) -> None:
+    project.reports.mkdir(parents=True, exist_ok=True)
+    v1 = {"schema_version": 1, "kind": "baseline", "created": "2026-10-28T19:52:36+00:00"}
+    (project.reports / "baseline-20261028T195236Z.json").write_text(json.dumps(v1), "utf-8")
+    latest = project.latest_report()
+    assert (latest["schema_version"], latest["created"]) == (2, "2026-10-28T19:52:36.999999+00:00")

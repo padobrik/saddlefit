@@ -103,3 +103,11 @@ def test_practice_runs_batches_and_compares_held_out(
     # never a control task, and no held-out run reached the caller's callback
     assert {read_any_run(p)[1].task_id for p in new} == set(held_out)
     assert ran == []
+
+    # the closing evaluation: every training and held-out task once, never control (B15)
+    ran.clear()
+    before = len(find_runs(runs_root))
+    assert practice.evaluate("main") == len(train) + len(held_out)
+    new = find_runs(runs_root)[before:]
+    assert sorted(read_any_run(p)[1].task_id for p in new) == sorted(train + held_out)
+    assert {r.task_id for r in ran} == set(train)  # held-out runs never reach the callback

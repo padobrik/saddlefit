@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from saddlefit.config import Config
+from saddlefit.errors import EnvironmentFailure
 from saddlefit.eval.decisions import HeldOutComparison, compare_held_out
 from saddlefit.eval.evaluator import Evaluator
 from saddlefit.harness.loop_config import clamp, load_loop_config
@@ -121,6 +122,25 @@ class DockerPractice:
             self._held_out[current] = self._outcomes(current, metas)
         candidate = self._outcomes(self.store.head(candidate_ref), metas)
         return compare_held_out(self._held_out[current], candidate)
+
+    def evaluate(self, ref: str) -> int:
+        """Run the harness at ``ref`` once over training and held-out tasks; the run count.
+
+        What ``report`` needs as "after" (B15): fit runs only candidates, and the lessons it
+        commits move ``main`` to a tree no run has used yet. Held-out outcomes stay in the run
+        store for the report's aggregates; ``on_run`` sees the training runs only.
+        """
+        metas = self._metas("train") + self._metas("held_out")
+        runs = self._run(ref, metas).runs
+        undecided = sum(not run.classification.counts_in_statistics for run in runs)
+        if undecided:
+            # counts only: which held-out task failed to run stays in the run store (B10)
+            raise EnvironmentFailure(
+                f"the closing evaluation could not decide {undecided} of {len(runs)} runs "
+                "(environment errors); the rounds are saved, and report marks those tasks "
+                "not measured until a later fit evaluates them"
+            )
+        return len(runs)
 
     def _outcomes(self, commit: str, metas: Sequence[TaskMeta]) -> dict[str, bool | None]:
         decided = self._run(commit, metas).solved()

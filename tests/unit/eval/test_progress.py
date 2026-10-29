@@ -1,9 +1,11 @@
 """Before and after from run records: grouped by harness tree, aggregates only (B15)."""
 
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import pytest
+from ulid import ULID
 
 from saddlefit.eval.progress import Comparable, harness_progress
 from saddlefit.storage.runs import RUN_SCHEMA_VERSION, RunSummary, RunWriter, new_run_id
@@ -28,8 +30,9 @@ def run(
     model: str = "student",
     digest: str | None = "sha256:m",
     suite: str = "sha256:x",
+    at: datetime | None = None,
 ) -> None:
-    run_id = new_run_id()
+    run_id = str(ULID.from_datetime(at)) if at is not None else new_run_id()
     summary: dict[str, Any] = {
         "schema_version": RUN_SCHEMA_VERSION,
         "type": "summary",
@@ -148,3 +151,59 @@ def test_a_missing_digest_does_not_exclude_runs(tmp_path: Path) -> None:
     run(tmp_path, "aaaaaaa", "t1", "train", False)
     run(tmp_path, "bbbbbbb", "t1", "train", True, digest=None)
     assert progress(tmp_path)["splits"]["train"]["tasks"] == 1
+
+
+T0 = datetime(2026, 10, 29, 4, 52, 0, tzinfo=UTC)
+
+
+def selected(root: Path, before: str, after: str, until: datetime) -> dict[str, Any]:
+    return harness_progress(
+        root,
+        tree_of=TREES.get,
+        before_tree=before,
+        after_tree=after,
+        tasks={"train": ["t1"], "held_out": []},
+        task_types=TYPES,
+        comparable=SAME,
+        runs_per_task=1,
+        threshold=1,
+        baseline_until=until,
+    )["splits"]["train"]
+
+
+def test_before_is_the_baseline_itself_and_an_error_never_counts(tmp_path: Path) -> None:
+    run(tmp_path, "aaaaaaa", "t1", "train", True, at=T0)  # the baseline run
+    later = T0 + timedelta(milliseconds=5)
+    run(tmp_path, "aaaaaaa", "t1", "train", False, at=later)  # a fit's run of the same tree
+    run(tmp_path, "bbbbbbb", "t1", "train", True, at=later)  # the closing evaluation
+    run(tmp_path, "bbbbbbb", "t1", "train", False, tag="env_error", at=later)  # retried
+    train = selected(
+        tmp_path,
+        "tree-before",
+        "tree-after",
+        T0,
+    )
+    assert (train["tasks"], train["before"]["solved"], train["after"]["solved"]) == (1, 1, 1)
+
+
+def test_an_unchanged_harness_still_compares_the_baseline_with_the_closing_runs(
+    tmp_path: Path,
+) -> None:
+    run(tmp_path, "aaaaaaa", "t1", "train", False, at=T0)  # the baseline
+    run(tmp_path, "aaaaaaa", "t1", "train", True, at=T0 + timedelta(seconds=30))  # closing
+    train = selected(
+        tmp_path,
+        "tree-before",
+        "tree-before",
+        T0,
+    )
+    assert (train["before"]["solved"], train["after"]["solved"]) == (0, 1)
+
+
+def test_a_run_just_after_a_precise_baseline_is_not_the_baseline(tmp_path: Path) -> None:
+    created = datetime(2026, 10, 29, 4, 52, 0, 500000, tzinfo=UTC)
+    run(tmp_path, "aaaaaaa", "t1", "train", True, at=created - timedelta(seconds=40))
+    run(tmp_path, "aaaaaaa", "t1", "train", False, at=created + timedelta(milliseconds=200))
+    run(tmp_path, "bbbbbbb", "t1", "train", True, at=created + timedelta(minutes=5))
+    train = selected(tmp_path, "tree-before", "tree-after", created)
+    assert train["before"]["solved"] == 1  # the run in the same second is a fit's, not the baseline

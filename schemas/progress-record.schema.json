@@ -65,7 +65,8 @@
         "candidate",
         "held-out",
         "lessons",
-        "ablation"
+        "ablation",
+        "closing"
       ],
       "title": "Stage",
       "type": "string"

@@ -338,3 +338,24 @@ Assumptions taken where the spec leaves a detail open. Deviations from the spec 
   `keep` writes the index before `suite.lock`, and each check and write re-reads the index from
   disk, so two task commands at once see each other's kept tasks; a lock across commands,
   which `suite.lock` never had either, is #162.
+- **The closing evaluation (#163, found in the v0.3.0 proof run).** `report` compares runs at
+  the baseline's harness tree with runs at the current head's. A fit runs only candidates, and
+  the lessons it commits after each decision move `main` to a tree no run has used, so after
+  the proof run every task read "not measured". SPEC B15 asks for "success before and after"
+  but did not say who runs "after". Chosen: `fit` ends, still under the fit lock, by running
+  `main` once over train and held-out with `runs_per_task` (`DockerPractice.evaluate`, the same
+  runner as the held-out gate; progress stage `closing`). "Fit, then report" stays two
+  commands, and the report is always complete. A fit that fails in a round skips it, and the
+  report then says "not measured". A closing run that stays an environment error after the
+  runner's retry stops `fit` with exit 3 and counts only, never a held-out task's name; the
+  rounds stay saved. It costs one evaluation of the suite (about an hour for 17
+  tasks on gemma4:e4b). Held-out outcomes go only into the report's aggregates, as B10 allows.
+  The report's "before" is now the baseline's own runs: runs of the baseline tree made by the
+  baseline report's `created` time. Before, it took the latest runs of that tree, and in the
+  proof run that was a fit's control run (held-out 2/6) instead of the baseline (4/6); with
+  an unchanged harness, the closing runs would have stood in for the baseline as well. "After"
+  is the latest runs of the head's tree. Environment-error records are left out of both: the
+  runner retries them, and the retry is the run that counts.
+  The baseline report is now schema_version 2: `created` has microseconds, so the cut is
+  exact. A v1 report (whole seconds, as v0.2.0 wrote) is read through a migration that takes
+  the last moment of its second, the latest it can have been written.

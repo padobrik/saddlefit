@@ -33,7 +33,7 @@ from saddlefit.eval.tamper import matches_any
 from saddlefit.export.skill import export_skill
 from saddlefit.harness.lint import SandboxLinter
 from saddlefit.harness.loop_config import LoopConfig, clamp, load_loop_config
-from saddlefit.harness.store import HarnessStore, HarnessStoreError
+from saddlefit.harness.store import MAIN, HarnessStore, HarnessStoreError
 from saddlefit.loops.ablation import AblationResult, AblationTarget, ablate, active_changes
 from saddlefit.loops.baseline import (
     BASELINE_SPLITS,
@@ -59,7 +59,7 @@ from saddlefit.loops.work import WorkRunner, write_answer
 from saddlefit.playbook import proposal_for
 from saddlefit.providers.base import ModelClient, ModelInfo
 from saddlefit.providers.retry import LOCAL_TIMEOUT_S
-from saddlefit.reports.baseline import ReportContext
+from saddlefit.reports.baseline import REPORT_SCHEMA_VERSION, ReportContext
 from saddlefit.reports.baseline import build as build_report
 from saddlefit.reports.baseline import write as write_report
 from saddlefit.reports.progress import ProgressContext
@@ -82,6 +82,8 @@ from saddlefit.storage.fit_state import (
 )
 from saddlefit.storage.journal import JOURNAL_SCHEMA_VERSION, JournalEntry, task_ref, write_entry
 from saddlefit.storage.library import ChangeRecord, read_records
+from saddlefit.storage.migrations import upgrade
+from saddlefit.storage.migrations.reports import BASELINE_KIND
 from saddlefit.storage.progress import ProgressRecord, load_progress, process_alive
 from saddlefit.tasks import generated as generated_files
 from saddlefit.tasks.acceptance import FAILED_TESTS, Acceptance, accept, seal_generated
@@ -804,6 +806,9 @@ class Project:
         practice.progress = progress
         with fit_lock(self.state):
             reports = run_rounds(middle, self.state, rounds, on_round, progress)
+            # the fitted harness, once over train and held-out, so report has its "after"
+            progress.stage("closing")
+            practice.evaluate(MAIN)
             # under the lock, so it never removes the record of a fit that starts next;
             # a fit that fails keeps progress.json, so status can say where it stopped
             progress.finish()
@@ -1098,6 +1103,10 @@ class Project:
             ),
             runs_per_task=config.evaluation.runs_per_task,
             threshold=config.evaluation.solved_threshold,
+            # "before" is the baseline itself, not later runs of the same harness
+            baseline_until=(
+                datetime.fromisoformat(baseline["created"]) if "created" in baseline else None
+            ),
         )
         ctx = ProgressContext(
             model=baseline["model"]["id"],
@@ -1144,7 +1153,7 @@ class Project:
         if not reports:
             raise UserError("no baseline report yet; run `saddlefit baseline`")
         loaded: dict[str, Any] = json.loads(reports[-1].read_text(encoding="utf-8"))
-        return loaded
+        return upgrade(BASELINE_KIND, loaded, REPORT_SCHEMA_VERSION)
 
 
 def report_id(kind: str) -> str:

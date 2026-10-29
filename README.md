@@ -124,7 +124,9 @@ Generated and mutated tasks join the training and held-out splits, never control
 On a terminal `fit` shows one framed status line (round, candidate, stage, runs done,
 spending); the frame turns amber when no run has finished for longer than a run may take.
 From another shell, `saddlefit status` says whether a fit is running, where it is or where
-it stopped, and what fits have cost.
+it stopped, and what fits have cost. A fit ends by running the fitted harness once over the
+training and held-out tasks (the `closing` stage), so `saddlefit report` can compare it with
+the baseline.
 
 ### Work mode
 

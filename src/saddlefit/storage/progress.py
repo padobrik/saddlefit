@@ -22,7 +22,7 @@ PROGRESS_SCHEMA_VERSION: Final = 1
 PROGRESS_KIND: Final = "progress"
 PROGRESS_FILE: Final = "progress.json"
 
-Stage = Literal["train", "tutor", "candidate", "held-out", "lessons", "ablation"]
+Stage = Literal["train", "tutor", "candidate", "held-out", "lessons", "ablation", "closing"]
 
 
 class ProgressRecord(BaseModel):
