@@ -2,12 +2,14 @@
 
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 from tests.fixtures.toyrepo.build import build
 from typer.testing import CliRunner
 
 from saddlefit import cli
+from saddlefit import project as project_module
 from saddlefit.cli import app, round_data, round_line
 from saddlefit.loops.middle import RoundReport
 from saddlefit.project import Project
@@ -98,3 +100,66 @@ def test_fit_needs_held_out_tasks(project: Path, monkeypatch: pytest.MonkeyPatch
     result = runner.invoke(app, ["fit"])
     assert result.exit_code == 1
     assert "no held-out tasks" in str(result.exception)
+
+
+class ClosingPractice:
+    """Records the closing evaluation, and whether the fit lock was held during it."""
+
+    def __init__(self, state: Path) -> None:
+        self.state = state
+        self.progress: Any = None
+        self.evaluated: list[tuple[str, bool, str]] = []
+
+    def evaluate(self, ref: str) -> int:
+        stage = self.progress.record.stage if self.progress.record else ""
+        self.evaluated.append((ref, (self.state / "fit.lock").exists(), stage))
+        return 3
+
+
+def test_fit_ends_with_a_closing_evaluation_of_the_fitted_harness(
+    project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    proj = Project(project)
+    practice = ClosingPractice(proj.state)
+    order: list[str] = []
+    monkeypatch.setattr(Project, "_practice", lambda self, **kw: (practice, []))
+    monkeypatch.setattr(project_module, "SandboxLinter", lambda *a, **k: None)
+
+    def rounds(*args: Any, **kwargs: Any) -> list[RoundReport]:
+        order.append("rounds")
+        return []
+
+    monkeypatch.setattr(project_module, "run_rounds", rounds)
+    proj.fit(
+        docker_client=object(),
+        model_client=lambda: None,  # type: ignore[arg-type,return-value]
+        tutor_client=object(),  # type: ignore[arg-type]
+        model_info=ModelInfo(provider="fake", model="m"),
+        rounds=1,
+    )
+    assert order == ["rounds"]
+    # after the rounds, on main, under the fit lock, shown as its own stage
+    assert practice.evaluated == [("main", True, "closing")]
+
+
+def test_a_failed_round_skips_the_closing_evaluation(
+    project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    proj = Project(project)
+    practice = ClosingPractice(proj.state)
+    monkeypatch.setattr(Project, "_practice", lambda self, **kw: (practice, []))
+    monkeypatch.setattr(project_module, "SandboxLinter", lambda *a, **k: None)
+
+    def broken(*args: Any, **kwargs: Any) -> list[RoundReport]:
+        raise RuntimeError("the round failed")
+
+    monkeypatch.setattr(project_module, "run_rounds", broken)
+    with pytest.raises(RuntimeError):
+        proj.fit(
+            docker_client=object(),
+            model_client=lambda: None,  # type: ignore[arg-type,return-value]
+            tutor_client=object(),  # type: ignore[arg-type]
+            model_info=ModelInfo(provider="fake", model="m"),
+            rounds=1,
+        )
+    assert practice.evaluated == []  # the report then says "not measured", as it should

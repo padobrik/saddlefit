@@ -480,7 +480,13 @@ def fit(
             # plain text: a refusal reason must not be read as Rich markup
             reports = fit_with(lambda s: live.console.print(s, markup=False, highlight=False))
     data = [round_data(r) for r in reports]
-    _emit(ctx, data, f"{len(reports)} rounds; {sum(bool(r.accepted) for r in reports)} accepted")
+    accepted = sum(bool(r.accepted) for r in reports)
+    _emit(
+        ctx,
+        data,
+        f"{len(reports)} rounds; {accepted} accepted; the fitted harness ran once over train and "
+        "held-out, so `saddlefit report` compares it with the baseline",
+    )
 
 
 @app.command()

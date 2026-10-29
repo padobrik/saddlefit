@@ -33,7 +33,7 @@ from saddlefit.eval.tamper import matches_any
 from saddlefit.export.skill import export_skill
 from saddlefit.harness.lint import SandboxLinter
 from saddlefit.harness.loop_config import LoopConfig, clamp, load_loop_config
-from saddlefit.harness.store import HarnessStore, HarnessStoreError
+from saddlefit.harness.store import MAIN, HarnessStore, HarnessStoreError
 from saddlefit.loops.ablation import AblationResult, AblationTarget, ablate, active_changes
 from saddlefit.loops.baseline import (
     BASELINE_SPLITS,
@@ -804,6 +804,9 @@ class Project:
         practice.progress = progress
         with fit_lock(self.state):
             reports = run_rounds(middle, self.state, rounds, on_round, progress)
+            # the fitted harness, once over train and held-out, so report has its "after"
+            progress.stage("closing")
+            practice.evaluate(MAIN)
             # under the lock, so it never removes the record of a fit that starts next;
             # a fit that fails keeps progress.json, so status can say where it stopped
             progress.finish()

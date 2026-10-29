@@ -338,3 +338,13 @@ Assumptions taken where the spec leaves a detail open. Deviations from the spec 
   `keep` writes the index before `suite.lock`, and each check and write re-reads the index from
   disk, so two task commands at once see each other's kept tasks; a lock across commands,
   which `suite.lock` never had either, is #162.
+- **The closing evaluation (#163, found in the v0.3.0 proof run).** `report` compares runs at
+  the baseline's harness tree with runs at the current head's. A fit runs only candidates, and
+  the lessons it commits after each decision move `main` to a tree no run has used, so after
+  the proof run every task read "not measured". SPEC B15 asks for "success before and after"
+  but did not say who runs "after". Chosen: `fit` ends, still under the fit lock, by running
+  `main` once over train and held-out with `runs_per_task` (`DockerPractice.evaluate`, the same
+  runner as the held-out gate; progress stage `closing`). "Fit, then report" stays two
+  commands, and the report is always complete. A fit that fails in a round skips it, and the
+  report then says "not measured". It costs one evaluation of the suite (about an hour for 17
+  tasks on gemma4:e4b). Held-out outcomes go only into the report's aggregates, as B10 allows.

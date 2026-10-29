@@ -122,6 +122,16 @@ class DockerPractice:
         candidate = self._outcomes(self.store.head(candidate_ref), metas)
         return compare_held_out(self._held_out[current], candidate)
 
+    def evaluate(self, ref: str) -> int:
+        """Run the harness at ``ref`` once over training and held-out tasks; the run count.
+
+        What ``report`` needs as "after" (B15): fit runs only candidates, and the lessons it
+        commits move ``main`` to a tree no run has used yet. Held-out outcomes stay in the run
+        store for the report's aggregates; ``on_run`` sees the training runs only.
+        """
+        metas = self._metas("train") + self._metas("held_out")
+        return len(self._run(ref, metas).runs)
+
     def _outcomes(self, commit: str, metas: Sequence[TaskMeta]) -> dict[str, bool | None]:
         decided = self._run(commit, metas).solved()
         return {m.id: decided.get(m.id) for m in metas}
