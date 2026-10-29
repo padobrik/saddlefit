@@ -12,7 +12,6 @@ import secrets
 import shutil
 import stat
 import tempfile
-from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
@@ -115,10 +114,10 @@ from saddlefit.tasks.mutation import (
 from saddlefit.tasks.overlap import (
     RepeatGuard,
     coverage,
-    files_of,
     load_repeat_index,
     save_repeat_index,
     symbols_between,
+    tasks_per_file,
 )
 from saddlefit.tasks.splits import add_task, new_lock
 from saddlefit.tasks.suite import SuitePaths, load_lock, load_meta, materialize, save_lock
@@ -337,8 +336,7 @@ class Project:
         def request(rng: Any) -> GeneratorRequest:
             # what kept tasks already change, from the repeat index (never the sealed store)
             index = kit.repeats.index().tasks
-            per_file = Counter(path for symbols in index.values() for path in files_of(symbols))
-            shown = select_files(files, rng, covered=per_file)
+            shown = select_files(files, rng, covered=tasks_per_file(index))
             functions, whole = coverage(index, {f.path for f in shown})
             return GeneratorRequest(
                 kind=TASK_KINDS[kind],

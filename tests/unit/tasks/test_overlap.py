@@ -3,7 +3,6 @@
 import difflib
 import os
 import re
-from collections import Counter
 from pathlib import Path
 
 import pytest
@@ -16,10 +15,10 @@ from saddlefit.tasks.overlap import (
     RepeatGuard,
     changed_symbols,
     coverage,
-    files_of,
     load_repeat_index,
     save_repeat_index,
     symbols_between,
+    tasks_per_file,
 )
 
 OLD = """import os
@@ -228,17 +227,22 @@ def test_a_file_with_carriage_returns_only_still_names_its_functions() -> None:
 
 
 def test_a_task_counts_once_per_file_however_many_functions_it_changes() -> None:
-    index = {"gen-a": ["src/a.py::f", "src/a.py::g"], "gen-b": ["src/a.py::f"]}
-    counts = Counter(path for symbols in index.values() for path in files_of(symbols))
-    assert counts["src/a.py"] == 2  # two tasks, not three symbols
+    index = {
+        "gen-a": ["src/a.py::f", "src/a.py::g", "src/b.py"],
+        "gen-b": ["src/a.py::f"],
+        "gen-c": ["src/a.py::f"],
+    }
+    # three tasks, not four symbols, and not one symbol "src/a.py::f"
+    assert tasks_per_file(index) == {"src/a.py": 3, "src/b.py": 1}
 
 
 def test_coverage_puts_the_shown_files_first_and_lists_whole_files() -> None:
     index = {
         "gen-a": ["src/a.py::f"],
         "gen-b": ["src/z.py::g", "src/z.py"],
-        "gen-c": ["docs/notes.md::*"],
+        "gen-c": ["docs/notes.md::*", "src/y.py::*"],
     }
-    functions, whole = coverage(index, shown={"src/z.py"})
+    functions, whole = coverage(index, shown={"src/z.py", "src/y.py"})
     assert functions == ("src/z.py::g", "src/a.py::f")  # z.py is shown, so it comes first
-    assert whole == ("docs/notes.md",)  # top-level code alone ("src/z.py") is no whole file
+    # y.py is shown, so it comes first; top-level code alone ("src/z.py") is no whole file
+    assert whole == ("src/y.py", "docs/notes.md")

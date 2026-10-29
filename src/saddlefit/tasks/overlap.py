@@ -17,6 +17,7 @@ import re
 import subprocess
 import tempfile
 import tokenize
+from collections import Counter
 from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -135,21 +136,29 @@ def _meeting(mine: frozenset[str], theirs: frozenset[str]) -> set[str]:
 
 
 def files_of(symbols: Iterable[str]) -> set[str]:
-    """The files a task's symbols are in; a task counts once per file however many it has."""
+    """The files a task's symbols are in."""
     return {symbol.split("::", 1)[0] for symbol in symbols}
+
+
+def tasks_per_file(index: Mapping[str, Sequence[str]]) -> Counter[str]:
+    """How many tasks change each file; a task counts once per file however many it has."""
+    return Counter(path for symbols in index.values() for path in files_of(symbols))
 
 
 def coverage(
     index: Mapping[str, Sequence[str]], shown: Collection[str]
 ) -> tuple[tuple[str, ...], tuple[str, ...]]:
-    """What the generator must steer away from: covered functions, those in the files it is
-    shown first, and files whole-file symbols cover."""
+    """What the generator must steer away from: covered functions and files whole-file symbols
+    cover, those in the files it is shown first, so the prompt's limit cuts the others."""
     every = {symbol for symbols in index.values() for symbol in symbols}
     functions = sorted(
         (s for s in every if "::" in s and not s.endswith(WHOLE_FILE)),
         key=lambda s: (s.split("::", 1)[0] not in shown, s),
     )
-    whole = sorted(s.removesuffix(WHOLE_FILE) for s in every if s.endswith(WHOLE_FILE))
+    whole = sorted(
+        (s.removesuffix(WHOLE_FILE) for s in every if s.endswith(WHOLE_FILE)),
+        key=lambda path: (path not in shown, path),
+    )
     return tuple(functions), tuple(whole)
 
 
