@@ -217,9 +217,9 @@ def render_user(request: GeneratorRequest) -> str:
 def _difficulty(too_easy: int, too_hard: int) -> str:
     """How hard to aim, from the candidates this command dropped at calibration."""
     if too_easy > too_hard:
-        aim = "Write a harder task than those: a less obvious bug or a larger change."
+        aim = "Write a harder task than the too-easy ones: a less obvious bug or a larger change."
     elif too_hard > too_easy:
-        aim = "Write an easier task than those: a smaller change in one function."
+        aim = "Write an easier task than the too-hard ones: a smaller change in one function."
     else:
         aim = "Aim between the two."
     return (

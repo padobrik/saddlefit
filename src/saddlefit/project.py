@@ -120,7 +120,7 @@ from saddlefit.tasks.overlap import (
     symbols_between,
     tasks_per_file,
 )
-from saddlefit.tasks.splits import add_task, new_lock
+from saddlefit.tasks.splits import add_task, new_lock, split_for
 from saddlefit.tasks.suite import SuitePaths, load_lock, load_meta, materialize, save_lock
 
 
@@ -153,6 +153,7 @@ class TaskKit:
     keep: Callable[[str, GeneratedTask], None]
     exists: Callable[[str], bool]
     repeats: RepeatGuard  # what a new task must not repeat; keep() adds each kept one
+    would_train: Callable[[str], bool]  # the split a candidate's id maps onto is train
 
 
 @dataclass(frozen=True)
@@ -378,6 +379,7 @@ class Project:
                 keep=kit.keep,
                 discard=lambda task_id: generated_files.discard(self.suite, task_id),
                 prompt_chars=lambda req: len(render_system(req)) + len(render_user(req)),
+                would_train=kit.would_train,
             )
             return generation.run(count)
 
@@ -490,6 +492,7 @@ class Project:
                 prompt_chars=lambda req: sum(
                     len(m.content) for m in issue_messages(req[0], req[1])
                 ),
+                would_train=kit.would_train,
                 max_attempts=config.generator.max_calls * MUTATION_TRIES_PER_CALL,
             ).run(count)
 
@@ -591,6 +594,9 @@ class Project:
             keep=keep,
             exists=lambda task_id: any(t.id == task_id for t in self.tasks()),
             repeats=repeats,
+            would_train=lambda task_id: (
+                split_for(load_lock(self.suite, config.splits), task_id, source) == "train"
+            ),
         )
 
     def work(

@@ -227,8 +227,8 @@ def test_covered_functions_reach_the_prompt() -> None:
 @pytest.mark.parametrize(
     ("too_easy", "too_hard", "aim"),
     [
-        (3, 1, "Write a harder task than those"),
-        (0, 2, "Write an easier task than those"),
+        (3, 1, "Write a harder task than the too-easy ones"),
+        (0, 2, "Write an easier task than the too-hard ones"),
         (1, 1, "Aim between the two."),
     ],
 )

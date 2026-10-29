@@ -8,8 +8,8 @@ a call that could pass the generator's call or dollar budget.
 
 Each request is told how many candidates of this command calibration dropped as too easy
 (passed in all five runs) or too hard (in none), so the generator can aim between them.
-Only dropped candidates count: they never enter the suite, so this is no train, held-out
-or control outcome, and a kept task's runs are never reported.
+Only dropped candidates that would have gone to train count: a kept task's runs are never
+reported, and neither are those of a candidate whose id maps onto held-out.
 """
 
 from __future__ import annotations
@@ -71,8 +71,12 @@ class Difficulty:
     too_hard: int = 0
 
     @classmethod
-    def of(cls, attempts: list[Attempt]) -> Difficulty:
-        dropped = [a.passes for a in attempts if not a.kept and a.passes is not None]
+    def of(cls, attempts: list[Attempt], would_train: Callable[[str], bool]) -> Difficulty:
+        dropped = [
+            a.passes
+            for a in attempts
+            if not a.kept and a.passes is not None and a.task_id and would_train(a.task_id)
+        ]
         return cls(
             too_easy=dropped.count(CALIBRATION_RUNS),
             too_hard=dropped.count(0),
@@ -110,6 +114,8 @@ class Generation:
     keep: Callable[[str, GeneratedTask], None]
     discard: Callable[[str], None]
     prompt_chars: Callable[[Any], int]
+    # whether a candidate would have gone to train: only those reach the difficulty counts
+    would_train: Callable[[str], bool]
     seed: int = 7
     max_attempts: int | None = None  # attempts of any kind, model calls or not
     id_prefix: str = "gen"
@@ -125,7 +131,7 @@ class Generation:
                 report.stopped = f"{self.max_attempts} attempts made"
                 break
             try:
-                request = self.request(rng, Difficulty.of(report.attempts))
+                request = self.request(rng, Difficulty.of(report.attempts, self.would_train))
             except NoCandidate as exc:
                 report.attempts.append(Attempt(None, False, str(exc)))
                 continue

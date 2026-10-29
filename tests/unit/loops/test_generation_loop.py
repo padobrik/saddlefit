@@ -71,6 +71,7 @@ class World:
             "keep": lambda task_id, task: self.kept.append(task_id),
             "discard": self.discarded.append,
             "prompt_chars": lambda request: 4_000,
+            "would_train": lambda task_id: True,
         }
         return Generation(**{**fields, **changes})
 
@@ -252,3 +253,17 @@ def test_each_request_hears_how_hard_the_dropped_candidates_were() -> None:
         Difficulty(1, 1),
         Difficulty(2, 1),
     ]
+
+
+def test_a_candidate_that_maps_onto_held_out_is_never_counted() -> None:
+    told: list[Difficulty] = []
+
+    def request(rng: random.Random, difficulty: Difficulty) -> GeneratorRequest:
+        told.append(difficulty)
+        return GeneratorRequest(TASK_KINDS["feature"], "s", [], [], ("tests/**",), frozenset())
+
+    world = World(passes=[5, 0, 5, 2])
+    # the second and third candidates' ids map onto held-out: their runs stay out of the prompt
+    held_out = {task_id_for("feature", generated(n)) for n in (2, 3)}
+    world.generation(request=request, would_train=lambda t: t not in held_out).run(count=1)
+    assert told == [Difficulty(0, 0), Difficulty(1, 0), Difficulty(1, 0), Difficulty(1, 0)]
