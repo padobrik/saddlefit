@@ -266,7 +266,7 @@ A typical job: a service has 40 files with Pydantic v1 models, and each must mov
 2. **Baseline.** The student is a local 8B model. On a batch of 6 training files it succeeds twice: elsewhere it keeps `.dict()` and `@validator`, and once it forgets `class Config`.
 3. **Diagnosis.** The tutor reads the logs and finds one cause: the model writes the old way and stops without running the tests.
 4. **Change.** A new skill, pydantic-v2-migration, with a mapping table and a rule to run the tests before answering. Plus a small script that finds old constructs in a file — a new tool, not just a text hint.
-5. **Checks.** On the batch rerun, with three runs per task, 5 of 6 tasks pass in most runs. On 20 held-out tasks the passing runs go from 31 to 44 of 60, with gains spread over many tasks, so the paired test passes and the change is accepted; a lesson goes into EXPERIENCE.md.
+5. **Checks.** On the batch rerun, with three runs per task, 5 of 6 tasks pass in most runs. On the 6 held-out tasks the passing runs go from 7 to 16 of 18, and every task gains, so the paired test gives p = 1/64 and the change is accepted; a lesson goes into EXPERIENCE.md. With so few held-out tasks only a gain this broad can pass (fit warns below about 20), which a missing mapping table makes likely.
 6. **Second round** fixes validators that read sibling fields through `values`: in v2 that data comes from `info.data`.
 7. **Result on control tasks:** 2 of 6 before, 5 of 6 after.
 
@@ -296,7 +296,7 @@ And the lesson in EXPERIENCE.md:
 
 ```markdown
 - Compact models don't know the Pydantic v2 API: a mapping table in a skill helped,
-  a general "write modern code" line in the prompt did not (round 1, held-out 2/6 → 4/6).
+  a general "write modern code" line in the prompt did not (round 1, held-out runs 7/18 → 16/18).
 ```
 
 ### A10. What the tutor can change
