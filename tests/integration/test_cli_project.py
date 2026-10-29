@@ -22,9 +22,11 @@ from saddlefit.errors import EnvironmentFailure, UserError
 from saddlefit.harness.store import HarnessStore, HarnessStoreError
 from saddlefit.loops.baseline import MAX_REPLY_TOKENS
 from saddlefit.loops.generate import Attempt, GenerationReport
-from saddlefit.project import Project, remove_tree
+from saddlefit.project import Project, remove_tree, train_bound
 from saddlefit.providers.base import AccountError, ModelInfo
 from saddlefit.providers.retry import LOCAL_TIMEOUT_S
+from saddlefit.tasks.splits import add_task
+from saddlefit.tasks.suite import load_lock
 
 pytestmark = pytest.mark.integration
 runner = CliRunner()
@@ -519,3 +521,18 @@ def test_an_unusable_anthropic_account_at_start_exits_with_3(
     monkeypatch.setattr(cli, "_student", lambda p: (ModelInfo(provider="fake", model="m"), None))
     monkeypatch.setattr(cli, "_docker", object)
     assert run_main(monkeypatch, "tasks", "generate", "--type", "feature") == 3
+
+
+def test_only_candidates_bound_for_train_feed_the_generator(tmp_path: Path) -> None:
+    project = Project(build(tmp_path / "repo"))
+    project.init()
+    lock = load_lock(project.suite, project.config().splits)
+    would_train = train_bound(project.suite, project.config().splits, "generated")
+    ids = [f"gen-feature-candidate-{i}" for i in range(30)]
+    digest = "sha256:" + "0" * 64
+    splits = {
+        t: next(e.split for e in add_task(lock, t, "generated", digest).tasks if e.id == t)
+        for t in ids
+    }
+    assert {"train", "held_out"} <= set(splits.values())  # both kinds are tried
+    assert all(would_train(t) is (splits[t] == "train") for t in ids)

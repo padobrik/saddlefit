@@ -22,7 +22,14 @@ from typing import Any, Literal
 from ulid import ULID
 
 from saddlefit import __version__
-from saddlefit.config import CONFIG_SCHEMA_VERSION, Config, StudentConfig, dump_config, load_config
+from saddlefit.config import (
+    CONFIG_SCHEMA_VERSION,
+    Config,
+    SplitsConfig,
+    StudentConfig,
+    dump_config,
+    load_config,
+)
 from saddlefit.doctor import DoctorRecord
 from saddlefit.errors import UserError
 from saddlefit.eval.control import control_summary
@@ -101,7 +108,7 @@ from saddlefit.tasks.generator import (
     task_title,
 )
 from saddlefit.tasks.mining import STATE_DIR, MiningReport, Runner, _export, _git_bytes, mine
-from saddlefit.tasks.models import TASK_SCHEMA_VERSION, RepoRef, TaskMeta
+from saddlefit.tasks.models import TASK_SCHEMA_VERSION, RepoRef, Source, TaskMeta
 from saddlefit.tasks.mutation import (
     MUTATION_TRIES_PER_CALL,
     Mutation,
@@ -165,6 +172,11 @@ class ReportBasis:
     before_tree: str
     state: FitState
     suite_hash: str
+
+
+def train_bound(suite: SuitePaths, splits: SplitsConfig, source: Source) -> Callable[[str], bool]:
+    """Whether a candidate's id maps onto train, read from the lock as it is now."""
+    return lambda task_id: split_for(load_lock(suite, splits), task_id, source) == "train"
 
 
 def _refuse_a_repeat(repeats: RepeatGuard, mutation: Mutation) -> None:
@@ -594,9 +606,7 @@ class Project:
             keep=keep,
             exists=lambda task_id: any(t.id == task_id for t in self.tasks()),
             repeats=repeats,
-            would_train=lambda task_id: (
-                split_for(load_lock(self.suite, config.splits), task_id, source) == "train"
-            ),
+            would_train=train_bound(self.suite, config.splits, source),
         )
 
     def work(
