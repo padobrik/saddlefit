@@ -1,22 +1,30 @@
 """Decision rules of the middle loop: batch gate, held-out gate and tie-break (B12).
 
-Each rule works on per-task outcomes under one harness: ``True`` for solved, ``False`` for
-unsolved, ``None`` for inconclusive (environment errors left too few runs to decide it).
-Both harnesses are compared on the same tasks and the same seeds.
+The batch gate works on per-task outcomes under one harness: ``True`` for solved, ``False``
+for unsolved, ``None`` for inconclusive (environment errors left too few runs to decide it).
+The held-out gate and ablation work on passing runs per task, compared in pairs: a task
+that passes "sometimes" flips between solved and unsolved however many runs decide it, so
+counting flips accepts noise (a third of no-change candidates on six tasks). Both harnesses
+are compared on the same tasks and the same seeds.
 """
 
 from __future__ import annotations
 
-import math
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from fractions import Fraction
+from functools import cached_property
 from typing import Final
 
-Outcomes = Mapping[str, bool | None]
+from saddlefit.eval.statistics import paired_sign_flip_p
 
-HELD_OUT_MARGIN: Final = 0.1
-HELD_OUT_MAX_LOSSES: Final = 1
+Outcomes = Mapping[str, bool | None]
+Passes = Mapping[str, int]  # passing runs per task, for tasks with every run counted
+
+HELD_OUT_ALPHA: Final = 0.05  # for one candidate; a round divides it by its candidates
+ABLATION_ALPHA: Final = 0.05
+MIN_GATE_RUNS: Final = 3  # one run per task is a smoke setting, not a gate
+# below this, a paired test on held-out finds only large gains (most changes fail the gate)
+ADVISED_HELD_OUT: Final = 20
 
 
 def _check_same_tasks(current: Outcomes, candidate: Outcomes) -> None:
@@ -36,26 +44,53 @@ def batch_gate(current: Outcomes, candidate: Outcomes) -> bool:
 
 @dataclass(frozen=True)
 class HeldOutComparison:
-    """Per-task wins (unsolved → solved) and losses (solved → unsolved) over n tasks."""
+    """Per-task wins (unsolved → solved) and losses (solved → unsolved) over n tasks, and the
+    differences in passing runs (candidate minus current) the gates decide on.
+
+    ``diffs`` carry no task IDs: what reaches the tutor and the records are counts only.
+    """
 
     wins: int
     losses: int
     tasks: int
     # tasks decided under both harnesses; None when the count came as an aggregate without it
     compared: int | None = None
+    diffs: tuple[int, ...] = ()
 
     @property
     def net(self) -> int:
         return self.wins - self.losses
 
     @property
+    def net_passes(self) -> int:
+        return sum(self.diffs)
+
+    @cached_property
+    def p_value(self) -> float:
+        """One-sided: how likely a gain this large is from a change that does nothing."""
+        return paired_sign_flip_p(self.diffs)
+
+    @property
     def conclusive(self) -> bool:
         return (self.tasks if self.compared is None else self.compared) > 0
 
 
-def compare_held_out(current: Outcomes, candidate: Outcomes) -> HeldOutComparison:
-    """Count wins and losses; a task inconclusive under either harness is neither."""
+def compare_held_out(
+    current: Outcomes,
+    candidate: Outcomes,
+    current_passes: Passes | None = None,
+    candidate_passes: Passes | None = None,
+) -> HeldOutComparison:
+    """Count wins and losses, and the pass differences of tasks with every run counted on
+    both sides; a task inconclusive under either harness is neither."""
     _check_same_tasks(current, candidate)
+    diffs: tuple[int, ...] = ()
+    if current_passes is not None and candidate_passes is not None:
+        diffs = tuple(
+            candidate_passes[t] - current_passes[t]
+            for t in sorted(current)
+            if t in current_passes and t in candidate_passes
+        )
     wins = losses = compared = 0
     for task, before in current.items():
         after = candidate[task]
@@ -66,23 +101,15 @@ def compare_held_out(current: Outcomes, candidate: Outcomes) -> HeldOutCompariso
             wins += 1
         elif before is True and after is False:
             losses += 1
-    return HeldOutComparison(wins=wins, losses=losses, tasks=len(current), compared=compared)
-
-
-def required_net(tasks: int, margin: float = HELD_OUT_MARGIN) -> int:
-    """``max(1, ⌈margin · n⌉)``, computed exactly: 0.07 · 100 in floats rounds up to 8."""
-    return max(1, math.ceil(Fraction(str(margin)) * tasks))
-
-
-def held_out_gate(
-    comparison: HeldOutComparison,
-    margin: float = HELD_OUT_MARGIN,
-    max_losses: int = HELD_OUT_MAX_LOSSES,
-) -> bool:
-    """Pass when ``wins - losses ≥ max(1, ⌈margin · n⌉)`` and ``losses ≤ max_losses``."""
-    return comparison.net >= required_net(comparison.tasks, margin) and (
-        comparison.losses <= max_losses
+    return HeldOutComparison(
+        wins=wins, losses=losses, tasks=len(current), compared=compared, diffs=diffs
     )
+
+
+def held_out_gate(comparison: HeldOutComparison, alpha: float = HELD_OUT_ALPHA) -> bool:
+    """Pass when the candidate passes more held-out runs and a paired test on the per-task
+    differences gives ``p < alpha`` (B12)."""
+    return comparison.net_passes > 0 and comparison.p_value < alpha
 
 
 @dataclass(frozen=True)
@@ -96,10 +123,10 @@ class Candidate:
 
 
 def tie_break(candidates: Iterable[Candidate]) -> Candidate | None:
-    """Larger ``wins - losses``, then fewer added context tokens, then the earlier proposal."""
+    """More held-out passes gained, then fewer added context tokens, then the earlier one."""
     return min(
         candidates,
-        key=lambda c: (-c.held_out.net, c.context_tokens_added, c.order),
+        key=lambda c: (-c.held_out.net_passes, c.context_tokens_added, c.order),
         default=None,
     )
 
@@ -112,13 +139,17 @@ def ablation_due(accepted_since_last: int, model_changed: bool) -> bool:
     return model_changed or accepted_since_last >= ABLATION_EVERY
 
 
-def ablation_prunes(train: HeldOutComparison, held_out: HeldOutComparison) -> bool:
-    """Drop a change when removing it loses nothing: ``wins - losses >= 0`` over training
-    plus held-out tasks, comparing the harness without the change against the current one.
+def ablation_prunes(
+    train: HeldOutComparison, held_out: HeldOutComparison, alpha: float = ABLATION_ALPHA
+) -> bool:
+    """Drop a change unless the harness without it is clearly worse: a paired test on the
+    pass differences over training plus held-out tasks (without minus current) gives
+    ``p < alpha`` for the change helping. A change that cannot show it pays for its context.
 
-    With no task decided under both harnesses anywhere, nothing was measured, so nothing is
-    dropped: environment errors must not remove a change that may help.
+    With no task measured under both harnesses anywhere, nothing is dropped: environment
+    errors must not remove a change that may help.
     """
-    if not (train.conclusive or held_out.conclusive):
+    diffs = train.diffs + held_out.diffs
+    if not diffs:
         return False
-    return train.net + held_out.net >= 0
+    return paired_sign_flip_p([-d for d in diffs]) >= alpha
