@@ -109,6 +109,8 @@ class GeneratorRequest:
     existing_paths: frozenset[str]
     # titles of tasks in the suite and of candidates already tried: not to be repeated
     covered: Sequence[str] = ()
+    # functions kept tasks already change (``path::Name``), from the repeat index
+    covered_functions: Sequence[str] = ()
 
 
 @dataclass(frozen=True)
@@ -131,12 +133,23 @@ class GeneratorError(ProviderError):
 
 
 def select_files(
-    files: Sequence[RepoFile], rng: random.Random, budget_chars: int = FILE_BUDGET_CHARS
+    files: Sequence[RepoFile],
+    rng: random.Random,
+    budget_chars: int = FILE_BUDGET_CHARS,
+    covered: Mapping[str, int] | None = None,
 ) -> list[RepoFile]:
-    """A random sample of files that fits the budget, in path order; each call can differ."""
+    """A random sample of files that fits the budget, in path order; each call can differ.
+
+    ``covered`` counts the kept tasks in each file: a file is drawn with weight
+    ``1 / (1 + count)``, so the generator mostly sees code no task is about yet, and no file
+    is ever left out. The draw is weighted sampling without replacement (each file's key is
+    ``random() ** (1 + count)``, largest first).
+    """
+    counts = covered or {}
+    keyed = [(rng.random() ** (1 + counts.get(f.path, 0)), f) for f in files]
     chosen: list[RepoFile] = []
     used = 0
-    for file in rng.sample(list(files), len(files)):
+    for _, file in sorted(keyed, key=lambda pair: pair[0], reverse=True):
         if used + len(file.content) <= budget_chars:
             chosen.append(file)
             used += len(file.content)
@@ -173,6 +186,12 @@ def render_user(request: GeneratorRequest) -> str:
     if request.examples:
         parts.append("# Example tasks from this repository")
         parts += [example.strip() for example in request.examples[:MAX_EXAMPLES]]
+    if request.covered_functions:
+        parts.append(
+            "# Functions tasks already change\n\nWrite the task about a function that is not "
+            "in this list.\n\n"
+            + "\n".join(f"- `{name}`" for name in request.covered_functions[:MAX_COVERED])
+        )
     if request.covered:
         parts.append(
             "# Already covered\n\nThese tasks exist or were tried already. Do not write "

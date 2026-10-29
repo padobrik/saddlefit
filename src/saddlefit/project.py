@@ -12,6 +12,7 @@ import secrets
 import shutil
 import stat
 import tempfile
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
@@ -332,10 +333,14 @@ class Project:
         read_head = partial(generated_files.read_text, self.root, head)
 
         def request(rng: Any) -> GeneratorRequest:
+            # what kept tasks already change, from the repeat index (never the sealed store)
+            symbols = sorted({s for t in kit.repeats.index().tasks.values() for s in t})
+            per_file = Counter(s.split("::", 1)[0] for s in symbols)
             return GeneratorRequest(
                 kind=TASK_KINDS[kind],
                 repo_summary=summary,
-                files=select_files(files, rng),
+                files=select_files(files, rng, covered=per_file),
+                covered_functions=tuple(s for s in symbols if "::" in s and not s.endswith("*")),
                 examples=examples,
                 protected=protected,
                 existing_paths=frozenset(paths),
