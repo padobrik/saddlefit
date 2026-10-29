@@ -15,7 +15,7 @@ from typing import Any
 from saddlefit.eval.statistics import wilson
 from saddlefit.loops.baseline import BaselineResult
 
-REPORT_SCHEMA_VERSION = 1
+REPORT_SCHEMA_VERSION = 2  # v2: `created` has microseconds
 
 
 @dataclass(frozen=True)

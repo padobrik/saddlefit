@@ -28,7 +28,7 @@ from saddlefit.errors import UserError
 from saddlefit.eval.control import control_summary
 from saddlefit.eval.evaluator import Evaluator, protected_patterns
 from saddlefit.eval.leak_guard import GuardedClient, guard_for_suite
-from saddlefit.eval.progress import Comparable, baseline_cutoff, harness_progress
+from saddlefit.eval.progress import Comparable, harness_progress
 from saddlefit.eval.tamper import matches_any
 from saddlefit.export.skill import export_skill
 from saddlefit.harness.lint import SandboxLinter
@@ -59,7 +59,7 @@ from saddlefit.loops.work import WorkRunner, write_answer
 from saddlefit.playbook import proposal_for
 from saddlefit.providers.base import ModelClient, ModelInfo
 from saddlefit.providers.retry import LOCAL_TIMEOUT_S
-from saddlefit.reports.baseline import ReportContext
+from saddlefit.reports.baseline import REPORT_SCHEMA_VERSION, ReportContext
 from saddlefit.reports.baseline import build as build_report
 from saddlefit.reports.baseline import write as write_report
 from saddlefit.reports.progress import ProgressContext
@@ -82,6 +82,8 @@ from saddlefit.storage.fit_state import (
 )
 from saddlefit.storage.journal import JOURNAL_SCHEMA_VERSION, JournalEntry, task_ref, write_entry
 from saddlefit.storage.library import ChangeRecord, read_records
+from saddlefit.storage.migrations import upgrade
+from saddlefit.storage.migrations.reports import BASELINE_KIND
 from saddlefit.storage.progress import ProgressRecord, load_progress, process_alive
 from saddlefit.tasks import generated as generated_files
 from saddlefit.tasks.acceptance import FAILED_TESTS, Acceptance, accept, seal_generated
@@ -1103,7 +1105,7 @@ class Project:
             threshold=config.evaluation.solved_threshold,
             # "before" is the baseline itself, not later runs of the same harness
             baseline_until=(
-                baseline_cutoff(baseline["created"]) if "created" in baseline else None
+                datetime.fromisoformat(baseline["created"]) if "created" in baseline else None
             ),
         )
         ctx = ProgressContext(
@@ -1151,7 +1153,7 @@ class Project:
         if not reports:
             raise UserError("no baseline report yet; run `saddlefit baseline`")
         loaded: dict[str, Any] = json.loads(reports[-1].read_text(encoding="utf-8"))
-        return loaded
+        return upgrade(BASELINE_KIND, loaded, REPORT_SCHEMA_VERSION)
 
 
 def report_id(kind: str) -> str:

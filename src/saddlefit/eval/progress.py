@@ -11,7 +11,7 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Final
 
@@ -58,18 +58,6 @@ class Comparable:
 
 _BEFORE: Final = "before"
 _AFTER: Final = "after"
-
-
-def baseline_cutoff(created: str) -> datetime:
-    """The last moment a baseline run can have started, from its report's ``created``.
-
-    Reports write microseconds, so the moment is exact. Reports from before that change have
-    whole seconds; the end of that second is taken, since no fit run starts that close to it.
-    """
-    moment = datetime.fromisoformat(created)
-    if "." in created.split("T", 1)[-1]:
-        return moment
-    return moment + timedelta(seconds=1) - timedelta(microseconds=1)
 
 
 def harness_progress(

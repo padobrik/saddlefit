@@ -1,4 +1,5 @@
 import json
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,8 @@ from saddlefit.reports.baseline import (
     wilson,
     write,
 )
+from saddlefit.storage.migrations import upgrade
+from saddlefit.storage.migrations.reports import BASELINE_KIND
 
 CTX = ReportContext(
     model="qwen3:8b",
@@ -113,3 +116,17 @@ def test_a_task_stays_inconclusive_while_missing_runs_could_still_solve_it() -> 
     ]
     assert result.solved() == {"b": False}
     assert result.inconclusive() == ["a"]
+
+
+def test_a_v1_report_reads_its_time_as_the_end_of_its_second() -> None:
+    v1 = {"schema_version": 1, "kind": "baseline", "created": "2026-10-28T19:52:36+00:00"}
+    v2 = upgrade(BASELINE_KIND, v1, REPORT_SCHEMA_VERSION)
+    assert v2["schema_version"] == 2
+    # the latest a v1 report can have been written, so every baseline run started before it
+    assert v2["created"] == "2026-10-28T19:52:36.999999+00:00"
+    assert datetime.fromisoformat(v2["created"]).tzinfo is not None
+
+
+def test_a_new_report_writes_its_time_to_the_microsecond(tmp_path: Path) -> None:
+    created = build(BaselineResult(), CTX)["created"]
+    assert "." in created.split("T", 1)[1]

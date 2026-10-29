@@ -356,5 +356,6 @@ Assumptions taken where the spec leaves a detail open. Deviations from the spec 
   an unchanged harness, the closing runs would have stood in for the baseline as well. "After"
   is the latest runs of the head's tree. Environment-error records are left out of both: the
   runner retries them, and the retry is the run that counts.
-  The baseline report now writes `created` with microseconds, so the cut is exact; a report
-  from before has whole seconds, and the end of that second is taken (`baseline_cutoff`).
+  The baseline report is now schema_version 2: `created` has microseconds, so the cut is
+  exact. A v1 report (whole seconds, as v0.2.0 wrote) is read through a migration that takes
+  the last moment of its second, the latest it can have been written.

@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 from ulid import ULID
 
-from saddlefit.eval.progress import Comparable, baseline_cutoff, harness_progress
+from saddlefit.eval.progress import Comparable, harness_progress
 from saddlefit.storage.runs import RUN_SCHEMA_VERSION, RunSummary, RunWriter, new_run_id
 
 # a candidate commit and the merge that accepted it share one tree
@@ -181,7 +181,7 @@ def test_before_is_the_baseline_itself_and_an_error_never_counts(tmp_path: Path)
         tmp_path,
         "tree-before",
         "tree-after",
-        baseline_cutoff(T0.isoformat(timespec="microseconds")),
+        T0,
     )
     assert (train["tasks"], train["before"]["solved"], train["after"]["solved"]) == (1, 1, 1)
 
@@ -195,27 +195,9 @@ def test_an_unchanged_harness_still_compares_the_baseline_with_the_closing_runs(
         tmp_path,
         "tree-before",
         "tree-before",
-        baseline_cutoff(T0.isoformat(timespec="microseconds")),
+        T0,
     )
     assert (train["before"]["solved"], train["after"]["solved"]) == (0, 1)
-
-
-def test_the_cutoff_is_exact_for_new_reports_and_ends_the_second_for_old_ones() -> None:
-    precise = datetime(2026, 10, 29, 4, 52, 0, 250000, tzinfo=UTC)
-    assert baseline_cutoff(precise.isoformat(timespec="microseconds")) == precise
-    old = baseline_cutoff("2026-10-29T04:52:00+00:00")
-    assert old == datetime(2026, 10, 29, 4, 52, 0, 999999, tzinfo=UTC)
-
-
-def test_a_baseline_run_in_an_old_reports_last_second_still_counts(tmp_path: Path) -> None:
-    started = datetime(2026, 10, 29, 4, 52, 0, 700000, tzinfo=UTC)
-    run(tmp_path, "aaaaaaa", "t1", "train", True, at=started)
-    run(tmp_path, "bbbbbbb", "t1", "train", True, at=started + timedelta(minutes=5))
-    # an old report wrote `created` in whole seconds: 04:52:00, before the run started
-    train = selected(
-        tmp_path, "tree-before", "tree-after", baseline_cutoff("2026-10-29T04:52:00+00:00")
-    )
-    assert train["tasks"] == 1
 
 
 def test_a_run_just_after_a_precise_baseline_is_not_the_baseline(tmp_path: Path) -> None:
@@ -223,6 +205,5 @@ def test_a_run_just_after_a_precise_baseline_is_not_the_baseline(tmp_path: Path)
     run(tmp_path, "aaaaaaa", "t1", "train", True, at=created - timedelta(seconds=40))
     run(tmp_path, "aaaaaaa", "t1", "train", False, at=created + timedelta(milliseconds=200))
     run(tmp_path, "bbbbbbb", "t1", "train", True, at=created + timedelta(minutes=5))
-    cutoff = baseline_cutoff(created.isoformat(timespec="microseconds"))
-    train = selected(tmp_path, "tree-before", "tree-after", cutoff)
+    train = selected(tmp_path, "tree-before", "tree-after", created)
     assert train["before"]["solved"] == 1  # the run in the same second is a fit's, not the baseline
