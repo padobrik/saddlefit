@@ -71,11 +71,24 @@ def check_fractions(lock: SuiteLock, splits: SplitsConfig) -> None:
         )
 
 
-def add_task(lock: SuiteLock, task_id: str, source: Source, content_hash: str) -> SuiteLock:
-    """Record a task; an existing task keeps its split and source, and only its hash updates."""
+def _salt(lock: SuiteLock) -> bytes:
     salt = bytes.fromhex(lock.salt)
     if hashlib.sha256(salt).hexdigest() != lock.salt_digest.removeprefix("sha256:"):
         raise SplitError("suite.lock salt does not match its digest")
+    return salt
+
+
+def split_for(lock: SuiteLock, task_id: str, source: Source) -> Split:
+    """The split a task has, or would get if it were added now."""
+    for task in lock.tasks:
+        if task.id == task_id:
+            return task.split
+    return assign_split(_salt(lock), task_id, lock.fractions, source)
+
+
+def add_task(lock: SuiteLock, task_id: str, source: Source, content_hash: str) -> SuiteLock:
+    """Record a task; an existing task keeps its split and source, and only its hash updates."""
+    salt = _salt(lock)
     existing = {t.id: t for t in lock.tasks}
     if task_id in existing:
         old = existing[task_id]

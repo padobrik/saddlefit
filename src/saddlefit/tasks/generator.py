@@ -113,6 +113,9 @@ class GeneratorRequest:
     # the files shown first; and files a kept task changes as a whole
     covered_functions: Sequence[str] = ()
     covered_files: Sequence[str] = ()
+    # candidates of this command calibration dropped: the student passed all runs, or none
+    too_easy: int = 0
+    too_hard: int = 0
 
 
 @dataclass(frozen=True)
@@ -205,8 +208,26 @@ def render_user(request: GeneratorRequest) -> str:
             "another task about the same bug, feature or function as any of them.\n\n"
             + "\n".join(f"- {title}" for title in request.covered[-MAX_COVERED:])
         )
+    if request.too_easy or request.too_hard:
+        parts.append(_difficulty(request.too_easy, request.too_hard))
     parts.append(f"Call `{TOOL_NAME}` exactly once.")
     return "\n\n".join(parts) + "\n"
+
+
+def _difficulty(too_easy: int, too_hard: int) -> str:
+    """How hard to aim, from the candidates this command dropped at calibration."""
+    if too_easy > too_hard:
+        aim = "Write a harder task than the too-easy ones: a less obvious bug or a larger change."
+    elif too_hard > too_easy:
+        aim = "Write an easier task than the too-hard ones: a smaller change in one function."
+    else:
+        aim = "Aim between the two."
+    return (
+        "# How hard earlier candidates were\n\n"
+        f"Of the candidates tried so far, the student solved {too_easy} in every run (too "
+        f"easy) and {too_hard} in none (too hard); neither was kept. A task is kept when the "
+        f"student solves it in some runs but not all. {aim}"
+    )
 
 
 def _disclosures(task_md: str, tests: list[Any]) -> list[str]:

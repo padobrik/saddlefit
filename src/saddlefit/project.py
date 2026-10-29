@@ -22,7 +22,14 @@ from typing import Any, Literal
 from ulid import ULID
 
 from saddlefit import __version__
-from saddlefit.config import CONFIG_SCHEMA_VERSION, Config, StudentConfig, dump_config, load_config
+from saddlefit.config import (
+    CONFIG_SCHEMA_VERSION,
+    Config,
+    SplitsConfig,
+    StudentConfig,
+    dump_config,
+    load_config,
+)
 from saddlefit.doctor import DoctorRecord
 from saddlefit.errors import UserError
 from saddlefit.eval.control import control_summary
@@ -47,6 +54,7 @@ from saddlefit.loops.fit import run_rounds
 from saddlefit.loops.generate import (
     CALIBRATION_RUNS,
     CalibrationError,
+    Difficulty,
     Generation,
     GenerationReport,
     NoCandidate,
@@ -100,7 +108,7 @@ from saddlefit.tasks.generator import (
     task_title,
 )
 from saddlefit.tasks.mining import STATE_DIR, MiningReport, Runner, _export, _git_bytes, mine
-from saddlefit.tasks.models import TASK_SCHEMA_VERSION, RepoRef, TaskMeta
+from saddlefit.tasks.models import TASK_SCHEMA_VERSION, RepoRef, Source, TaskMeta
 from saddlefit.tasks.mutation import (
     MUTATION_TRIES_PER_CALL,
     Mutation,
@@ -119,7 +127,7 @@ from saddlefit.tasks.overlap import (
     symbols_between,
     tasks_per_file,
 )
-from saddlefit.tasks.splits import add_task, new_lock
+from saddlefit.tasks.splits import add_task, new_lock, split_for
 from saddlefit.tasks.suite import SuitePaths, load_lock, load_meta, materialize, save_lock
 
 
@@ -152,6 +160,7 @@ class TaskKit:
     keep: Callable[[str, GeneratedTask], None]
     exists: Callable[[str], bool]
     repeats: RepeatGuard  # what a new task must not repeat; keep() adds each kept one
+    would_train: Callable[[str], bool]  # the split a candidate's id maps onto is train
 
 
 @dataclass(frozen=True)
@@ -163,6 +172,11 @@ class ReportBasis:
     before_tree: str
     state: FitState
     suite_hash: str
+
+
+def train_bound(suite: SuitePaths, splits: SplitsConfig, source: Source) -> Callable[[str], bool]:
+    """Whether a candidate's id maps onto train, read from the lock as it is now."""
+    return lambda task_id: split_for(load_lock(suite, splits), task_id, source) == "train"
 
 
 def _refuse_a_repeat(repeats: RepeatGuard, mutation: Mutation) -> None:
@@ -333,7 +347,7 @@ class Project:
         ]
         read_head = partial(generated_files.read_text, self.root, head)
 
-        def request(rng: Any) -> GeneratorRequest:
+        def request(rng: Any, difficulty: Difficulty) -> GeneratorRequest:
             # what kept tasks already change, from the repeat index (never the sealed store)
             index = kit.repeats.index().tasks
             shown = select_files(files, rng, covered=tasks_per_file(index))
@@ -348,6 +362,8 @@ class Project:
                 protected=protected,
                 existing_paths=frozenset(paths),
                 covered=tuple(covered),
+                too_easy=difficulty.too_easy,
+                too_hard=difficulty.too_hard,
             )
 
         def call(req: GeneratorRequest) -> GeneratorResult:
@@ -375,6 +391,7 @@ class Project:
                 keep=kit.keep,
                 discard=lambda task_id: generated_files.discard(self.suite, task_id),
                 prompt_chars=lambda req: len(render_system(req)) + len(render_user(req)),
+                would_train=kit.would_train,
             )
             return generation.run(count)
 
@@ -415,7 +432,8 @@ class Project:
             base = Path(tmp) / "base"
             _export(self.root, head, base)
 
-            def request(rng: Any) -> tuple[Mutation, list[str]]:
+            def request(rng: Any, difficulty: Difficulty) -> tuple[Mutation, list[str]]:
+                # the bug comes from the mutation operators, not the generator: nothing to aim
                 path = rng.choice(sorted(sources))
                 mutation = pick(path, sources[path], rng)
                 if mutation is None:
@@ -486,6 +504,7 @@ class Project:
                 prompt_chars=lambda req: sum(
                     len(m.content) for m in issue_messages(req[0], req[1])
                 ),
+                would_train=kit.would_train,
                 max_attempts=config.generator.max_calls * MUTATION_TRIES_PER_CALL,
             ).run(count)
 
@@ -587,6 +606,7 @@ class Project:
             keep=keep,
             exists=lambda task_id: any(t.id == task_id for t in self.tasks()),
             repeats=repeats,
+            would_train=train_bound(self.suite, config.splits, source),
         )
 
     def work(

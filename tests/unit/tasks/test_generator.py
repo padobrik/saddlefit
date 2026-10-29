@@ -224,6 +224,25 @@ def test_covered_functions_reach_the_prompt() -> None:
     assert "- `src/a.py::f`\n- `src/b.py::C.g`" in text
 
 
+@pytest.mark.parametrize(
+    ("too_easy", "too_hard", "aim"),
+    [
+        (3, 1, "Write a harder task than the too-easy ones"),
+        (0, 2, "Write an easier task than the too-hard ones"),
+        (1, 1, "Aim between the two."),
+    ],
+)
+def test_the_prompt_says_which_way_to_aim(too_easy: int, too_hard: int, aim: str) -> None:
+    text = render_user(dataclasses.replace(request(), too_easy=too_easy, too_hard=too_hard))
+    assert "# How hard earlier candidates were" in text
+    assert f"solved {too_easy} in every run (too easy) and {too_hard} in none" in text
+    assert aim in text
+
+
+def test_no_difficulty_note_before_anything_was_dropped() -> None:
+    assert "How hard" not in render_user(request())
+
+
 def test_files_covered_as_a_whole_reach_the_prompt() -> None:
     text = render_user(dataclasses.replace(request(), covered_files=("docs/notes.md",)))
     assert "# Files tasks change as a whole" in text

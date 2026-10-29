@@ -16,6 +16,7 @@ from saddlefit.tasks.splits import (
     assign_split,
     check_fractions,
     new_lock,
+    split_for,
     split_point,
 )
 
@@ -172,3 +173,13 @@ def test_lock_rejects_a_salt_that_does_not_match_its_digest() -> None:
     data["salt"] = ("0" if salt[0] != "0" else "1") + salt[1:]  # always differs by one digit
     with pytest.raises(ValidationError, match="digest"):
         SuiteLock.model_validate(data)
+
+
+def test_split_for_is_the_split_add_task_gives() -> None:
+    lock = new_lock(SplitsConfig())
+    for i in range(40):
+        tid = f"gen-{i}"
+        would = split_for(lock, tid, "generated")
+        assert would == next(t.split for t in add_task(lock, tid, "generated", HASH).tasks)
+    kept = add_task(lock, "a", "history", HASH)
+    assert split_for(kept, "a", "generated") == kept.tasks[0].split  # a task keeps its split
