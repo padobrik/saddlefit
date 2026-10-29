@@ -105,13 +105,15 @@ def test_fit_needs_held_out_tasks(project: Path, monkeypatch: pytest.MonkeyPatch
 class ClosingPractice:
     """Records the closing evaluation, and whether the fit lock was held during it."""
 
-    def __init__(self, state: Path) -> None:
+    def __init__(self, state: Path, order: list[str] | None = None) -> None:
         self.state = state
+        self.order = order if order is not None else []
         self.progress: Any = None
         self.evaluated: list[tuple[str, bool, str]] = []
 
     def evaluate(self, ref: str) -> int:
         stage = self.progress.record.stage if self.progress.record else ""
+        self.order.append("evaluate")
         self.evaluated.append((ref, (self.state / "fit.lock").exists(), stage))
         return 3
 
@@ -120,8 +122,8 @@ def test_fit_ends_with_a_closing_evaluation_of_the_fitted_harness(
     project: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     proj = Project(project)
-    practice = ClosingPractice(proj.state)
     order: list[str] = []
+    practice = ClosingPractice(proj.state, order)
     monkeypatch.setattr(Project, "_practice", lambda self, **kw: (practice, []))
     monkeypatch.setattr(project_module, "SandboxLinter", lambda *a, **k: None)
 
@@ -137,7 +139,7 @@ def test_fit_ends_with_a_closing_evaluation_of_the_fitted_harness(
         model_info=ModelInfo(provider="fake", model="m"),
         rounds=1,
     )
-    assert order == ["rounds"]
+    assert order == ["rounds", "evaluate"]
     # after the rounds, on main, under the fit lock, shown as its own stage
     assert practice.evaluated == [("main", True, "closing")]
 

@@ -346,5 +346,7 @@ Assumptions taken where the spec leaves a detail open. Deviations from the spec 
   `main` once over train and held-out with `runs_per_task` (`DockerPractice.evaluate`, the same
   runner as the held-out gate; progress stage `closing`). "Fit, then report" stays two
   commands, and the report is always complete. A fit that fails in a round skips it, and the
-  report then says "not measured". It costs one evaluation of the suite (about an hour for 17
+  report then says "not measured". A closing run that stays an environment error after the
+  runner's retry stops `fit` with exit 3 and counts only, never a held-out task's name; the
+  rounds stay saved. It costs one evaluation of the suite (about an hour for 17
   tasks on gemma4:e4b). Held-out outcomes go only into the report's aggregates, as B10 allows.
