@@ -42,7 +42,8 @@ def build(result: BaselineResult, ctx: ReportContext) -> dict[str, Any]:
         "excluded_runs": result.excluded_runs(),
         "inconclusive_tasks": len(result.inconclusive()),
         "kind": "baseline",
-        "created": datetime.now(UTC).isoformat(timespec="seconds"),
+        # microseconds: the report's "before" takes the runs made by this moment
+        "created": datetime.now(UTC).isoformat(timespec="microseconds"),
         "model": {"id": ctx.model, "digest": ctx.model_digest},
         "harness_commit": ctx.harness_commit,
         "suite_hash": ctx.suite_hash,

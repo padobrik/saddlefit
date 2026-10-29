@@ -56,10 +56,20 @@ class Comparable:
         return None in {self.digest, summary.model.digest} or summary.model.digest == self.digest
 
 
-# the baseline report's `created` has whole seconds: a run started in that second is its own
-_CREATED_PRECISION: Final = timedelta(seconds=1)
 _BEFORE: Final = "before"
 _AFTER: Final = "after"
+
+
+def baseline_cutoff(created: str) -> datetime:
+    """The last moment a baseline run can have started, from its report's ``created``.
+
+    Reports write microseconds, so the moment is exact. Reports from before that change have
+    whole seconds; the end of that second is taken, since no fit run starts that close to it.
+    """
+    moment = datetime.fromisoformat(created)
+    if "." in created.split("T", 1)[-1]:
+        return moment
+    return moment + timedelta(seconds=1) - timedelta(microseconds=1)
 
 
 def harness_progress(
@@ -103,8 +113,7 @@ def harness_progress(
         if tree == after_tree:
             runs[(_AFTER, summary.split, summary.task_id)].append(summary)
         if tree == before_tree and (
-            baseline_until is None
-            or ULID.from_str(summary.run_id).datetime < baseline_until + _CREATED_PRECISION
+            baseline_until is None or ULID.from_str(summary.run_id).datetime <= baseline_until
         ):
             runs[(_BEFORE, summary.split, summary.task_id)].append(summary)
     latest = {key: group[-runs_per_task:] for key, group in runs.items()}

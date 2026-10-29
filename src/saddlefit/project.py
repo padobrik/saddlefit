@@ -28,7 +28,7 @@ from saddlefit.errors import UserError
 from saddlefit.eval.control import control_summary
 from saddlefit.eval.evaluator import Evaluator, protected_patterns
 from saddlefit.eval.leak_guard import GuardedClient, guard_for_suite
-from saddlefit.eval.progress import Comparable, harness_progress
+from saddlefit.eval.progress import Comparable, baseline_cutoff, harness_progress
 from saddlefit.eval.tamper import matches_any
 from saddlefit.export.skill import export_skill
 from saddlefit.harness.lint import SandboxLinter
@@ -1103,7 +1103,7 @@ class Project:
             threshold=config.evaluation.solved_threshold,
             # "before" is the baseline itself, not later runs of the same harness
             baseline_until=(
-                datetime.fromisoformat(baseline["created"]) if "created" in baseline else None
+                baseline_cutoff(baseline["created"]) if "created" in baseline else None
             ),
         )
         ctx = ProgressContext(

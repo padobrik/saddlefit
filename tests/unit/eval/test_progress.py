@@ -1,14 +1,13 @@
 """Before and after from run records: grouped by harness tree, aggregates only (B15)."""
 
-import time
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import pytest
 from ulid import ULID
 
-from saddlefit.eval.progress import Comparable, harness_progress
+from saddlefit.eval.progress import Comparable, baseline_cutoff, harness_progress
 from saddlefit.storage.runs import RUN_SCHEMA_VERSION, RunSummary, RunWriter, new_run_id
 
 # a candidate commit and the merge that accepted it share one tree
@@ -31,8 +30,9 @@ def run(
     model: str = "student",
     digest: str | None = "sha256:m",
     suite: str = "sha256:x",
+    at: datetime | None = None,
 ) -> None:
-    run_id = new_run_id()
+    run_id = str(ULID.from_datetime(at)) if at is not None else new_run_id()
     summary: dict[str, Any] = {
         "schema_version": RUN_SCHEMA_VERSION,
         "type": "summary",
@@ -56,12 +56,6 @@ def run(
         "tags": [tag or ("solved" if passed else "gave_up")],
     }
     RunWriter(root, run_id).finish(RunSummary.model_validate(summary))
-
-
-def latest_run_time(root: Path) -> datetime:
-    """When the newest run so far was made, as its ULID says."""
-    newest = max(p.stem for p in root.glob("*/*.jsonl"))
-    return ULID.from_str(newest).datetime
 
 
 def progress(root: Path, runs_per_task: int = 1, threshold: int = 1) -> dict[str, Any]:
@@ -159,68 +153,76 @@ def test_a_missing_digest_does_not_exclude_runs(tmp_path: Path) -> None:
     assert progress(tmp_path)["splits"]["train"]["tasks"] == 1
 
 
-def test_before_is_the_baseline_itself_and_an_error_never_counts(tmp_path: Path) -> None:
-    run(tmp_path, "aaaaaaa", "t1", "train", True)  # the baseline run
-    baseline_done = latest_run_time(tmp_path)
-    time.sleep(1.1)  # later than the report's one-second precision, as a fit always is
-    run(tmp_path, "aaaaaaa", "t1", "train", False)  # a fit's later run of the same tree
-    run(tmp_path, "bbbbbbb", "t1", "train", True)  # the closing evaluation
-    run(tmp_path, "bbbbbbb", "t1", "train", False, tag="env_error")  # retried, so not counted
-    report = harness_progress(
-        tmp_path,
+T0 = datetime(2026, 10, 29, 4, 52, 0, tzinfo=UTC)
+
+
+def selected(root: Path, before: str, after: str, until: datetime) -> dict[str, Any]:
+    return harness_progress(
+        root,
         tree_of=TREES.get,
-        before_tree="tree-before",
-        after_tree="tree-after",
+        before_tree=before,
+        after_tree=after,
         tasks={"train": ["t1"], "held_out": []},
         task_types=TYPES,
         comparable=SAME,
         runs_per_task=1,
         threshold=1,
-        baseline_until=baseline_done,
+        baseline_until=until,
+    )["splits"]["train"]
+
+
+def test_before_is_the_baseline_itself_and_an_error_never_counts(tmp_path: Path) -> None:
+    run(tmp_path, "aaaaaaa", "t1", "train", True, at=T0)  # the baseline run
+    later = T0 + timedelta(milliseconds=5)
+    run(tmp_path, "aaaaaaa", "t1", "train", False, at=later)  # a fit's run of the same tree
+    run(tmp_path, "bbbbbbb", "t1", "train", True, at=later)  # the closing evaluation
+    run(tmp_path, "bbbbbbb", "t1", "train", False, tag="env_error", at=later)  # retried
+    train = selected(
+        tmp_path,
+        "tree-before",
+        "tree-after",
+        baseline_cutoff(T0.isoformat(timespec="microseconds")),
     )
-    train = report["splits"]["train"]
     assert (train["tasks"], train["before"]["solved"], train["after"]["solved"]) == (1, 1, 1)
 
 
 def test_an_unchanged_harness_still_compares_the_baseline_with_the_closing_runs(
     tmp_path: Path,
 ) -> None:
-    run(tmp_path, "aaaaaaa", "t1", "train", False)  # the baseline
-    baseline_done = latest_run_time(tmp_path)
-    time.sleep(1.1)  # later than the report's one-second precision, as a fit always is
-    run(tmp_path, "aaaaaaa", "t1", "train", True)  # the closing evaluation, same tree
-    report = harness_progress(
+    run(tmp_path, "aaaaaaa", "t1", "train", False, at=T0)  # the baseline
+    run(tmp_path, "aaaaaaa", "t1", "train", True, at=T0 + timedelta(seconds=30))  # closing
+    train = selected(
         tmp_path,
-        tree_of=TREES.get,
-        before_tree="tree-before",
-        after_tree="tree-before",
-        tasks={"train": ["t1"], "held_out": []},
-        task_types=TYPES,
-        comparable=SAME,
-        runs_per_task=1,
-        threshold=1,
-        baseline_until=baseline_done,
+        "tree-before",
+        "tree-before",
+        baseline_cutoff(T0.isoformat(timespec="microseconds")),
     )
-    train = report["splits"]["train"]
     assert (train["before"]["solved"], train["after"]["solved"]) == (0, 1)
 
 
-def test_a_baseline_run_in_the_reports_last_second_still_counts(tmp_path: Path) -> None:
-    run(tmp_path, "aaaaaaa", "t1", "train", True)
-    run(tmp_path, "bbbbbbb", "t1", "train", True)
-    started = latest_run_time(tmp_path)
-    # the report's `created`, cut to whole seconds, can come out before the run started
-    created = started.replace(microsecond=0)
-    report = harness_progress(
-        tmp_path,
-        tree_of=TREES.get,
-        before_tree="tree-before",
-        after_tree="tree-after",
-        tasks={"train": ["t1"], "held_out": []},
-        task_types=TYPES,
-        comparable=SAME,
-        runs_per_task=1,
-        threshold=1,
-        baseline_until=created,
+def test_the_cutoff_is_exact_for_new_reports_and_ends_the_second_for_old_ones() -> None:
+    precise = datetime(2026, 10, 29, 4, 52, 0, 250000, tzinfo=UTC)
+    assert baseline_cutoff(precise.isoformat(timespec="microseconds")) == precise
+    old = baseline_cutoff("2026-10-29T04:52:00+00:00")
+    assert old == datetime(2026, 10, 29, 4, 52, 0, 999999, tzinfo=UTC)
+
+
+def test_a_baseline_run_in_an_old_reports_last_second_still_counts(tmp_path: Path) -> None:
+    started = datetime(2026, 10, 29, 4, 52, 0, 700000, tzinfo=UTC)
+    run(tmp_path, "aaaaaaa", "t1", "train", True, at=started)
+    run(tmp_path, "bbbbbbb", "t1", "train", True, at=started + timedelta(minutes=5))
+    # an old report wrote `created` in whole seconds: 04:52:00, before the run started
+    train = selected(
+        tmp_path, "tree-before", "tree-after", baseline_cutoff("2026-10-29T04:52:00+00:00")
     )
-    assert report["splits"]["train"]["tasks"] == 1
+    assert train["tasks"] == 1
+
+
+def test_a_run_just_after_a_precise_baseline_is_not_the_baseline(tmp_path: Path) -> None:
+    created = datetime(2026, 10, 29, 4, 52, 0, 500000, tzinfo=UTC)
+    run(tmp_path, "aaaaaaa", "t1", "train", True, at=created - timedelta(seconds=40))
+    run(tmp_path, "aaaaaaa", "t1", "train", False, at=created + timedelta(milliseconds=200))
+    run(tmp_path, "bbbbbbb", "t1", "train", True, at=created + timedelta(minutes=5))
+    cutoff = baseline_cutoff(created.isoformat(timespec="microseconds"))
+    train = selected(tmp_path, "tree-before", "tree-after", cutoff)
+    assert train["before"]["solved"] == 1  # the run in the same second is a fit's, not the baseline
