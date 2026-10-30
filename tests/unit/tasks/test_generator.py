@@ -243,6 +243,16 @@ def test_no_difficulty_note_before_anything_was_dropped() -> None:
     assert "How hard" not in render_user(request())
 
 
+def test_a_suite_of_a_hundred_tasks_reaches_the_prompt_whole() -> None:
+    titles = tuple(f"Fix bug number {i}" for i in range(100))
+    functions = tuple(f"src/m.py::f{i}" for i in range(100))
+    text = render_user(dataclasses.replace(request(), covered=titles, covered_functions=functions))
+    # the oldest are the ones a cut drops, and then the generator writes them again
+    assert "- Fix bug number 0\n" in text
+    assert "- `src/m.py::f0`" in text
+    assert all(f"- Fix bug number {i}\n" in text for i in range(100))
+
+
 def test_files_covered_as_a_whole_reach_the_prompt() -> None:
     text = render_user(dataclasses.replace(request(), covered_files=("docs/notes.md",)))
     assert "# Files tasks change as a whole" in text

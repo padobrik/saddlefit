@@ -26,7 +26,9 @@ from saddlefit.textdiff import file_diff
 
 TOOL_NAME: Final = "submit_task"
 MAX_EXAMPLES: Final = 3
-MAX_COVERED: Final = 60  # titles, the newest kept when there are more
+# titles and functions the new task must avoid; a cut one can come back as a repeat, so this
+# is well above a proof suite (about 60 tasks): 300 titles cost about 8,000 prompt tokens
+MAX_COVERED: Final = 300
 # a hidden-test line this long showing up in the task text gives the test away
 DISCLOSED_LINE_CHARS: Final = 25
 FILE_BUDGET_CHARS: Final = 40_000
