@@ -243,6 +243,23 @@ def test_no_difficulty_note_before_anything_was_dropped() -> None:
     assert "How hard" not in render_user(request())
 
 
+def test_a_suite_of_a_hundred_tasks_reaches_the_prompt_whole() -> None:
+    titles = tuple(f"Fix bug number {i}" for i in range(100))
+    functions = tuple(f"src/m.py::f{i}" for i in range(100))
+    files = tuple(f"docs/page{i}.md" for i in range(100))
+    lines = set(
+        render_user(
+            dataclasses.replace(
+                request(), covered=titles, covered_functions=functions, covered_files=files
+            )
+        ).splitlines()
+    )
+    # a cut drops the oldest titles and the last functions and files
+    assert {f"- {title}" for title in titles} <= lines
+    assert {f"- `{name}`" for name in functions} <= lines
+    assert {f"- `{path}`" for path in files} <= lines
+
+
 def test_files_covered_as_a_whole_reach_the_prompt() -> None:
     text = render_user(dataclasses.replace(request(), covered_files=("docs/notes.md",)))
     assert "# Files tasks change as a whole" in text
