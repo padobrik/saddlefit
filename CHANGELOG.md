@@ -1,5 +1,44 @@
 # Changelog
 
+## [0.3.0](https://github.com/padobrik/saddlefit/compare/v0.2.0...v0.3.0) (2026-10-31)
+
+
+### Features
+
+* add the fast loop, its journal and saddlefit run ([#133](https://github.com/padobrik/saddlefit/issues/133)) ([357dff6](https://github.com/padobrik/saddlefit/commit/357dff6263b4daa6e5e684c6f9b7a79531d640cc))
+* **cli:** add tasks generate with calibration ([#123](https://github.com/padobrik/saddlefit/issues/123)) ([7249566](https://github.com/padobrik/saddlefit/commit/72495666c28d156484738b6b8cdd35b7458c1c45))
+* **cli:** exit 4 when run leaves the task unsolved ([#145](https://github.com/padobrik/saddlefit/issues/145)) ([4aed7a3](https://github.com/padobrik/saddlefit/commit/4aed7a3a923d5ac3c2aa190cd0e67eb5d46d84e1))
+* **config:** give the generator a budget and prices ([#119](https://github.com/padobrik/saddlefit/issues/119)) ([3b47e5d](https://github.com/padobrik/saddlefit/commit/3b47e5d99b2a3477d4975d3fa1b1575573b5b56c))
+* **fit:** decide held-out on a paired pass test ([#168](https://github.com/padobrik/saddlefit/issues/168)) ([3cea951](https://github.com/padobrik/saddlefit/commit/3cea951bf2ca543c712d1518c204daee36252c2b))
+* **fit:** end with a closing evaluation for the report ([#166](https://github.com/padobrik/saddlefit/issues/166)) ([396567c](https://github.com/padobrik/saddlefit/commit/396567c90e0e362b9f3670810c7bd7aac2a898c4))
+* **fit:** save spending per call, keep refusal reasons ([#125](https://github.com/padobrik/saddlefit/issues/125)) ([cba9e00](https://github.com/padobrik/saddlefit/commit/cba9e0058c8ebedde8ae786fda1eb526ac4945bf))
+* log the arguments of each tool call ([#115](https://github.com/padobrik/saddlefit/issues/115)) ([ded3b80](https://github.com/padobrik/saddlefit/commit/ded3b80c76695639ab018b2088bdfb882d91bdab))
+* make the harness's extension points real ([#124](https://github.com/padobrik/saddlefit/issues/124)) ([4f82806](https://github.com/padobrik/saddlefit/commit/4f82806b17a3bd1c710afdf8bbeaea0f15e23c77))
+* **playbook:** ship a starter playbook ([#127](https://github.com/padobrik/saddlefit/issues/127)) ([ff16f04](https://github.com/padobrik/saddlefit/commit/ff16f04a52350a8a7b86afa8181c83b0fda6e7f3))
+* show fit progress and add saddlefit status ([#146](https://github.com/padobrik/saddlefit/issues/146)) ([7d01c74](https://github.com/padobrik/saddlefit/commit/7d01c74825d8e6bdf0e8ad9f26b8b1bd921578f7))
+* **tasks:** accept generated tasks fail-without, pass-with ([#122](https://github.com/padobrik/saddlefit/issues/122)) ([5159261](https://github.com/padobrik/saddlefit/commit/51592611b14fae681eb4c1342f32078a9ebbe72b))
+* **tasks:** add tasks mutate ([#126](https://github.com/padobrik/saddlefit/issues/126)) ([d7543db](https://github.com/padobrik/saddlefit/commit/d7543db69f57a30028de4a07ed5435473a871679))
+* **tasks:** add the generator role and task kinds ([#120](https://github.com/padobrik/saddlefit/issues/120)) ([07f3333](https://github.com/padobrik/saddlefit/commit/07f3333f6cbb050080485722d50fedfcc83d6a67))
+* **tasks:** steer the generator to code no task covers ([#170](https://github.com/padobrik/saddlefit/issues/170)) ([89470be](https://github.com/padobrik/saddlefit/commit/89470bec6083d828605706f45a22e1f5c09cca6f))
+* **tasks:** tell the generator how hard dropped tasks were ([#171](https://github.com/padobrik/saddlefit/issues/171)) ([e3561d4](https://github.com/padobrik/saddlefit/commit/e3561d4ef671fca60c1eab1011e8d1f79dd3a4a9))
+
+
+### Bug Fixes
+
+* check the context window Ollama serves ([#114](https://github.com/padobrik/saddlefit/issues/114)) ([c8a148a](https://github.com/padobrik/saddlefit/commit/c8a148a52a3763609bbb42a2efb19505afcd6f61))
+* **sandbox:** give the student the evaluator's import path ([#174](https://github.com/padobrik/saddlefit/issues/174)) ([de03ce6](https://github.com/padobrik/saddlefit/commit/de03ce6ba8d0693c6bb197a5448ce59e2308a0f9))
+* stop on a refused provider account ([#148](https://github.com/padobrik/saddlefit/issues/148)) ([dbd8836](https://github.com/padobrik/saddlefit/commit/dbd88365fb38c886daeee9e13db13f71d1d93adb))
+* **tasks:** drop generated tasks that repeat the suite ([#161](https://github.com/padobrik/saddlefit/issues/161)) ([13cf1e5](https://github.com/padobrik/saddlefit/commit/13cf1e53a03fcdc56459cc402f331cf1fad73d72))
+* **tasks:** let the generator write edits, not diffs ([#129](https://github.com/padobrik/saddlefit/issues/129)) ([966eba5](https://github.com/padobrik/saddlefit/commit/966eba5e52f28f92cefaea71de5770df25922408))
+* **tasks:** show the generator every covered title ([#173](https://github.com/padobrik/saddlefit/issues/173)) ([a5953f6](https://github.com/padobrik/saddlefit/commit/a5953f66d7587436f3792caf56267467170e3666))
+* tell the student which paths are protected ([#117](https://github.com/padobrik/saddlefit/issues/117)) ([cb8c191](https://github.com/padobrik/saddlefit/commit/cb8c191aa5ea64a9d440799721d11ac471c96460))
+
+
+### Documentation
+
+* add runners to v0.5.0 and memory as v0.6.0 ([#156](https://github.com/padobrik/saddlefit/issues/156)) ([f0b14d9](https://github.com/padobrik/saddlefit/commit/f0b14d9929ee6acd047b90b203ad27ac3e9a67ef))
+* describe the v0.3.0 commands ([#128](https://github.com/padobrik/saddlefit/issues/128)) ([75163b0](https://github.com/padobrik/saddlefit/commit/75163b06c5bb6b3a48f889c2777d4dd49e31af97))
+
 ## [0.2.0](https://github.com/padobrik/saddlefit/compare/v0.1.3...v0.2.0) (2026-10-22)
 
 
