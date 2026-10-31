@@ -29,6 +29,9 @@ SANDBOX_ENV: dict[str, str] = {
     "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
     "HOME": "/tmp",  # noqa: S108 - a path inside the container, on its private tmpfs
     "LANG": "C.UTF-8",
+    # the import path the evaluator's checks use (PYTHONPATH=src:. in tasks.suite), so the
+    # student's own test runs import a src-layout project the way the hidden check does
+    "PYTHONPATH": "/work/src:/work",
 }
 TMP_SIZE = "512m"
 HARNESS_TOOLS = "/harness/tools"

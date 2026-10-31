@@ -74,6 +74,22 @@ def test_environment_is_allowlisted(
     assert "HOME=/tmp" in env
 
 
+def test_a_src_layout_package_imports_as_in_the_hidden_check(
+    docker_client, sandbox_image: str, tmp_path: Path
+) -> None:
+    # the evaluator runs checks with PYTHONPATH=src:.; a bare pytest in the student's own
+    # sandbox must import the project the same way, or every test run fails to collect
+    (tmp_path / "src" / "toypkg").mkdir(parents=True)
+    (tmp_path / "src" / "toypkg" / "__init__.py").write_text("VALUE = 7\n", encoding="utf-8")
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_toy.py").write_text(
+        "import toypkg\n\n\ndef test_value():\n    assert toypkg.VALUE == 7\n", encoding="utf-8"
+    )
+    with Sandbox(docker_client, sandbox_image, tmp_path, LIMITS, run_timeout_s=60) as box:
+        result = box.exec("python -B -m pytest -q -p no:cacheprovider tests", timeout_s=60)
+    assert result.exit_code == 0, result.output
+
+
 def test_resource_limits_apply(sandbox: Sandbox) -> None:
     assert sandbox.exec("cat /sys/fs/cgroup/pids.max", timeout_s=10).output.strip() == "64"
     memory = sandbox.exec("cat /sys/fs/cgroup/memory.max", timeout_s=10).output.strip()

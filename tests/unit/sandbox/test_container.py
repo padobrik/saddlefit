@@ -92,7 +92,7 @@ def test_options_enforce_every_limit(tmp_path: Path) -> None:
     assert set(opts["tmpfs"]) == {"/tmp"}  # noqa: S108 - container path
     assert opts["volumes"] == {str(tmp_path): {"bind": "/work", "mode": "rw"}}
     assert opts["environment"] == SANDBOX_ENV
-    assert set(SANDBOX_ENV) == {"PATH", "HOME", "LANG"}
+    assert set(SANDBOX_ENV) == {"PATH", "HOME", "LANG", "PYTHONPATH"}
     assert opts["nano_cpus"] == 1_500_000_000
     assert opts["mem_limit"] == opts["memswap_limit"] == "512m"
     assert opts["pids_limit"] == 128
