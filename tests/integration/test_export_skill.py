@@ -67,8 +67,9 @@ def test_export_writes_the_harness_as_skills(project: Project, tmp_path: Path) -
     assert "fitted by Saddlefit for qwen3:8b" in main
     assert "You are a careful software engineer." in main  # the system prompt
     assert "run `pytest -q`; finish only when it passes" in main  # loop.yaml's finish gate
-    assert "Run the visible tests before finishing." in main
-    assert "another model" not in main  # lessons for other models stay out
+    # EXPERIENCE.md is the tutor's memory: no lesson passed a gate, so none is exported
+    assert "Run the visible tests before finishing." not in main
+    assert "another model" not in main
     assert (out / "saddlefit-repo" / "scripts" / "find_old.py").read_text() == "print('ok')\n"
     assert (out / "dates" / "SKILL.md").read_text(encoding="utf-8") == "\n".join(SKILL) + "\n"
     exported = {p.name for p in out.rglob("*") if p.is_file()}

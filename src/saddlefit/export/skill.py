@@ -3,7 +3,8 @@
 The harness at a commit becomes a directory of skills:
 
 - ``saddlefit-<project>/SKILL.md`` carries the harness itself: the system prompt, the tool
-  guidance, the finish-gate rule from ``loop.yaml`` and the lessons for the student model;
+  guidance and the finish-gate rule from ``loop.yaml`` (never EXPERIENCE.md, the tutor's
+  memory, whose lessons pass no gate);
   the harness's tool scripts sit next to it in ``scripts/``;
 - every harness skill, ``skills/<name>/``, is copied as it is, since it already is one.
 
@@ -23,7 +24,6 @@ from typing import Final, Literal
 import yaml
 from pydantic import BaseModel, ConfigDict
 
-from saddlefit.context.assembly import rank_lessons
 from saddlefit.eval.leak_guard import LeakGuard
 from saddlefit.harness.loop_config import load_loop_config
 from saddlefit.harness.store import HarnessStore
@@ -81,7 +81,6 @@ def _main_skill(name: str, harness: Path, project: str, model: str, commit: str)
         rules.append("- Before you finish, read the task again and check every point is done.")
     if gate.run:
         rules.append(f"- Before you finish, run `{gate.run}`; finish only when it passes.")
-    lessons = rank_lessons(read("EXPERIENCE.md"), model, "")
     shown = project[:MAX_PROJECT_IN_DESCRIPTION]
     description = (
         f"Working rules for {shown}, fitted by Saddlefit for {model}. "
@@ -106,8 +105,6 @@ def _main_skill(name: str, harness: Path, project: str, model: str, commit: str)
         sections += ["", "## Using tools", "", read("tool_guidance.md")]
     if rules:
         sections += ["", "## Finishing", "", *rules]
-    if lessons:
-        sections += ["", "## Lessons", "", *lessons]
     if any((harness / "tools").glob("*.*")):
         sections += ["", "## Scripts", "", "Helper scripts for this project are in `scripts/`."]
     return "\n".join(sections).rstrip() + "\n"

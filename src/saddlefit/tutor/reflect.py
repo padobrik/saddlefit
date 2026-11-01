@@ -50,8 +50,8 @@ LESSON_TOOL: Final = ToolSpec(
 class Decision:
     """What the middle loop decided, without held-out results.
 
-    A lesson lands in EXPERIENCE.md, which the student reads, and the student may see no
-    held-out data at all (B10); so held-out numbers never enter the reflection prompt.
+    A lesson lands in EXPERIENCE.md, which the tutor reads, and the tutor sees no per-task
+    held-out data (B10); so held-out numbers never enter the reflection prompt.
     """
 
     proposal: Proposal
