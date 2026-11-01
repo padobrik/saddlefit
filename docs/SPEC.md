@@ -21,7 +21,7 @@ If parts conflict, Part 0 wins, then Parts B and C, then Part A. The words MUST,
 | Student | The compact local model that does the tasks. |
 | Tutor | A strong model that diagnoses failures and proposes harness changes. |
 | Generator | A strong model that writes new tasks; a separate role from the tutor. |
-| Harness | The files around the student: system prompt, skills, tool guidance, tool scripts, loop settings, lessons. |
+| Harness | The files around the student: system prompt, skills, tool guidance, tool scripts, loop settings; plus the tutor's lessons, which the student never reads. |
 | Harness store | The git repository that holds the harness and its full history. |
 | Task suite | All tasks of a project, each assigned once to the train, held-out or control split. |
 | Sealed store | Hidden tests, check scripts, reference solutions and held-out/control outcomes. Only the evaluator reads it. |
@@ -80,7 +80,7 @@ Saddlefit is a small program that tunes everything around a compact model — pr
 
 - **Student** — a compact local model. It does the tasks, and its runs are nearly free.
 - **Tutor** — a strong model behind an API. It reads failure logs and proposes changes; later the role can move to a compact model.
-- **Harness** — a folder of files: system prompt, skills, tools, loop settings and reasoning mode, plus EXPERIENCE.md with lessons learned.
+- **Harness** — a folder of files: system prompt, skills, tools, loop settings and reasoning mode, plus EXPERIENCE.md, the tutor's lessons learned.
 
 The harness grows and shrinks. A change stays only if it helps on tasks the tutor never saw, and it goes once it no longer pays for its place in the context.
 
@@ -580,9 +580,9 @@ The tutor may edit `loop.yaml`, so it holds only behaviour settings. Budgets for
 
 ### B7. Context assembly
 
-- **Order:** system prompt → tool guidance for enabled tools only → selected skills → relevant EXPERIENCE.md lessons → task text.
+- **Order:** system prompt → tool guidance for enabled tools only → selected skills → task text. EXPERIENCE.md is never part of the student's context: its lessons pass no gate, and everything the student reads must pass the gates (B12). A lesson worth giving the student becomes a proposal — a skill, prompt or tool-guidance change — like any other.
 - **Skill selection:** by the task type in `meta.yaml` or the skill's description; at most `max_skills` skills (default 3).
-- **Budget:** the harness share of the context is capped by tier — S 2,500 tokens, M 4,000, L 6,000 — and configurable. When over budget, drop in this order: lessons, lower-ranked skills, tool-guidance details. The task text is never cut.
+- **Budget:** the harness share of the context is capped by tier — S 2,500 tokens, M 4,000, L 6,000 — and configurable. When over budget, drop in this order: lower-ranked skills, tool-guidance details. The task text is never cut.
 - **Token counting:** the runner's tokenizer when available, otherwise a conservative estimate of characters ÷ 3.
 - The assembler records `harness_tokens` for every run; reports use it for context efficiency.
 
@@ -787,7 +787,7 @@ All defaults are configurable; changing them is recorded in reports.
 - **Inputs:** up to 6 failed training runs, each compressed to the task text, failure tags, the last 30 events, diff statistics, the last 2,000 characters of visible-check output from the student's own run, and the evaluator's verdict and failure tag — never hidden-check output; the current harness files; the top playbook techniques for those tags; EXPERIENCE.md; and constraints — allowlist, maximum patch size, context budget and the preferred level order (mechanics, tools, text, reasoning).
 - **Output:** exactly one proposal (B8) per call, returned through a tool-use schema. It MUST cite evidence run IDs and estimate its context delta.
 - The tutor never receives held-out or control data, check scripts or reference solutions.
-- **Reflection:** after each decision the tutor MAY write one lesson of at most two lines to EXPERIENCE.md, labelled with the model, and only when there is evidence for it — "no evidence, no lesson".
+- **Reflection:** after each decision the tutor MAY write one lesson of at most two lines to EXPERIENCE.md, labelled with the model, and only when there is evidence for it — "no evidence, no lesson". Lessons are the tutor's memory for later rounds; they never reach the student or an export, since they pass no gate.
 - Prompts live as Markdown in `src/saddlefit/tutor/prompts/`, are versioned with the code and covered by snapshot tests.
 
 **Generator — write tasks** (A11).

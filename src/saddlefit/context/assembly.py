@@ -1,8 +1,9 @@
 """Context assembly and budgets (B7).
 
-Order: system prompt, tool guidance for enabled tools only, selected skills, relevant
-EXPERIENCE.md lessons, then the task text. When the harness share is over budget, lessons
-go first, then lower-ranked skills, then tool-guidance details. The task is never cut.
+Order: system prompt, tool guidance for enabled tools only, selected skills, then the task
+text. When the harness share is over budget, lower-ranked skills go first, then tool-guidance
+details. The task is never cut. EXPERIENCE.md is the tutor's memory and never reaches the
+student: its lessons pass no gate, and what the student reads must pass the gates.
 """
 
 from __future__ import annotations
@@ -187,7 +188,6 @@ class AssembledContext:
     harness_tokens: int
     over_budget: bool = False
     skills: list[str] = field(default_factory=list)
-    lessons: int = 0
     dropped: list[str] = field(default_factory=list)
 
 
@@ -215,21 +215,16 @@ def assemble(
         )
         preamble += f"\n\n## Harness scripts\nRun these from the bash tool:\n{listed}"
     skills = rank_skills(harness.skills, task_type, task_text)[:max_skills]
-    lessons = rank_lessons(harness.experience, model, task_text)
     dropped: list[str] = []
 
     def render() -> str:
         blocks = [harness.system_prompt.strip(), preamble, *tool_sections]
         blocks += [s.text for s in skills]
-        if lessons:
-            blocks.append("## Lessons\n" + "\n".join(lessons))
         return "\n\n".join(b for b in blocks if b).strip() + "\n"
 
     system = render()
     while count(system) > harness_budget_tokens:
-        if lessons:
-            dropped.append(f"lesson: {lessons.pop()}")
-        elif skills:
+        if skills:
             dropped.append(f"skill: {skills.pop().name}")
         elif tool_sections:
             dropped.append(f"tool guidance: {tool_sections.pop().splitlines()[0][3:]}")
@@ -243,6 +238,5 @@ def assemble(
         harness_tokens=tokens,
         over_budget=tokens > harness_budget_tokens,
         skills=[s.name for s in skills],
-        lessons=len(lessons),
         dropped=dropped,
     )

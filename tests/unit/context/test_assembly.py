@@ -63,26 +63,28 @@ def test_order_and_selection() -> None:
         s.index("## read_file"),
         s.index("## bash"),
         s.index("## Skill: dates"),
-        s.index("## Lessons"),
     ]
     assert order == sorted(order)
     assert "## search" not in s  # tool not enabled
     assert ctx.skills == ["dates"]  # only relevant skills; css and pydantic do not match
-    assert "llama3" not in s  # lesson for another model
-    assert ctx.lessons == 2
     assert ctx.task == TASK
     assert ctx.harness_tokens == estimate_tokens(s)
     assert not ctx.over_budget
 
 
-def test_drop_order_lessons_then_skills_then_tool_details() -> None:
-    full = build()
-    no_lessons = build(budget=full.harness_tokens - 1)
-    assert no_lessons.dropped
-    assert all(d.startswith("lesson:") for d in no_lessons.dropped)
+def test_lessons_never_reach_the_student() -> None:
+    # EXPERIENCE.md is the tutor's memory; a lesson passes no gate, so it must not steer the
+    # student
+    s = build().system
+    assert "## Lessons" not in s
+    assert "run the tests before finish" not in s
+    assert "unlabelled lesson" not in s
+
+
+def test_drop_order_skills_then_tool_details() -> None:
     tiny = build(budget=estimate_tokens("You are careful.\n\nPrefer small edits.\n"))
     kinds = [d.split(":")[0] for d in tiny.dropped]
-    assert kinds == ["lesson", "lesson", "skill", "tool guidance", "tool guidance"]
+    assert kinds == ["skill", "tool guidance", "tool guidance"]
     assert "Prefer small edits." in tiny.system  # the preamble stays
     assert tiny.task == TASK  # never cut
     assert not tiny.over_budget
