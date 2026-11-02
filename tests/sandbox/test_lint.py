@@ -32,3 +32,10 @@ def test_shellcheck_problems_are_reported(linter: SandboxLinter) -> None:
     problems = linter.lint({"tools/bad.sh": b"#!/bin/sh\nrm -rf $1/x\n"})
     assert len(problems) == 1
     assert "SC2086" in problems[0]
+
+
+def test_a_shebang_on_a_script_run_through_its_interpreter_passes(linter: SandboxLinter) -> None:
+    # the student runs tool scripts as `python3 <path>`; a proposal cannot set the executable
+    # bit, so EXE001 refused working scripts in the gemma4:e4b proof fit
+    script = b'#!/usr/bin/env python3\n"""Replace lines."""\n\nprint("ok")\n'
+    assert linter.lint({"tools/replace_lines.py": script}) == []

@@ -16,9 +16,11 @@ from saddlefit.config import SandboxConfig
 from saddlefit.sandbox.container import Sandbox
 
 LINT_TIMEOUT_S: Final = 120
-# --isolated: no config file in the workspace can switch rules off
+# --isolated: no config file in the workspace can switch rules off. EXE001 (a shebang on a
+# file that is not executable) is ignored: the student runs scripts as `python3 <path>`, and a
+# proposal cannot set the executable bit, so the rule only refused working scripts.
 _COMMANDS: Final = {
-    ".py": "ruff check --isolated --no-cache --output-format concise --",
+    ".py": "ruff check --isolated --no-cache --ignore EXE001 --output-format concise --",
     ".sh": "shellcheck --",
 }
 
