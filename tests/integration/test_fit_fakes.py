@@ -129,10 +129,18 @@ RIGHT = (
 )
 
 
+# what the fake tutor sends: edits, from which diagnose builds the same patches as above
+USELESS_EDITS = [
+    {"path": "systemprompt.md", "old": "You are a careful", "new": "You are a very careful"}
+]
+RIGHT_EDITS = [{"path": "loop.yaml", "old": "  max_retries: 1\n", "new": "  max_retries: 3\n"}]
+BROKEN_EDITS = [{"path": "loop.yaml", "old": "nope", "new": "x"}]  # not in loop.yaml
+
+
 class FakeTutor:
     """Replays proposals in order; answers every reflection with a lesson."""
 
-    def __init__(self, patches: Sequence[str]) -> None:
+    def __init__(self, patches: Sequence[list[dict[str, str]]]) -> None:
         self.patches = list(patches)
         self.prompts: list[str] = []
 
@@ -156,7 +164,7 @@ class FakeTutor:
                 "evidence_run_ids": [RUN_IDS["t1"], RUN_IDS["t2"]],
                 "technique": f"candidate {len(self.patches)}",
                 "rationale": "Runs end after one failed visible check.",
-                "patch": self.patches.pop(0),
+                "edits": self.patches.pop(0),
                 "expected_effect": "Fewer gave_up failures",
                 "context_tokens_delta": 0,
             }
@@ -195,7 +203,7 @@ def make_loop(tmp_path: Path, tutor: FakeTutor, **changes: Any) -> tuple[MiddleL
 
 
 def test_fit_accepts_the_change_that_helps_and_rejects_the_useless_one(tmp_path: Path) -> None:
-    tutor = FakeTutor([USELESS, RIGHT])
+    tutor = FakeTutor([USELESS_EDITS, RIGHT_EDITS])
     loop, practice = make_loop(tmp_path, tutor)
     report = loop.round(0)
 
@@ -234,7 +242,7 @@ def test_a_round_without_failures_asks_the_tutor_nothing(tmp_path: Path) -> None
 
 
 def test_the_budget_caps_tutor_calls(tmp_path: Path) -> None:
-    tutor = FakeTutor([USELESS, USELESS, USELESS])
+    tutor = FakeTutor([USELESS_EDITS, USELESS_EDITS, USELESS_EDITS])
     loop, _ = make_loop(tmp_path, tutor, candidates_per_round=3, max_calls_per_round=1)
     report = loop.round(0)
     assert report.tutor_calls == 1
@@ -242,7 +250,7 @@ def test_the_budget_caps_tutor_calls(tmp_path: Path) -> None:
 
 
 def test_the_spend_caps_tutor_calls(tmp_path: Path) -> None:
-    tutor = FakeTutor([USELESS, USELESS, USELESS])
+    tutor = FakeTutor([USELESS_EDITS, USELESS_EDITS, USELESS_EDITS])
     # one call costs $0.008; a $0.01 cap allows a second call to start, then stops
     loop, _ = make_loop(tmp_path, tutor, candidates_per_round=3, max_usd_per_round=0.01)
     report = loop.round(0)
@@ -266,7 +274,7 @@ class OverfittingPractice(FakePractice):
 
 
 def test_a_change_that_only_helps_training_is_rejected(tmp_path: Path) -> None:
-    loop, _ = make_loop(tmp_path, FakeTutor([RIGHT]), candidates_per_round=1)
+    loop, _ = make_loop(tmp_path, FakeTutor([RIGHT_EDITS]), candidates_per_round=1)
     loop.practice = OverfittingPractice(loop.store)
     report = loop.round(0)
     (record,) = report.records
@@ -277,7 +285,7 @@ def test_a_change_that_only_helps_training_is_rejected(tmp_path: Path) -> None:
 
 
 def test_no_candidate_branch_outlives_its_round(tmp_path: Path) -> None:
-    loop, _ = make_loop(tmp_path, FakeTutor([USELESS, RIGHT]))
+    loop, _ = make_loop(tmp_path, FakeTutor([USELESS_EDITS, RIGHT_EDITS]))
     report = loop.round(0)
     for record in report.records:
         with pytest.raises(HarnessStoreError):
@@ -285,10 +293,14 @@ def test_no_candidate_branch_outlives_its_round(tmp_path: Path) -> None:
 
 
 # the winner also edits EXPERIENCE.md, where every lesson is appended
-RIGHT_WITH_NOTE = RIGHT + (
-    "diff --git a/EXPERIENCE.md b/EXPERIENCE.md\n--- a/EXPERIENCE.md\n+++ b/EXPERIENCE.md\n"
-    "@@ -1 +1,2 @@\n # Lessons\n+- (model: student) Keep the finish gate patient.\n"
-)
+RIGHT_WITH_NOTE = [
+    *RIGHT_EDITS,
+    {
+        "path": "EXPERIENCE.md",
+        "old": "# Lessons\n",
+        "new": "# Lessons\n- (model: student) Keep the finish gate patient.\n",
+    },
+]
 
 
 def candidate_branches(store: HarnessStore) -> list[str]:
@@ -304,7 +316,7 @@ def candidate_branches(store: HarnessStore) -> list[str]:
 
 def test_lessons_wait_until_every_candidate_is_decided(tmp_path: Path) -> None:
     # a lesson about the rejected tweak must not reach main before the winner is merged
-    loop, _ = make_loop(tmp_path, FakeTutor([USELESS, RIGHT_WITH_NOTE]))
+    loop, _ = make_loop(tmp_path, FakeTutor([USELESS_EDITS, RIGHT_WITH_NOTE]))
     report = loop.round(0)
     assert report.accepted == report.records[1].proposal_id
     assert "Keep the finish gate patient." in loop.store.read("EXPERIENCE.md")
@@ -323,7 +335,7 @@ class CrashingPractice(FakePractice):
 
 
 def test_a_failed_round_leaves_no_candidate_branch(tmp_path: Path) -> None:
-    loop, _ = make_loop(tmp_path, FakeTutor([USELESS, RIGHT]))
+    loop, _ = make_loop(tmp_path, FakeTutor([USELESS_EDITS, RIGHT_EDITS]))
     loop.practice = CrashingPractice(loop.store)
     with pytest.raises(RuntimeError, match="sandbox died"):
         loop.round(0)
@@ -338,21 +350,25 @@ def test_a_failed_lesson_does_not_stop_the_round(
         raise HarnessStoreError("git apply failed")
 
     monkeypatch.setattr("saddlefit.loops.middle.record_lesson", broken)
-    loop, _ = make_loop(tmp_path, FakeTutor([USELESS, RIGHT]))
+    loop, _ = make_loop(tmp_path, FakeTutor([USELESS_EDITS, RIGHT_EDITS]))
     report = loop.round(0)
     assert report.accepted is not None
     assert len(report.records) == 2
     assert report.lessons == 0
 
 
-DROP_EXPERIENCE = RIGHT + (
+DROP_EXPERIENCE = (
     "diff --git a/EXPERIENCE.md b/EXPERIENCE.md\ndeleted file mode 100644\n"
     "--- a/EXPERIENCE.md\n+++ /dev/null\n@@ -1 +0,0 @@\n-# Lessons\n"
 )
 
 
-def test_a_round_survives_a_winner_that_removes_experience_md(tmp_path: Path) -> None:
-    loop, _ = make_loop(tmp_path, FakeTutor([DROP_EXPERIENCE]), candidates_per_round=1)
+def test_a_round_survives_a_harness_without_experience_md(tmp_path: Path) -> None:
+    # tutor edits cannot delete a file, but an earlier accepted patch could have
+    loop, _ = make_loop(tmp_path, FakeTutor([RIGHT_EDITS]), candidates_per_round=1)
+    drop_id = "01JB2Z0C7H2P6S8E4F1A9B3D5Q"
+    loop.store.propose(drop_id, DROP_EXPERIENCE, "drop EXPERIENCE.md")
+    loop.store.accept(drop_id)
     report = loop.round(0)
     assert report.accepted == report.records[0].proposal_id
     assert report.lessons == 0
@@ -361,7 +377,7 @@ def test_a_round_survives_a_winner_that_removes_experience_md(tmp_path: Path) ->
 
 def test_each_fit_continues_with_the_next_batch(tmp_path: Path) -> None:
     loop, _ = make_loop(
-        tmp_path, FakeTutor([USELESS, USELESS]), batch_size=4, candidates_per_round=1
+        tmp_path, FakeTutor([USELESS_EDITS, USELESS_EDITS]), batch_size=4, candidates_per_round=1
     )
     (first,) = run_rounds(loop, tmp_path, 1)
     (second,) = run_rounds(loop, tmp_path, 1)  # a new fit invocation
@@ -371,7 +387,7 @@ def test_each_fit_continues_with_the_next_batch(tmp_path: Path) -> None:
 
 
 def test_a_failed_round_is_not_counted(tmp_path: Path) -> None:
-    loop, _ = make_loop(tmp_path, FakeTutor([USELESS, RIGHT]))
+    loop, _ = make_loop(tmp_path, FakeTutor([USELESS_EDITS, RIGHT_EDITS]))
     loop.practice = CrashingPractice(loop.store)
     with pytest.raises(RuntimeError):
         run_rounds(loop, tmp_path, 1)
@@ -379,7 +395,7 @@ def test_a_failed_round_is_not_counted(tmp_path: Path) -> None:
 
 
 def test_tutor_spending_adds_up_across_fits(tmp_path: Path) -> None:
-    loop, _ = make_loop(tmp_path, FakeTutor([USELESS, USELESS]), candidates_per_round=1)
+    loop, _ = make_loop(tmp_path, FakeTutor([USELESS_EDITS, USELESS_EDITS]), candidates_per_round=1)
     first = run_rounds(loop, tmp_path, 1)
     second = run_rounds(loop, tmp_path, 1)
     state = load_fit_state(tmp_path)
@@ -390,7 +406,7 @@ def test_tutor_spending_adds_up_across_fits(tmp_path: Path) -> None:
 
 
 def test_a_failed_round_still_records_what_the_tutor_cost(tmp_path: Path) -> None:
-    loop, _ = make_loop(tmp_path, FakeTutor([USELESS, RIGHT]))
+    loop, _ = make_loop(tmp_path, FakeTutor([USELESS_EDITS, RIGHT_EDITS]))
     loop.practice = CrashingPractice(loop.store)
     with pytest.raises(RuntimeError):
         run_rounds(loop, tmp_path, 1)
@@ -411,7 +427,7 @@ class InterruptedPractice(CrashingPractice):
 
 
 def test_an_interrupted_round_still_records_what_the_tutor_cost(tmp_path: Path) -> None:
-    loop, _ = make_loop(tmp_path, FakeTutor([USELESS, RIGHT]))
+    loop, _ = make_loop(tmp_path, FakeTutor([USELESS_EDITS, RIGHT_EDITS]))
     loop.practice = InterruptedPractice(loop.store)
     with pytest.raises(KeyboardInterrupt):
         run_rounds(loop, tmp_path, 1)
@@ -434,7 +450,7 @@ class SpyingPractice(FakePractice):
 
 
 def test_each_tutor_call_is_saved_before_the_round_ends(tmp_path: Path) -> None:
-    loop, _ = make_loop(tmp_path, FakeTutor([USELESS, RIGHT]))
+    loop, _ = make_loop(tmp_path, FakeTutor([USELESS_EDITS, RIGHT_EDITS]))
     spy = SpyingPractice(loop.store, tmp_path)
     loop.practice = spy
     run_rounds(loop, tmp_path, 1)
@@ -443,12 +459,9 @@ def test_each_tutor_call_is_saved_before_the_round_ends(tmp_path: Path) -> None:
 
 
 def test_refusals_keep_their_reason_and_add_up_by_kind(tmp_path: Path) -> None:
-    # context that is not in loop.yaml: the patch cannot apply
-    broken = (
-        "diff --git a/loop.yaml b/loop.yaml\n--- a/loop.yaml\n+++ b/loop.yaml\n"
-        "@@ -1 +1 @@\n-nope\n+x\n"
-    )
-    loop, _ = make_loop(tmp_path, FakeTutor([broken, RIGHT]))
+    # old text that is not in loop.yaml: the edits cannot apply
+    broken = BROKEN_EDITS
+    loop, _ = make_loop(tmp_path, FakeTutor([broken, RIGHT_EDITS]))
     (report,) = run_rounds(loop, tmp_path, 1)
     assert report.refused == 1
     assert report.refusals[0].startswith("proposal: ")
@@ -456,7 +469,7 @@ def test_refusals_keep_their_reason_and_add_up_by_kind(tmp_path: Path) -> None:
 
 
 def test_the_tutor_prompt_lists_playbook_techniques_for_the_failures(tmp_path: Path) -> None:
-    tutor = FakeTutor([USELESS, RIGHT])
+    tutor = FakeTutor([USELESS_EDITS, RIGHT_EDITS])
     loop, _ = make_loop(tmp_path, tutor)
     run_rounds(loop, tmp_path, 1)
     system = next(p for p in tutor.prompts if "Techniques that worked before" in p)
@@ -464,12 +477,11 @@ def test_the_tutor_prompt_lists_playbook_techniques_for_the_failures(tmp_path: P
 
 
 def test_a_refusal_survives_a_round_that_fails_later(tmp_path: Path) -> None:
-    broken = (
-        "diff --git a/loop.yaml b/loop.yaml\n--- a/loop.yaml\n+++ b/loop.yaml\n"
-        "@@ -1 +1 @@\n-nope\n+x\n"
-    )
+    broken = BROKEN_EDITS
     # refused first, then two candidates: the second one's batch crashes the round
-    loop, _ = make_loop(tmp_path, FakeTutor([broken, USELESS, RIGHT]), candidates_per_round=3)
+    loop, _ = make_loop(
+        tmp_path, FakeTutor([broken, USELESS_EDITS, RIGHT_EDITS]), candidates_per_round=3
+    )
     loop.practice = CrashingPractice(loop.store)
     with pytest.raises(RuntimeError):
         run_rounds(loop, tmp_path, 1)
@@ -479,7 +491,7 @@ def test_a_refusal_survives_a_round_that_fails_later(tmp_path: Path) -> None:
 class SpyingTutor(FakeTutor):
     """Reads fit.json as each diagnosis starts, before that call can save anything."""
 
-    def __init__(self, patches: Sequence[str], root: Path) -> None:
+    def __init__(self, patches: Sequence[list[dict[str, str]]], root: Path) -> None:
         super().__init__(patches)
         self.root = root
         self.seen: list[dict[str, int]] = []
@@ -493,18 +505,15 @@ class SpyingTutor(FakeTutor):
 
 
 def test_a_refusal_is_saved_before_the_next_tutor_call(tmp_path: Path) -> None:
-    broken = (
-        "diff --git a/loop.yaml b/loop.yaml\n--- a/loop.yaml\n+++ b/loop.yaml\n"
-        "@@ -1 +1 @@\n-nope\n+x\n"
-    )
-    tutor = SpyingTutor([broken, RIGHT], tmp_path)
+    broken = BROKEN_EDITS
+    tutor = SpyingTutor([broken, RIGHT_EDITS], tmp_path)
     loop, _ = make_loop(tmp_path, tutor)
     run_rounds(loop, tmp_path, 1)
     assert tutor.seen[:2] == [{}, {"proposal": 1}]
 
 
 def test_a_fit_reports_its_stages_in_order(tmp_path: Path) -> None:
-    loop, _ = make_loop(tmp_path, FakeTutor([USELESS, RIGHT]))
+    loop, _ = make_loop(tmp_path, FakeTutor([USELESS_EDITS, RIGHT_EDITS]))
     seen: list[tuple[str, int | None]] = []
 
     def on_change(record: ProgressRecord) -> None:
@@ -530,7 +539,7 @@ def test_an_ablation_before_the_first_round_is_reported(tmp_path: Path) -> None:
     save_fit_state(
         tmp_path, FitState(schema_version=2, rounds_done=1, student_model="older student")
     )
-    loop, _ = make_loop(tmp_path, FakeTutor([USELESS, RIGHT]))
+    loop, _ = make_loop(tmp_path, FakeTutor([USELESS_EDITS, RIGHT_EDITS]))
     stages: list[str] = []
 
     def on_change(record: ProgressRecord) -> None:
@@ -552,7 +561,7 @@ class BrokeTutor(FakeTutor):
 
 
 def test_a_refused_tutor_account_stops_the_fit(tmp_path: Path) -> None:
-    loop, _ = make_loop(tmp_path, BrokeTutor([USELESS, RIGHT]))
+    loop, _ = make_loop(tmp_path, BrokeTutor([USELESS_EDITS, RIGHT_EDITS]))
     with pytest.raises(EnvironmentFailure, match="credit balance"):
         run_rounds(loop, tmp_path, 1)
     assert load_fit_state(tmp_path).refusals == {}  # not counted as the tutor refusing
@@ -570,7 +579,7 @@ class BrokeAtReflection(FakeTutor):
 
 
 def test_a_refused_reflection_still_saves_the_decided_round(tmp_path: Path) -> None:
-    loop, _ = make_loop(tmp_path, BrokeAtReflection([USELESS, RIGHT]))
+    loop, _ = make_loop(tmp_path, BrokeAtReflection([USELESS_EDITS, RIGHT_EDITS]))
     shown: list[RoundReport] = []
     with pytest.raises(EnvironmentFailure, match="credit balance"):
         run_rounds(loop, tmp_path, 1, on_round=shown.append)
@@ -583,17 +592,17 @@ def test_a_refused_reflection_still_saves_the_decided_round(tmp_path: Path) -> N
 
 
 def test_a_loop_that_hit_a_refused_account_can_fit_again(tmp_path: Path) -> None:
-    loop, _ = make_loop(tmp_path, BrokeAtReflection([USELESS, RIGHT]))
+    loop, _ = make_loop(tmp_path, BrokeAtReflection([USELESS_EDITS, RIGHT_EDITS]))
     with pytest.raises(EnvironmentFailure):
         run_rounds(loop, tmp_path, 1)
-    loop.tutor = FakeTutor([USELESS, RIGHT])  # the credit is back
+    loop.tutor = FakeTutor([USELESS_EDITS, RIGHT_EDITS])  # the credit is back
     reports = run_rounds(loop, tmp_path, 1)
     assert len(reports) == 1
     assert load_fit_state(tmp_path).rounds_done == 2
 
 
 def test_a_refused_diagnosis_still_counts_the_call(tmp_path: Path) -> None:
-    loop, _ = make_loop(tmp_path, BrokeTutor([USELESS, RIGHT]))
+    loop, _ = make_loop(tmp_path, BrokeTutor([USELESS_EDITS, RIGHT_EDITS]))
     with pytest.raises(EnvironmentFailure):
         run_rounds(loop, tmp_path, 1)
     assert load_fit_state(tmp_path).tutor_calls == 1
