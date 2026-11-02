@@ -247,9 +247,12 @@ def patch_from_edits(edits: Any, files: Mapping[str, str]) -> str:
             continue
         if current is None:
             raise ValueError(f"an edit for a file that is not in the harness: {path}")
-        count = current.count(old)
-        if count != 1:
-            raise ValueError(f"the old text of an edit occurs {count} times in {path}, not once")
+        first = current.find(old)
+        if first < 0:
+            raise ValueError(f"the old text of an edit occurs 0 times in {path}, not once")
+        # a second match may overlap the first ("aa" in "aaa"), which str.count would miss
+        if current.find(old, first + 1) >= 0:
+            raise ValueError(f"the old text of an edit occurs more than once in {path}")
         after[path] = current.replace(old, new, 1)
     patch = "".join(
         file_diff(p, None if p in created else files[p], text) for p, text in sorted(after.items())

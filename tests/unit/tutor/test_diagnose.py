@@ -27,6 +27,7 @@ from saddlefit.tutor.diagnose import (
     TutorRequest,
     diagnose,
     digest_run,
+    patch_from_edits,
     render_runs,
     render_system,
 )
@@ -210,6 +211,12 @@ def test_edits_become_a_diff_that_git_applies(tmp_path: Path) -> None:
     assert (tmp_path / "skills/run-tests/SKILL.md").read_text() == "Run the visible check.\n"
 
 
+def test_an_edit_whose_matches_overlap_is_refused() -> None:
+    # "aa" occurs twice in "aaa", at 0 and at 1; str.count sees only one of them
+    with pytest.raises(ValueError, match="more than once"):
+        patch_from_edits([{"path": "notes.md", "old": "aa", "new": "b"}], {"notes.md": "aaa\n"})
+
+
 def test_proposal_ids_are_unique() -> None:
     first = diagnose(Scripted(proposing()), request()).proposal.proposal_id
     assert diagnose(Scripted(proposing()), request()).proposal.proposal_id != first
@@ -248,6 +255,11 @@ def test_proposal_ids_are_unique() -> None:
         (proposing(level="budget"), "malformed"),
         (proposing(edits=[]), "at least one edit"),
         (proposing(edits=[{"path": "loop.yaml", "old": "nope", "new": "x"}]), "occurs 0 times"),
+        # "are" occurs in "are" and in "software"
+        (
+            proposing(edits=[{"path": "systemprompt.md", "old": "are", "new": "x"}]),
+            "more than once",
+        ),
         (proposing(edits=[{"path": "loop.yaml", "old": "", "new": "x"}]), "loop.yaml exists"),
         (proposing(edits=[{"path": "../x", "old": "", "new": "x"}]), "relative and normal"),
         (proposing(edits=[{"path": "nothere.md", "old": "a", "new": "b"}]), "not in the harness"),
