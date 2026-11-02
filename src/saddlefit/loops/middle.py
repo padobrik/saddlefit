@@ -49,7 +49,7 @@ from saddlefit.storage.library import (
     write_record,
 )
 from saddlefit.storage.progress import Stage
-from saddlefit.tutor.diagnose import MAX_RUNS, RunDigest, TutorRequest, diagnose
+from saddlefit.tutor.diagnose import MAX_RUNS, EditsError, RunDigest, TutorRequest, diagnose
 from saddlefit.tutor.reflect import Decision, record_lesson, reflect
 
 
@@ -271,6 +271,11 @@ class MiddleLoop:
                 # no key, no access or no credit: the rest of the fit would only refuse
                 budget.charge(exc.usage)  # counted like any failed call
                 raise EnvironmentFailure(_REFUSED_ACCOUNT.format(exc)) from exc
+            except EditsError as exc:  # a usable answer whose edits do not apply
+                budget.charge(exc.usage)
+                report.refused += 1
+                self._refused(report, f"{REFUSED_PROPOSAL}: {exc}")
+                continue
             except ProviderError as exc:  # TutorError included; the call was paid for
                 budget.charge(exc.usage)
                 report.refused += 1

@@ -785,7 +785,7 @@ All defaults are configurable; changing them is recorded in reports.
 **Tutor — diagnose and propose.**
 
 - **Inputs:** up to 6 failed training runs, each compressed to the task text, failure tags, the last 30 events, diff statistics, the last 2,000 characters of visible-check output from the student's own run, and the evaluator's verdict and failure tag — never hidden-check output; the current harness files; the top playbook techniques for those tags; EXPERIENCE.md; and constraints — allowlist, maximum patch size, context budget and the preferred level order (mechanics, tools, text, reasoning).
-- **Output:** exactly one proposal (B8) per call, returned through a tool-use schema. It MUST cite evidence run IDs and estimate its context delta.
+- **Output:** exactly one proposal (B8) per call, returned through a tool-use schema. It MUST cite evidence run IDs and estimate its context delta. The tutor writes its change as edits — exact search-and-replace on the harness files it was shown, or a new file — and Saddlefit builds the proposal's patch from them; hand-written diffs too often failed to apply. An edit that does not apply refuses the proposal.
 - The tutor never receives held-out or control data, check scripts or reference solutions.
 - **Reflection:** after each decision the tutor MAY write one lesson of at most two lines to EXPERIENCE.md, labelled with the model, and only when there is evidence for it — "no evidence, no lesson". Lessons are the tutor's memory for later rounds; they never reach the student or an export, since they pass no gate.
 - Prompts live as Markdown in `src/saddlefit/tutor/prompts/`, are versioned with the code and covered by snapshot tests.

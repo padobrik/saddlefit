@@ -6,7 +6,9 @@ from pathlib import Path
 import pytest
 from tests.integration.test_fit_fakes import (
     RIGHT,
+    RIGHT_EDITS,
     USELESS,
+    USELESS_EDITS,
     FakeTutor,
     make_loop,
     retries,
@@ -53,7 +55,7 @@ def accept_by_noise(store: HarnessStore, root: Path) -> None:
 
 def test_ablation_prunes_the_useless_change_and_keeps_the_right_one(tmp_path: Path) -> None:
     """Required test 6: prune removes a useless change; the helpful one stays."""
-    loop, _ = make_loop(tmp_path, FakeTutor([RIGHT]), candidates_per_round=1)
+    loop, _ = make_loop(tmp_path, FakeTutor([RIGHT_EDITS]), candidates_per_round=1)
     accept_by_noise(loop.store, tmp_path)
     assert loop.round(0).accepted is not None
     assert "very careful" in loop.store.read("systemprompt.md")
@@ -105,7 +107,7 @@ def test_a_change_others_build_on_is_skipped(tmp_path: Path) -> None:
 
 
 def test_three_accepted_changes_trigger_ablation(tmp_path: Path) -> None:
-    loop, _ = make_loop(tmp_path, FakeTutor([RIGHT]), candidates_per_round=1)
+    loop, _ = make_loop(tmp_path, FakeTutor([RIGHT_EDITS]), candidates_per_round=1)
     accept_by_noise(loop.store, tmp_path)
     save_fit_state(
         tmp_path,
@@ -120,7 +122,7 @@ def test_three_accepted_changes_trigger_ablation(tmp_path: Path) -> None:
 
 
 def test_no_ablation_before_three_accepted_changes(tmp_path: Path) -> None:
-    loop, _ = make_loop(tmp_path, FakeTutor([RIGHT]), candidates_per_round=1)
+    loop, _ = make_loop(tmp_path, FakeTutor([RIGHT_EDITS]), candidates_per_round=1)
     accept_by_noise(loop.store, tmp_path)
     (report,) = run_rounds(loop, tmp_path, 1)
     assert report.pruned == []
@@ -129,7 +131,7 @@ def test_no_ablation_before_three_accepted_changes(tmp_path: Path) -> None:
 
 
 def test_a_new_student_model_triggers_ablation_first(tmp_path: Path) -> None:
-    loop, _ = make_loop(tmp_path, FakeTutor([USELESS]), candidates_per_round=1)
+    loop, _ = make_loop(tmp_path, FakeTutor([USELESS_EDITS]), candidates_per_round=1)
     accept_by_noise(loop.store, tmp_path)
     save_fit_state(
         tmp_path, FitState(schema_version=2, rounds_done=3, student_model="older-student")
@@ -143,7 +145,7 @@ def test_a_new_student_model_triggers_ablation_first(tmp_path: Path) -> None:
 def test_the_same_or_a_first_model_does_not_trigger_ablation(
     tmp_path: Path, model: str | None
 ) -> None:
-    loop, _ = make_loop(tmp_path, FakeTutor([USELESS]), candidates_per_round=1)
+    loop, _ = make_loop(tmp_path, FakeTutor([USELESS_EDITS]), candidates_per_round=1)
     accept_by_noise(loop.store, tmp_path)
     save_fit_state(tmp_path, FitState(schema_version=2, rounds_done=0, student_model=model))
     (report,) = run_rounds(loop, tmp_path, 1)
@@ -153,7 +155,7 @@ def test_the_same_or_a_first_model_does_not_trigger_ablation(
 def test_an_interrupted_ablation_resumes_without_repeating_the_round(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    loop, _ = make_loop(tmp_path, FakeTutor([RIGHT, USELESS]), candidates_per_round=1)
+    loop, _ = make_loop(tmp_path, FakeTutor([RIGHT_EDITS, USELESS_EDITS]), candidates_per_round=1)
     accept_by_noise(loop.store, tmp_path)
     save_fit_state(
         tmp_path,
@@ -204,7 +206,7 @@ def test_a_new_digest_for_the_same_model_triggers_ablation(
     tmp_path: Path, saved_digest: str | None, digest: str | None, ablated: bool
 ) -> None:
     loop, _ = make_loop(
-        tmp_path, FakeTutor([USELESS]), candidates_per_round=1, student_digest=digest
+        tmp_path, FakeTutor([USELESS_EDITS]), candidates_per_round=1, student_digest=digest
     )
     accept_by_noise(loop.store, tmp_path)
     save_fit_state(
