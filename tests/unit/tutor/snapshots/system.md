@@ -14,32 +14,20 @@ cause that matters most, and propose one change to the harness that removes it.
 3. Choose the level of the fix in this order of preference: mechanics, tools, text, reasoning. Compact models
    follow short rules poorly and long rules worse, so prefer mechanics and tools, which work
    without the model's cooperation, over text, which needs it.
-4. Write the change as a git-style unified diff against the harness files below, then call
-   the `propose` tool exactly once. Do not answer in prose.
+4. Write the change as edits to the harness files below, then call the `propose` tool
+   exactly once. Do not answer in prose.
 
-# Patch format
+# Edit format
 
-Every file in the patch starts with a `diff --git` line; a patch without one is refused.
-Hunk context must match the harness files below exactly.
+Each edit has a `path`, an `old` text and a `new` text. `old` must be copied exactly from
+the file below and occur in it exactly once; it is replaced with `new`. Saddlefit builds the
+diff, so write no diff and no line numbers. An edit with an empty `old` creates a new file
+whose content is `new`; the file must not exist yet. Two edits may change one file; they
+apply in order.
 
-```
-diff --git a/loop.yaml b/loop.yaml
---- a/loop.yaml
-+++ b/loop.yaml
-@@ -2,1 +2,1 @@
--max_steps: 40
-+max_steps: 60
-```
-
-A new file uses `new file mode 100644` and `--- /dev/null`:
-
-```
-diff --git a/skills/run-tests/SKILL.md b/skills/run-tests/SKILL.md
-new file mode 100644
---- /dev/null
-+++ b/skills/run-tests/SKILL.md
-@@ -0,0 +1,1 @@
-+Run the visible check before you finish.
+```json
+[{"path": "loop.yaml", "old": "max_steps: 40", "new": "max_steps: 60"},
+ {"path": "skills/run-tests/SKILL.md", "old": "", "new": "Run the visible check before you finish.\n"}]
 ```
 
 # What a good proposal looks like
@@ -55,11 +43,13 @@ new file mode 100644
 
 # Constraints
 
-- The patch may touch only these paths in the harness: `EXPERIENCE.md`, `loop.yaml`, `systemprompt.md`, `tool_guidance.md`, `skills/**`, `tools/**`. Anything else is refused.
-- The patch may change at most 200 lines.
-- New tool scripts must be Python or shell, pass ruff or shellcheck, and run only inside the
-  sandbox, which has no network. Scripts in `tools/` are mounted read-only at
-  `/harness/tools`, are on the student's `PATH`, and are listed in its system prompt.
+- The edits may touch only these paths in the harness: `EXPERIENCE.md`, `loop.yaml`, `systemprompt.md`, `tool_guidance.md`, `skills/**`, `tools/**`. Anything else is refused.
+- The edits may change at most 200 lines in all.
+- `tools/` holds only scripts named `*.py` or `*.sh`; any other file there is refused. They
+  must pass ruff or shellcheck and run only inside the sandbox, which has no network. They
+  are mounted read-only at `/harness/tools` and listed in the student's system prompt as
+  `python3 /harness/tools/<name>.py` or `bash /harness/tools/<name>.sh`, so they need no
+  executable bit.
 
 # Mechanics in loop.yaml
 

@@ -1,6 +1,7 @@
 """The tutor's diagnosis call: prompts (snapshot-tested), run digests and proposals (B13)."""
 
 import os
+import subprocess
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
@@ -33,9 +34,7 @@ from saddlefit.tutor.diagnose import (
 SNAPSHOTS = Path(__file__).parent / "snapshots"
 RUN_A = "01JB2Y8Q4V9N1K3D7M5R6T0W2X"
 RUN_B = "01JB2Y8Q4V9N1K3D7M5R6T0W2Y"
-PATCH = (
-    "diff --git a/loop.yaml b/loop.yaml\n--- a/loop.yaml\n+++ b/loop.yaml\n@@ -1 +1 @@\n-a\n+b\n"
-)
+EDITS = [{"path": "loop.yaml", "old": "max_steps: 40", "new": "max_steps: 60"}]
 
 
 def event(type: str, **data: Any) -> RunEvent:
@@ -173,7 +172,7 @@ def proposing(**changes: Any) -> ModelReply:
         "evidence_run_ids": [RUN_A, RUN_B],
         "technique": "finish gate: run the visible tests",
         "rationale": "Both runs finished without a passing visible check.",
-        "patch": PATCH,
+        "edits": EDITS,
         "expected_effect": "Fewer gave_up failures",
         "context_tokens_delta": 0,
         **changes,
@@ -195,6 +194,20 @@ def test_one_call_yields_one_tutor_proposal() -> None:
     messages, tools = client.sent[0]
     assert [m.role for m in messages] == ["system", "user"]
     assert tools == [PROPOSE_TOOL]
+
+
+def test_edits_become_a_diff_that_git_applies(tmp_path: Path) -> None:
+    edits = [
+        *EDITS,
+        {"path": "skills/run-tests/SKILL.md", "old": "", "new": "Run the visible check.\n"},
+    ]
+    proposal = diagnose(Scripted(proposing(edits=edits)), request()).proposal
+    for path, text in request().harness_files.items():
+        (tmp_path / path).write_text(text, encoding="utf-8")
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "apply", "-"], cwd=tmp_path, input=proposal.patch.encode(), check=True)
+    assert (tmp_path / "loop.yaml").read_text() == "schema_version: 1\nmax_steps: 60\n"
+    assert (tmp_path / "skills/run-tests/SKILL.md").read_text() == "Run the visible check.\n"
 
 
 def test_proposal_ids_are_unique() -> None:
@@ -233,6 +246,11 @@ def test_proposal_ids_are_unique() -> None:
         (proposing(evidence_run_ids=[RUN_A, "01JB2Y8Q4V9N1K3D7M5R6T0W30"]), "not shown"),
         (proposing(evidence_run_ids=[]), "malformed"),
         (proposing(level="budget"), "malformed"),
+        (proposing(edits=[]), "at least one edit"),
+        (proposing(edits=[{"path": "loop.yaml", "old": "nope", "new": "x"}]), "occurs 0 times"),
+        (proposing(edits=[{"path": "loop.yaml", "old": "", "new": "x"}]), "loop.yaml exists"),
+        (proposing(edits=[{"path": "../x", "old": "", "new": "x"}]), "relative and normal"),
+        (proposing(edits=[{"path": "nothere.md", "old": "a", "new": "b"}]), "not in the harness"),
     ],
 )
 def test_unusable_answers_are_tutor_errors_with_their_cost(reply: ModelReply, match: str) -> None:
