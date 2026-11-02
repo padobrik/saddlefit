@@ -262,6 +262,8 @@ def test_proposal_ids_are_unique() -> None:
         ),
         (proposing(edits=[{"path": "loop.yaml", "old": "", "new": "x"}]), "loop.yaml exists"),
         (proposing(edits=[{"path": "../x", "old": "", "new": "x"}]), "relative and normal"),
+        (proposing(edits=[{"path": "skills/a b/SKILL.md", "old": "", "new": "x"}]), "whitespace"),
+        (proposing(edits=[{"path": "tools/empty.sh", "old": "", "new": ""}]), "empty file"),
         (proposing(edits=[{"path": "nothere.md", "old": "a", "new": "b"}]), "not in the harness"),
     ],
 )

@@ -238,10 +238,16 @@ def patch_from_edits(edits: Any, files: Mapping[str, str]) -> str:
             or posixpath.normpath(path) != path
         ):
             raise ValueError(f"edit path must be relative and normal: {path!r}")
+        if any(c.isspace() for c in path):
+            # the harness store reads patch headers without quoting; no harness path needs one
+            raise ValueError(f"edit paths may not contain whitespace: {path!r}")
         current = after.get(path, files.get(path))
         if not old:
             if current is not None:
                 raise ValueError(f"an edit with empty old creates a new file; {path} exists")
+            if not new:
+                # an empty new file makes a diff with no ---/+++ lines, which names no file
+                raise ValueError(f"an edit may not create an empty file: {path}")
             after[path] = new
             created.add(path)
             continue
