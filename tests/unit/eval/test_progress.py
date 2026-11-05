@@ -112,6 +112,7 @@ def test_runs_cut_off_by_a_crash_are_left_out(tmp_path: Path) -> None:
     run(tmp_path, "bbbbbbb", "t1", "train", True)
     interrupted = RunWriter(tmp_path, new_run_id())
     interrupted.event("error", {"kind": "x", "message": "y"})  # no summary follows
+    RunWriter(tmp_path, new_run_id())  # stopped before its first event: an empty file
     result = progress(tmp_path)
     assert result["splits"]["train"]["tasks"] == 1
 

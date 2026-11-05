@@ -119,7 +119,7 @@ def test_reader_requires_a_summary_last(tmp_path: Path) -> None:
     with pytest.raises(UnfinishedRun, match="before its summary"):
         read_run(path)
     path.write_text("", encoding="utf-8")
-    with pytest.raises(ValueError, match="empty"):
+    with pytest.raises(UnfinishedRun, match="empty"):
         read_run(path)
 
 

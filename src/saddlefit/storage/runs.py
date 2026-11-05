@@ -238,7 +238,9 @@ def _read_run_any(path: Path) -> tuple[list[RunEvent], RunSummary]:
     """Read any run record. Evaluator only: import it solely from ``saddlefit.eval``."""
     data = path.read_bytes()
     if not data:
-        raise ValueError(f"empty run record: {path}")
+        # RunWriter creates the file before the first event, so an empty one is a run that
+        # was stopped before it wrote anything: interrupted, not corrupt
+        raise UnfinishedRun(f"empty run record, interrupted before its first line: {path}")
     # every complete line ends in a newline; a crash mid-write leaves the last one cut off,
     # possibly inside a UTF-8 character, so that part is dropped before decoding
     *lines, cut = data.split(b"\n")
